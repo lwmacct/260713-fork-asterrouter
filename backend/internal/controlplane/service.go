@@ -842,11 +842,27 @@ func (s *Service) resolveAPIKeyBoundary(ctx context.Context, actor string, proje
 	if projectID == "" && applicationID == "" {
 		return s.ensureDefaultWorkspaceBoundary(ctx, actor)
 	}
+	if applicationID != "" {
+		app, err := s.applicationByID(ctx, applicationID)
+		if err != nil {
+			return "", "", err
+		}
+		if projectID == "" {
+			projectID = app.ProjectID
+		}
+		if projectID != app.ProjectID {
+			return "", "", errors.New("application does not belong to project")
+		}
+	}
 	if err := s.projectExists(ctx, projectID); err != nil {
 		return "", "", err
 	}
-	if err := s.applicationExists(ctx, applicationID); err != nil {
-		return "", "", err
+	if applicationID == "" {
+		appID, err := s.ensureDefaultWorkspaceApplicationForProject(ctx, actor, projectID)
+		if err != nil {
+			return "", "", err
+		}
+		applicationID = appID
 	}
 	return projectID, applicationID, nil
 }
@@ -886,6 +902,38 @@ func (s *Service) ensureDefaultWorkspaceBoundary(ctx context.Context, actor stri
 		_ = s.audit(ctx, actorOrSystem(actor), "seed", "application", app.ID, "Created hidden workspace default application")
 	}
 	return defaultWorkspaceProjectID, defaultWorkspaceApplicationID, nil
+}
+
+func (s *Service) ensureDefaultWorkspaceApplicationForProject(ctx context.Context, actor string, projectID string) (string, error) {
+	if projectID == defaultWorkspaceProjectID {
+		_, appID, err := s.ensureDefaultWorkspaceBoundary(ctx, actor)
+		return appID, err
+	}
+	appID := defaultWorkspaceApplicationIDForProject(projectID)
+	if _, err := s.applicationByID(ctx, appID); err == nil {
+		return appID, nil
+	}
+	now := time.Now().UTC()
+	app := Application{
+		ID:          appID,
+		ProjectID:   projectID,
+		Name:        "Workspace Gateway",
+		Environment: "default",
+		Owner:       "workspace",
+		Status:      ApplicationStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.repo.SaveApplication(ctx, app); err != nil {
+		return "", err
+	}
+	_ = s.audit(ctx, actorOrSystem(actor), "seed", "application", app.ID, "Created hidden workspace default application")
+	return app.ID, nil
+}
+
+func defaultWorkspaceApplicationIDForProject(projectID string) string {
+	sum := sha256.Sum256([]byte(projectID))
+	return "app_workspace_" + hex.EncodeToString(sum[:])[:12]
 }
 
 func (s *Service) RotateAPIKey(ctx context.Context, actor string, id string) (APIKeyCreateResponse, error) {

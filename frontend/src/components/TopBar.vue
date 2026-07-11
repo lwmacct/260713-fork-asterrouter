@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronDown, Globe2, LogOut, Menu, PanelsTopLeft, UserRound } from '@lucide/vue'
+import { ChevronDown, Globe2, Laptop, LogOut, Menu, PanelsTopLeft, RadioTower, UserRound } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -31,14 +31,15 @@ const pageDescription = computed(() => {
 })
 
 const userInitials = computed(() => auth.user?.username.slice(0, 2).toUpperCase() || 'AR')
+const enabledProfiles = computed(() => app.publicSettings?.enabled_profiles || [])
 
 function changeLocale(event: Event) {
   setLocale((event.target as HTMLSelectElement).value as LocaleCode)
 }
 
-async function openPortal() {
+async function openSurface(path: string) {
   accountOpen.value = false
-  await router.push('/portal')
+  await router.push(path)
 }
 
 async function logout() {
@@ -114,7 +115,15 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutsideClick)
             <strong>{{ auth.user.username }}</strong>
             <span>{{ auth.user.role }}</span>
           </div>
-          <button type="button" @click="openPortal">
+          <button v-if="enabledProfiles.includes('personal')" type="button" @click="openSurface('/console')">
+            <Laptop :size="16" />
+            {{ t('nav.console') }}
+          </button>
+          <button v-if="enabledProfiles.includes('relay_operator')" type="button" @click="openSurface('/operator')">
+            <RadioTower :size="16" />
+            {{ t('nav.operator') }}
+          </button>
+          <button v-if="enabledProfiles.includes('enterprise')" type="button" @click="openSurface('/portal')">
             <PanelsTopLeft :size="16" />
             {{ t('nav.portal') }}
           </button>

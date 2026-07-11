@@ -10,7 +10,8 @@ export interface PublicSettings {
   public_base_url: string
   api_base_url: string
   gateway_base_path: string
-  profile: string
+  default_profile: string
+  enabled_profiles: string[]
   setup_completed: boolean
   default_locale: string
   enabled_locales: string[]
@@ -661,6 +662,23 @@ export interface PluginSummary {
 export interface PluginCatalog {
   summary: PluginSummary
   plugins: Plugin[]
+}
+
+export interface SidecarRuntimeStatus {
+  plugin_id: string
+  enabled: boolean
+  installed: boolean
+  running: boolean
+  supervised: boolean
+  version?: string
+  endpoint?: string
+  supervisor_state?: string
+  restart_count?: number
+  last_started_at?: string
+  last_exited_at?: string
+  next_restart_at?: string
+  last_error?: string
+  error?: string
 }
 
 export interface UsageRecord {

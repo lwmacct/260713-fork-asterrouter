@@ -10,7 +10,7 @@ import {
 } from '@/api/control'
 import TopBar from '@/components/TopBar.vue'
 import { useAppStore } from '@/stores/app'
-import type { APIKeyCreateRequest, APIKeyRecord, Application, PortalWorkspace, Project } from '@/types'
+import type { APIKeyCreateRequest, APIKeyRecord, PortalWorkspace } from '@/types'
 
 const { t } = useI18n()
 const app = useAppStore()
@@ -38,16 +38,12 @@ const baseUrl = computed(() => {
   return `${base.replace(/\/$/, '')}${path}`
 })
 
-const projects = computed(() => workspace.value?.projects || [])
-const applications = computed(() => workspace.value?.applications || [])
 const apiKeys = computed(() => workspace.value?.api_keys || [])
 const usage = computed(() => workspace.value?.usage)
 const recentTraces = computed(() => workspace.value?.recent_traces || [])
 const alerts = computed(() => workspace.value?.alerts || [])
 const canManageKeys = computed(() => Boolean(workspace.value?.can_manage_keys))
 const activeKeys = computed(() => apiKeys.value.filter((key) => key.status === 'active').length)
-const projectOptions = computed(() => projects.value.filter((project) => project.status === 'active'))
-const applicationOptions = computed(() => applications.value.filter((item) => !form.project_id || item.project_id === form.project_id))
 const modelOptions = computed(() => workspace.value?.models || [])
 
 async function load() {
@@ -64,31 +60,9 @@ async function load() {
 }
 
 function ensureFormDefaults() {
-  if (!form.project_id && projectOptions.value[0]) {
-    form.project_id = projectOptions.value[0].id
-  }
-  if (!form.application_id && applicationOptions.value[0]) {
-    form.application_id = applicationOptions.value[0].id
-  }
   if (!form.model_allowlist.length && modelOptions.value[0]) {
     form.model_allowlist = [modelOptions.value[0]]
   }
-}
-
-function projectName(id: string): string {
-  return projects.value.find((project) => project.id === id)?.name || id || '-'
-}
-
-function applicationName(id: string): string {
-  return applications.value.find((item) => item.id === id)?.name || id || '-'
-}
-
-function appOptionsForProject(project: Project): Application[] {
-  return applications.value.filter((item) => item.project_id === project.id)
-}
-
-function keysForProject(project: Project): APIKeyRecord[] {
-  return apiKeys.value.filter((item) => item.project_id === project.id)
 }
 
 function formatNumber(value: number): string {
@@ -112,6 +86,8 @@ function toggleModel(model: string) {
 }
 
 function resetForm() {
+  form.project_id = ''
+  form.application_id = ''
   form.name = ''
   form.policy_id = ''
   form.qps_limit = 0
@@ -189,7 +165,7 @@ onMounted(load)
             <RefreshCw :size="17" />
             {{ t('common.refresh') }}
           </button>
-          <a class="button secondary" href="/admin/dashboard">{{ t('nav.admin') }}</a>
+          <RouterLink class="button secondary" to="/admin/dashboard">{{ t('nav.admin') }}</RouterLink>
         </div>
       </section>
 
@@ -270,18 +246,6 @@ onMounted(load)
                 <span>{{ t('apiKeys.name') }}</span>
                 <input v-model="form.name" required :placeholder="t('portal.keyNamePlaceholder')" />
               </label>
-              <label class="field">
-                <span>{{ t('projects.project') }}</span>
-                <select v-model="form.project_id" required @change="form.application_id = applicationOptions[0]?.id || ''">
-                  <option v-for="project in projectOptions" :key="project.id" :value="project.id">{{ project.name }}</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>{{ t('projects.applications') }}</span>
-                <select v-model="form.application_id" required>
-                  <option v-for="item in applicationOptions" :key="item.id" :value="item.id">{{ item.name }}</option>
-                </select>
-              </label>
               <div class="field">
                 <span>{{ t('apiKeys.modelAllowlist') }}</span>
                 <div class="chip-list">
@@ -315,45 +279,6 @@ onMounted(load)
             </fieldset>
           </form>
         </section>
-
-        <section class="panel">
-          <div class="panel-header split-header">
-            <div>
-              <h2>{{ t('portal.myProjects') }}</h2>
-              <p>{{ t('portal.projectSummary') }}</p>
-            </div>
-            <WalletCards :size="18" />
-          </div>
-          <div class="panel-body table-scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>{{ t('projects.project') }}</th>
-                  <th>{{ t('projects.applications') }}</th>
-                  <th>{{ t('admin.apiKeys') }}</th>
-                  <th>{{ t('costAllocation.budget') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="project in projects" :key="project.id">
-                  <td>
-                    <strong>{{ project.name }}</strong>
-                    <span>{{ project.cost_center || '-' }}</span>
-                  </td>
-                  <td>{{ appOptionsForProject(project).length }}</td>
-                  <td>{{ keysForProject(project).length }}</td>
-                  <td>
-                    <strong>{{ project.monthly_budget_cents ? formatCost(project.monthly_budget_cents) : t('apiKeys.unlimited') }}</strong>
-                    <span>{{ project.budget_status || 'unlimited' }}</span>
-                  </td>
-                </tr>
-                <tr v-if="!projects.length">
-                  <td colspan="4" class="empty-cell">{{ loading ? t('common.loading') : t('portal.emptyProjects') }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
       </section>
 
       <section class="panel section-gap">
@@ -369,7 +294,7 @@ onMounted(load)
             <thead>
               <tr>
                 <th>{{ t('apiKeys.name') }}</th>
-                <th>{{ t('projects.project') }}</th>
+                <th>{{ t('apiKeys.models') }}</th>
                 <th>{{ t('apiKeys.policy') }}</th>
                 <th>{{ t('apiKeys.limits') }}</th>
                 <th>{{ t('providers.status') }}</th>
@@ -383,8 +308,7 @@ onMounted(load)
                   <span>{{ key.prefix }} · {{ key.fingerprint }}</span>
                 </td>
                 <td>
-                  <strong>{{ projectName(key.project_id) }}</strong>
-                  <span>{{ applicationName(key.application_id) }}</span>
+                  <span>{{ key.model_allowlist.join(', ') }}</span>
                 </td>
                 <td>{{ key.policy_id || t('policies.inherit') }}</td>
                 <td>

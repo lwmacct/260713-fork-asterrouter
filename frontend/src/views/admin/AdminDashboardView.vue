@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Activity, Boxes, Fingerprint, KeyRound, PlugZap, Server } from '@lucide/vue'
+import { Activity, Fingerprint, KeyRound, PlugZap, Server } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { getDashboard } from '@/api/control'
 import type { Dashboard } from '@/types'
@@ -14,9 +14,9 @@ const metrics = computed(() => {
   const data = dashboard.value
   return [
     { label: t('dashboard.providers'), value: data?.provider_count ?? 0, sub: `${data?.active_provider_count ?? 0} ${t('dashboard.active')}`, icon: Server },
-    { label: t('dashboard.projects'), value: data?.project_count ?? 0, sub: `${data?.application_count ?? 0} ${t('dashboard.apps')}`, icon: Boxes },
     { label: t('dashboard.apiKeys'), value: data?.api_key_count ?? 0, sub: `${data?.active_api_key_count ?? 0} ${t('dashboard.active')}`, icon: KeyRound },
-    { label: t('dashboard.models'), value: data?.models.length ?? 0, sub: t('dashboard.gatewayCatalog'), icon: PlugZap }
+    { label: t('dashboard.models'), value: data?.models.length ?? 0, sub: t('dashboard.gatewayCatalog'), icon: PlugZap },
+    { label: t('dashboard.recentAudit'), value: data?.recent_audit.length ?? 0, sub: t('audit.events'), icon: Fingerprint }
   ]
 })
 

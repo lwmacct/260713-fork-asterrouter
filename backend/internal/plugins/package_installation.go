@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -40,6 +41,20 @@ func (s *Service) InstallPackage(ctx context.Context, pluginID string, packageID
 	if !ok || cache.Status != PackageCacheStatusCached || strings.TrimSpace(cache.CachePath) == "" {
 		return PackageInstallation{}, ErrPackageNotCached
 	}
+	runtime := ""
+	if inspectedRuntime, ok, err := inspectPackageRuntime(cache.CachePath); err != nil {
+		return PackageInstallation{}, err
+	} else if ok {
+		_ = s.stopSidecarSupervisor(ctx, record.PluginID)
+		activatedRuntime, err := s.activatePackage(record, cache.CachePath)
+		if err != nil {
+			return PackageInstallation{}, err
+		}
+		if inspectedRuntime != activatedRuntime {
+			return PackageInstallation{}, fmt.Errorf("plugin package runtime changed during activation")
+		}
+		runtime = activatedRuntime
+	}
 	now := s.now().UTC()
 	installation := packageInstallationRecord{
 		PluginID:    record.PluginID,
@@ -55,6 +70,17 @@ func (s *Service) InstallPackage(ctx context.Context, pluginID string, packageID
 	if err := s.repo.SavePackageInstallation(ctx, installation); err != nil {
 		return PackageInstallation{}, err
 	}
+	if runtime == "sidecar" {
+		plugin, ok, err := s.repo.FindPlugin(ctx, record.PluginID)
+		if err != nil {
+			return PackageInstallation{}, err
+		}
+		if ok && plugin.Status == StatusEnabled {
+			if err := s.ensureSidecarSupervisor(ctx, record.PluginID); err != nil {
+				return PackageInstallation{}, err
+			}
+		}
+	}
 	return packageInstallationFromRecord(installation), nil
 }
 
@@ -68,6 +94,8 @@ func (s *Service) UninstallPackage(ctx context.Context, pluginID string, package
 	if !ok || installation.Status != PackageInstallInstalled || installation.PackageID != packageID {
 		return PackageInstallation{}, ErrPackageNotInstalled
 	}
+	_ = s.stopSidecarSupervisor(ctx, pluginID)
+	_ = os.RemoveAll(s.activePackageDir(pluginID, installation.Version))
 	installation.Status = PackageInstallUninstalled
 	installation.UpdatedAt = s.now().UTC()
 	if err := s.repo.SavePackageInstallation(ctx, installation); err != nil {

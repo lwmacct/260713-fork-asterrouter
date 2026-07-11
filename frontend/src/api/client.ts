@@ -1,6 +1,41 @@
 import axios, { AxiosError } from 'axios'
 import type { ApiResponse } from '@/types'
-import { getLocale } from '@/i18n'
+import i18n, { getLocale } from '@/i18n'
+
+export class ApiClientError extends Error {
+  status: number
+  code?: number
+
+  constructor(message: string, status: number, code?: number) {
+    super(message)
+    this.name = 'ApiClientError'
+    this.status = status
+    this.code = code
+  }
+}
+
+export function isNotFoundError(err: unknown): boolean {
+  return err instanceof ApiClientError && err.status === 404
+}
+
+function t(key: string): string {
+  return i18n.global.t(key)
+}
+
+function redirectToLogin() {
+  localStorage.removeItem('asterrouter_admin_token')
+  if (!window.location.pathname.startsWith('/login')) {
+    const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    window.location.assign(`/login?redirect=${encodeURIComponent(redirect)}`)
+  }
+}
+
+function normalizeMessage(status: number, message?: string): string {
+  const value = String(message || '').trim().toLowerCase()
+  if (status === 401 || value === 'login required') return t('common.sessionExpired')
+  if (status === 404 || value === 'not found') return t('common.resourceUnavailable')
+  return message || t('common.failed')
+}
 
 export const apiClient = axios.create({
   baseURL: '/api/v1',
@@ -27,12 +62,16 @@ apiClient.interceptors.response.use(
         response.data = payload.data
         return response
       }
-      return Promise.reject(new Error(payload.message || 'Request failed'))
+      const status = response.status
+      if (status === 401) redirectToLogin()
+      return Promise.reject(new ApiClientError(normalizeMessage(status, payload.message), status, payload.code))
     }
     return response
   },
   (error: AxiosError<ApiResponse<unknown>>) => {
-    const message = error.response?.data?.message || error.message || 'Network error'
-    return Promise.reject(new Error(message))
+    const status = error.response?.status || 0
+    if (status === 401) redirectToLogin()
+    const message = normalizeMessage(status, error.response?.data?.message || error.message || t('common.networkError'))
+    return Promise.reject(new ApiClientError(message, status, error.response?.data?.code))
   }
 )

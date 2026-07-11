@@ -152,8 +152,8 @@ func TestSetupProfileEndpoint(t *testing.T) {
 	systemService := system.NewService(system.Config{Version: "test", BuildType: "source"})
 	handler := New(Options{Config: config.Config{}, SettingsService: svc, ControlService: controlService, PluginService: pluginService, SystemService: systemService})
 
-	body := bytes.NewBufferString(`{"profile":"enterprise"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profile", body)
+	body := bytes.NewBufferString(`{"profiles":["enterprise","personal"],"default_profile":"personal"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -165,7 +165,7 @@ func TestSetupProfileEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Admin(): %v", err)
 	}
-	if got.Profile != "enterprise" || !got.SetupCompleted {
+	if got.DefaultProfile != "personal" || len(got.EnabledProfiles) != 2 || !got.SetupCompleted {
 		t.Fatalf("setup not persisted: %+v", got)
 	}
 }

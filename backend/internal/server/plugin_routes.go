@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
@@ -96,6 +97,57 @@ func registerPluginRoutes(group *gin.RouterGroup, svc *plugins.Service, control 
 		}
 		_ = recordPluginEvent(c, control, "catalog_sync", "official_catalog", fmt.Sprintf("Synced official catalog version %d", status.CatalogVersion))
 		httpx.OK(c, status)
+	})
+	group.GET("/:id/runtime/status", func(c *gin.Context) {
+		if svc == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1700, "plugin service is not available")
+			return
+		}
+		status, err := svc.SidecarRuntimeStatus(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			writeRuntimeError(c, err)
+			return
+		}
+		httpx.OK(c, status)
+	})
+	group.Any("/:id/runtime/proxy/*proxy_path", func(c *gin.Context) {
+		if svc == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1700, "plugin service is not available")
+			return
+		}
+		response, err := svc.ProxySidecarHTTP(c.Request.Context(), c.Param("id"), c.Param("proxy_path"), c.Request)
+		if err != nil {
+			writeRuntimeError(c, err)
+			return
+		}
+		defer response.Body.Close()
+		copyProxyResponseHeaders(c.Writer.Header(), response.Header)
+		c.Status(response.StatusCode)
+		_, _ = io.Copy(c.Writer, response.Body)
+	})
+	group.GET("/:id/frontend/contribution", func(c *gin.Context) {
+		if svc == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1700, "plugin service is not available")
+			return
+		}
+		raw, err := svc.PluginFrontendContribution(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			writeFrontendError(c, err)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+	})
+	group.GET("/:id/frontend/assets/*asset_path", func(c *gin.Context) {
+		if svc == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1700, "plugin service is not available")
+			return
+		}
+		assetPath, err := svc.PluginFrontendAssetPath(c.Request.Context(), c.Param("id"), c.Param("asset_path"))
+		if err != nil {
+			writeFrontendError(c, err)
+			return
+		}
+		c.File(assetPath)
 	})
 	group.POST("/:id/enable", func(c *gin.Context) {
 		if svc == nil {
@@ -291,6 +343,50 @@ func writePackageError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusForbidden, 1733, err.Error())
 	default:
 		httpx.Error(c, http.StatusBadGateway, 1734, err.Error())
+	}
+}
+
+func writeRuntimeError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, plugins.ErrPluginNotFound):
+		httpx.Error(c, http.StatusNotFound, 1751, err.Error())
+	case errors.Is(err, plugins.ErrPackageNotInstalled):
+		httpx.Error(c, http.StatusConflict, 1752, err.Error())
+	case errors.Is(err, plugins.ErrPluginDisabled), errors.Is(err, plugins.ErrPluginLocked):
+		httpx.Error(c, http.StatusConflict, 1753, err.Error())
+	case errors.Is(err, plugins.ErrPluginRuntimeUnavailable):
+		httpx.Error(c, http.StatusBadGateway, 1754, err.Error())
+	default:
+		httpx.Error(c, http.StatusInternalServerError, 1755, err.Error())
+	}
+}
+
+func writeFrontendError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, plugins.ErrPackageNotInstalled), errors.Is(err, plugins.ErrPluginFrontendNotFound):
+		httpx.Error(c, http.StatusNotFound, 1760, err.Error())
+	default:
+		httpx.Error(c, http.StatusInternalServerError, 1761, err.Error())
+	}
+}
+
+func copyProxyResponseHeaders(target http.Header, source http.Header) {
+	for key, values := range source {
+		if shouldDropProxyHeader(key) {
+			continue
+		}
+		for _, value := range values {
+			target.Add(key, value)
+		}
+	}
+}
+
+func shouldDropProxyHeader(key string) bool {
+	switch http.CanonicalHeaderKey(key) {
+	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -6,6 +6,9 @@ export default {
     loading: '加载中',
     saved: '设置已保存',
     failed: '请求失败',
+    sessionExpired: '登录已过期，请重新登录。',
+    resourceUnavailable: '当前服务暂未提供该数据。',
+    networkError: '网络错误',
     version: '版本',
     storage: '存储',
     saveCreated: '已创建',
@@ -25,6 +28,8 @@ export default {
   },
   nav: {
     setup: '初始化',
+    console: '个人控制台',
+    operator: '中转运营',
     admin: '管理员后台',
     portal: '员工门户',
     settings: '设置',
@@ -62,6 +67,8 @@ export default {
     relayDesc: '面向中转站和供应商运营的后台形态。',
     enterprise: '企业',
     enterpriseDesc: '企业内部 AI 治理的管理员后台和员工门户。',
+    defaultProfile: '默认入口',
+    selectAtLeastOne: '至少选择一个部署形态。',
     continue: '继续'
   },
   admin: {
@@ -96,8 +103,8 @@ export default {
     active: '启用',
     gatewayCatalog: '网关模型目录',
     recentAudit: '最近审计',
-    noAudit: '暂无审计事件',
-    noModels: '暂无模型目录'
+    noAudit: '',
+    noModels: ''
   },
   providers: {
     subtitle: '登记模型提供方连接，保持企业版语义，不展示中转运营概念。',
@@ -125,7 +132,7 @@ export default {
     editProvider: '编辑 Provider',
     modalSubtitle: '在弹窗中维护连接、模型目录、状态、优先级和密钥，列表页保持清爽。',
     keepSecret: '留空则保留当前密钥',
-    empty: '当前筛选条件下没有 Provider 连接。'
+    empty: ''
   },
   routingGroups: {
     subtitle: '维护 fallback、排序、容量和路由治理所需的高级路由边界。',
@@ -143,7 +150,7 @@ export default {
     created: '路由策略分组已创建',
     updated: '路由策略分组已更新',
     modalSubtitle: '策略分组用于把路由资源、模型和 fallback 策略组织到受控调度边界中。',
-    empty: '当前筛选条件下没有路由策略分组。'
+    empty: ''
   },
   providerAccounts: {
     subtitle: '维护高级路由资源，包括策略分组、模型、并发、优先级、成本权重和凭证。',
@@ -172,10 +179,10 @@ export default {
     disabled: '路由资源已停用',
     created: '路由资源已创建',
     updated: '路由资源已更新',
-    noGroups: '暂无策略分组，可先创建高级路由分组后再绑定资源。',
+    noGroups: '',
     searchPlaceholder: '搜索路由资源、平台、认证方式、分组或模型',
     modalSubtitle: '路由资源是后续 fallback、稳定性和模型可用性治理的高级基础。',
-    empty: '当前筛选条件下没有路由资源。'
+    empty: ''
   },
   modelPricings: {
     subtitle: '配置模型 Token 单价，让网关用量可以生成成本、分摊和预算证据。',
@@ -195,7 +202,7 @@ export default {
     created: '模型价格已创建',
     updated: '模型价格已更新',
     modalSubtitle: '当前为全局模型默认价；后续可以扩展 Provider 专属价格，不影响已有用量记录。',
-    empty: '当前筛选条件下没有模型定价。'
+    empty: ''
   },
   projects: {
     subtitle: '建立项目和应用边界，用于企业内部 API Key 治理。',
@@ -224,28 +231,28 @@ export default {
     appUpdated: '应用已更新',
     projectModalSubtitle: '创建用于预算、Key、应用和审计归属的治理边界。',
     appModalSubtitle: '将应用挂到项目下，后续 API Key 可以绑定到明确的运行边界。',
-    empty: '当前筛选条件下没有项目。'
+    empty: ''
   },
   users: {
-    subtitle: '管理工作区用户、默认角色和项目级角色绑定。',
+    subtitle: '管理工作区用户、默认角色和全局访问授权。',
     total: '用户',
     active: '启用',
     disabled: '禁用',
     bindings: '授权',
     workspaceUsers: '工作区用户',
-    workspaceUsersSubtitle: '内部开发者、审计员和项目运营人员可以在这里获得受控访问权限。',
+    workspaceUsersSubtitle: '内部开发者、审计员和运营人员可以在这里获得受控访问权限。',
     roleBindings: '角色绑定',
-    roleBindingsSubtitle: '在不改变 Provider 或 Key 归属的情况下授予全局或项目级权限。',
+    roleBindingsSubtitle: '在不改变 Provider 或 Key 归属的情况下授予工作区级权限。',
     newUser: '新增用户',
     editUser: '编辑用户',
     userModalSubtitle: '用户是身份记录；登录强制校验会在后续 RBAC Gate 中接入。',
-    bindingModalSubtitle: '为一个用户授予一个全局或项目级角色。',
+    bindingModalSubtitle: '为一个用户授予一个工作区级角色。',
     user: '用户',
     email: '邮箱',
     displayName: '显示名称',
     defaultRole: '默认角色',
     role: '角色',
-    projects: '项目',
+    projects: '范围',
     scope: '范围',
     globalScope: '全局',
     createdAt: '创建时间',
@@ -257,8 +264,8 @@ export default {
     bindingCreated: '角色绑定已创建',
     bindingRevoked: '角色绑定已撤销',
     searchPlaceholder: '搜索用户、角色或状态',
-    empty: '当前筛选条件下没有工作区用户。',
-    noBindings: '暂无角色绑定。'
+    empty: '',
+    noBindings: ''
   },
   departments: {
     subtitle: '管理部门层级、成本中心和预算归属。',
@@ -279,7 +286,7 @@ export default {
     created: '部门已创建',
     updated: '部门已更新',
     searchPlaceholder: '搜索部门、编码、成本中心或状态',
-    empty: '当前筛选条件下没有部门。'
+    empty: ''
   },
   policies: {
     subtitle: '集中管理模型访问、预算、配额、数据治理和超额处理策略。',
@@ -321,7 +328,7 @@ export default {
     searchPlaceholder: '搜索策略、范围、对象、模型或治理模式',
     created: '策略已创建',
     updated: '策略已更新',
-    empty: '当前筛选条件下没有策略。',
+    empty: '',
     scopes: {
       global: '全局',
       department: '部门',
@@ -343,9 +350,14 @@ export default {
     subtitle: '为 Codex、CLI、Claude Code 等 OpenAI-compatible 客户端签发一个通用 Workspace Key。',
     newKey: '新增 Workspace Key',
     editKey: '编辑 Workspace Key',
-    keys: 'Key 列表',
+    keys: 'Workspace Key',
     name: '名称',
     models: '模型白名单',
+    modelAllowlist: '模型白名单',
+    policy: '策略',
+    limits: '限制',
+    scope: '范围',
+    boundPolicies: '绑定策略',
     qps: 'QPS 限制',
     monthlyTokens: '月 Token 上限',
     oneTime: '请立即保存。该 Key 只展示一次。',
@@ -369,9 +381,9 @@ export default {
     policyExplanation: '策略解释',
     policyReason: '原因',
     selectedPolicy: '已命中',
-    noPolicyExplanation: '当前 Key 未命中策略。',
+    noPolicyExplanation: '',
     defaultScope: 'Workspace 默认',
-    empty: '当前筛选条件下没有 API Key。'
+    empty: ''
   },
   audit: {
     subtitle: '记录管理操作，支撑治理、排障和追责。',
@@ -387,7 +399,7 @@ export default {
     searchPlaceholder: '搜索操作者、动作、资源或摘要',
     allActions: '全部动作',
     allResources: '全部资源',
-    empty: '当前筛选条件下没有审计事件。'
+    empty: ''
   },
   usage: {
     subtitle: '查看网关请求、Token 消耗、预估成本和请求延迟。',
@@ -403,12 +415,12 @@ export default {
     recentRequests: '最近请求',
     model: '模型',
     route: 'Provider / 账号',
-    noData: '暂无用量数据',
+    noData: '',
     searchPlaceholder: '搜索模型、状态、Provider、账号、Key 指纹、项目或应用',
     allModels: '全部模型'
   },
   costAllocation: {
-    subtitle: '按项目、应用、API Key 或模型分摊 AI 网关成本，并结合预算上下文查看消耗。',
+    subtitle: '按 Workspace Key 和模型分摊 AI 网关成本。',
     dimension: '分摊维度',
     breakdown: '分摊明细',
     resource: '资源',
@@ -418,11 +430,11 @@ export default {
     allocatedCost: '按当前维度分摊',
     allProjects: '全部项目',
     allApplications: '全部应用',
-    searchPlaceholder: '搜索资源、项目、成本中心、应用、Key、指纹或模型',
-    empty: '当前筛选条件下没有成本分摊数据。',
+    searchPlaceholder: '搜索资源、Key、指纹或模型',
+    empty: '',
     dimensions: {
-      project: '按项目',
-      application: '按应用',
+      project: '按项目（高级）',
+      application: '按应用（高级）',
       api_key: '按 API Key',
       model: '按模型'
     }
@@ -442,7 +454,7 @@ export default {
     stream: '流式',
     nonStream: '非流式',
     messages: '消息',
-    empty: '当前筛选条件下没有网关 Trace。'
+    empty: ''
   },
   alerts: {
     subtitle: '集中跟踪预算、Provider 健康、路由风险和策略事件。',
@@ -465,7 +477,7 @@ export default {
     allStatuses: '全部状态',
     allResources: '全部资源',
     searchPlaceholder: '搜索标题、摘要、资源、项目、状态或去重键',
-    empty: '当前筛选条件下没有告警。',
+    empty: '',
     types: {
       project_budget: '项目预算',
       api_key_quota: 'API Key 配额',
@@ -509,7 +521,7 @@ export default {
     rows: '行',
     allData: '全部匹配数据',
     expires: '过期时间',
-    empty: '当前筛选条件下没有导出任务。',
+    empty: '',
     limit: '最大行数',
     keyword: '关键字',
     keywordPlaceholder: '可选的搜索关键字',
@@ -567,7 +579,7 @@ export default {
     offlinePackageFile: '离线插件包文件 JSON',
     installPackage: '安装',
     uninstallPackage: '卸载',
-    noPackages: '暂无可下载插件包。',
+    noPackages: '',
     status: '状态',
     actions: '操作',
     enable: '启用',
@@ -639,16 +651,52 @@ export default {
     allDeliveryStatuses: '全部投递状态',
     target: '目标',
     error: '错误',
-    noDeliveries: '暂无投递记录。',
+    noDeliveries: '',
     deliveryStatuses: {
       succeeded: '成功',
       failed: '失败',
       skipped: '已跳过'
     },
+    runtimeStatus: '运行时状态',
+    runtimeInstalled: '已安装',
+    runtimeEnabled: '已启用',
+    runtimeRunning: 'Sidecar',
+    runtimeSupervisor: 'Supervisor',
+    runtimeRestarts: '重启次数',
+    runtimeStartedAt: '最近启动',
+    runtimeExitedAt: '最近退出',
+    runtimeNextRestartAt: '下次重启',
+    running: '运行中',
+    yes: '是',
+    no: '否',
     searchPlaceholder: '搜索插件、厂商、分类或贡献面',
     allCategories: '全部分类',
     allTiers: '全部层级',
-    empty: '当前筛选条件下没有插件。'
+    empty: ''
+  },
+  console: {
+    title: '个人控制台',
+    subtitle: '面向个人网关的 Provider、Workspace Key、用量和客户端接入入口。',
+    activeProviders: '活跃 Provider',
+    activeKeys: '活跃 Key',
+    requests: '请求数',
+    cost: '成本',
+    gateway: '网关端点',
+    gatewayHelp: '在 Codex、CLI、Claude Code 和本地工具中使用这个 OpenAI-compatible Base URL。',
+    shortcuts: '常用操作',
+    shortcutsHelp: '快速进入 Provider、Key 和用量等聚焦管理页面。'
+  },
+  operator: {
+    title: '中转运营后台',
+    subtitle: '运营路由资源、客户 Key、Provider Pool、流量和证据记录。',
+    providers: 'Provider',
+    routeResources: '路由资源',
+    customerKeys: '客户 Key',
+    cost: '成本',
+    dispatch: '调度运营',
+    dispatchHelp: '管理路由分组、路由资源和插件证据。',
+    traffic: '流量运营',
+    trafficHelp: '查看客户 Key、用量、网关 Trace 和错误分布。'
   },
   settings: {
     general: '基础信息',
@@ -659,7 +707,8 @@ export default {
     siteName: '站点名称',
     siteSubtitle: '站点副标题',
     publicBaseUrl: '外部访问地址',
-    profile: '部署形态',
+    enabledProfiles: '已开通形态',
+    defaultProfile: '默认入口',
     gatewayBasePath: '网关路径',
     defaultLocale: '默认语言',
     enabledLocales: '启用语言',
@@ -703,29 +752,25 @@ export default {
     cost: '成本',
     activeAlerts: '活跃告警',
     createKey: '创建 API Key',
-    createKeyHelp: '为有权限的应用签发项目级 Key。',
+    createKeyHelp: '签发一个可被 Codex、CLI、Claude Code 和兼容客户端复用的 Workspace Key。',
     keyNamePlaceholder: '内部应用 Key',
     keyCreated: 'API Key 已创建',
     keyRotated: 'API Key 已轮换',
     keyDisabled: 'API Key 已禁用',
     secretOnce: '请立即保存该密钥，之后不会再次展示。',
     readOnly: '当前门户角色对 API Key 只有只读权限。',
-    myProjects: '我的项目',
     myKeys: '我的 API Keys',
     usage: '用量',
-    usageHelp: '当前门户账号可见项目范围内的用量和成本。',
+    usageHelp: '当前门户账号可见范围内的用量和成本。',
     alerts: '告警',
-    alertsHelp: '当前项目范围内的预算、配额、Provider 和网关事件。',
+    alertsHelp: '当前门户账号可见的预算、配额、Provider 和网关事件。',
     recentTraces: '最近 Trace',
-    traceHelp: '当前项目范围内最近网关调用的请求级证据。',
-    keySummary: '当前门户工作区可见的项目级 Key。',
-    projectSummary: '当前工作区可见的项目。',
-    appSummary: '当前项目下挂载的应用。',
-    emptyProjects: '当前门户账号尚未分配项目。',
-    emptyKeys: '当前门户工作区没有可见 API Key。',
-    emptyUsage: '当前项目范围内暂无用量记录。',
-    emptyAlerts: '当前项目范围内没有活跃告警。',
-    emptyTraces: '当前项目范围内没有可见网关 Trace。',
+    traceHelp: '当前 Workspace 范围内最近网关调用的请求级证据。',
+    keySummary: '当前门户账号可见的 Workspace Key。',
+    emptyKeys: '',
+    emptyUsage: '',
+    emptyAlerts: '',
+    emptyTraces: '',
     next: '后续产品化页面'
   }
 }

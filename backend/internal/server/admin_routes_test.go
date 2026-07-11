@@ -548,7 +548,7 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 func TestCreateAPIKeyEndpoint(t *testing.T) {
 	handler := newTestHandler(t, config.Config{})
 
-	body := bytes.NewBufferString(`{"project_id":"proj_platform","application_id":"app_internal_sandbox","name":"demo","model_allowlist":["gpt-4o-mini"],"qps_limit":2,"monthly_token_limit":1000}`)
+	body := bytes.NewBufferString(`{"name":"demo","model_allowlist":["gpt-4o-mini"],"qps_limit":2,"monthly_token_limit":1000}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/api-keys", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -566,6 +566,9 @@ func TestCreateAPIKeyEndpoint(t *testing.T) {
 	}
 	if resp.Data.Key == "" || resp.Data.Record.Fingerprint == "" {
 		t.Fatalf("api key response incomplete: %+v", resp.Data)
+	}
+	if resp.Data.Record.ProjectID != "proj_platform" || resp.Data.Record.ApplicationID != "app_internal_sandbox" {
+		t.Fatalf("workspace default boundary mismatch: %+v", resp.Data.Record)
 	}
 }
 

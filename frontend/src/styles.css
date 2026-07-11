@@ -1307,6 +1307,10 @@ button.pill:hover {
   gap: 10px;
 }
 
+.plugin-detail-meta.compact-meta {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .plugin-detail-meta > div {
   display: grid;
   min-height: 76px;
@@ -1345,6 +1349,11 @@ button.pill:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.tiny-button {
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .package-list {
@@ -1420,6 +1429,12 @@ button.pill:hover {
   height: 96px;
   color: var(--text-muted) !important;
   text-align: center !important;
+}
+
+.empty-cell:empty {
+  height: 0;
+  padding: 0 !important;
+  line-height: 0;
 }
 
 .status-success {
@@ -1616,6 +1631,9 @@ button.pill:hover {
 }
 
 .profile-card {
+  display: grid;
+  align-content: start;
+  gap: 0;
   min-height: 168px;
   padding: 18px;
   color: var(--text-secondary);
@@ -1632,6 +1650,31 @@ button.pill:hover {
   box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.12);
 }
 
+.profile-card.primary {
+  background: color-mix(in srgb, var(--primary-50), var(--surface) 72%);
+}
+
+.profile-card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.profile-check {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--primary-600);
+}
+
+.profile-check.active {
+  border-color: var(--primary-500);
+  background: rgba(20, 184, 166, 0.12);
+}
+
 .profile-card h2 {
   margin: 13px 0 7px;
   color: var(--text);
@@ -1642,6 +1685,16 @@ button.pill:hover {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.profile-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .auth-page {

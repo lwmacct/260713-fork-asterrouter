@@ -85,19 +85,21 @@ func New(opts Options) http.Handler {
 			return
 		}
 		httpx.OK(c, gin.H{
-			"profile":         data.Profile,
-			"setup_completed": data.SetupCompleted,
+			"default_profile":  data.DefaultProfile,
+			"enabled_profiles": data.EnabledProfiles,
+			"setup_completed":  data.SetupCompleted,
 		})
 	})
-	api.POST("/setup/profile", func(c *gin.Context) {
+	api.POST("/setup/profiles", func(c *gin.Context) {
 		var req struct {
-			Profile string `json:"profile"`
+			Profiles       []string `json:"profiles"`
+			DefaultProfile string   `json:"default_profile"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1400, "invalid request")
 			return
 		}
-		data, err := opts.SettingsService.ApplyProfile(c.Request.Context(), req.Profile)
+		data, err := opts.SettingsService.ApplyProfiles(c.Request.Context(), req.Profiles, req.DefaultProfile)
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1401, err.Error())
 			return

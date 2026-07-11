@@ -1,17 +1,14 @@
 <script setup lang="ts">
-import TopBar from '@/components/TopBar.vue'
+import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+onMounted(() => {
+  router.replace('/')
+})
 </script>
 
 <template>
-  <div class="app-page">
-    <TopBar />
-    <main class="content">
-      <section class="panel">
-        <div class="panel-body">
-          <h1>Not Found</h1>
-          <a class="button" href="/admin/settings">Open Admin Console</a>
-        </div>
-      </section>
-    </main>
-  </div>
+  <main class="content"></main>
 </template>

@@ -13,7 +13,8 @@ import type {
   PluginPackageInstallation,
   PluginPackageImportRequest,
   PluginPackageDownloadRequest,
-  PluginPackageDownloadResult
+  PluginPackageDownloadResult,
+  SidecarRuntimeStatus
 } from '@/types'
 
 export async function getPluginCatalog(): Promise<PluginCatalog> {
@@ -99,5 +100,10 @@ export async function importPluginPackage(id: string, packageID: string, payload
 
 export async function uninstallPluginPackage(id: string, packageID: string): Promise<PluginPackageInstallation> {
   const response = await apiClient.post<PluginPackageInstallation>(`/admin/plugins/${encodeURIComponent(id)}/packages/${encodeURIComponent(packageID)}/uninstall`)
+  return response.data
+}
+
+export async function getSidecarRuntimeStatus(id: string): Promise<SidecarRuntimeStatus> {
+  const response = await apiClient.get<SidecarRuntimeStatus>(`/admin/plugins/${encodeURIComponent(id)}/runtime/status`)
   return response.data
 }

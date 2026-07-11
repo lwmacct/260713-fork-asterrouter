@@ -71,11 +71,14 @@ func (s *Service) CreatePortalAPIKey(ctx context.Context, actor string, req APIK
 	if !scope.CanManageKeys {
 		return APIKeyCreateResponse{}, errors.New("portal principal cannot manage api keys")
 	}
-	if err := s.ensurePortalProjectAccess(scope, req.ProjectID); err != nil {
-		return APIKeyCreateResponse{}, err
-	}
-	if err := s.ensurePortalApplicationAccess(ctx, scope, req.ApplicationID); err != nil {
-		return APIKeyCreateResponse{}, err
+	if strings.TrimSpace(req.ApplicationID) != "" {
+		if err := s.ensurePortalApplicationAccess(ctx, scope, req.ApplicationID); err != nil {
+			return APIKeyCreateResponse{}, err
+		}
+	} else if strings.TrimSpace(req.ProjectID) != "" {
+		if err := s.ensurePortalProjectAccess(scope, req.ProjectID); err != nil {
+			return APIKeyCreateResponse{}, err
+		}
 	}
 	return s.CreateAPIKey(ctx, portalActor(scope.Actor), req)
 }

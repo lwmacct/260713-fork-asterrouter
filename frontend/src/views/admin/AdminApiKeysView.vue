@@ -7,15 +7,13 @@ import {
   disableAPIKey,
   getAPIKeys,
   getAPIKeyPolicyExplanation,
-  getApplications,
   getGatewayTraces,
   getGovernancePolicies,
-  getProjects,
   getUsageReport,
   rotateAPIKey,
   updateAPIKey
 } from '@/api/control'
-import type { APIKeyCreateRequest, APIKeyRecord, Application, GatewayPolicyExplanation, GatewayTrace, GovernancePolicy, Project, UsageReport } from '@/types'
+import type { APIKeyCreateRequest, APIKeyRecord, GatewayPolicyExplanation, GatewayTrace, GovernancePolicy, UsageReport } from '@/types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -32,8 +30,6 @@ const detailTraces = ref<GatewayTrace[]>([])
 const detailPolicyExplanation = ref<GatewayPolicyExplanation | null>(null)
 const oneTimeKey = ref('')
 const apiKeys = ref<APIKeyRecord[]>([])
-const projects = ref<Project[]>([])
-const applications = ref<Application[]>([])
 const policies = ref<GovernancePolicy[]>([])
 const query = ref('')
 const statusFilter = ref('')
@@ -50,9 +46,6 @@ const form = reactive<APIKeyCreateRequest>({
   expires_at: ''
 })
 
-const filteredApplications = computed(() => applications.value.filter((app) => app.project_id === form.project_id))
-const projectByID = computed(() => new Map(projects.value.map((item) => [item.id, item])))
-const appByID = computed(() => new Map(applications.value.map((item) => [item.id, item])))
 const policyByID = computed(() => new Map(policies.value.map((item) => [item.id, item])))
 const activePolicies = computed(() => policies.value.filter((item) => item.status === 'active'))
 
@@ -61,9 +54,8 @@ const filteredKeys = computed(() => {
   return apiKeys.value.filter((key) => {
     if (statusFilter.value && key.status !== statusFilter.value) return false
     if (!keyword) return true
-    const project = projectByID.value.get(key.project_id)?.name || ''
-    const app = appByID.value.get(key.application_id)?.name || ''
-    return [key.name, key.fingerprint, key.prefix, project, app, key.model_allowlist.join(' ')].some((value) =>
+    const policy = key.policy_id ? policyByID.value.get(key.policy_id)?.name || key.policy_id : ''
+    return [key.name, key.fingerprint, key.prefix, policy, key.model_allowlist.join(' ')].some((value) =>
       value.toLowerCase().includes(keyword)
     )
   })
@@ -73,7 +65,7 @@ const summary = computed(() => ({
   total: apiKeys.value.length,
   active: apiKeys.value.filter((item) => item.status === 'active').length,
   disabled: apiKeys.value.filter((item) => item.status === 'disabled').length,
-  projects: new Set(apiKeys.value.map((item) => item.project_id)).size
+  policies: new Set(apiKeys.value.map((item) => item.policy_id).filter(Boolean)).size
 }))
 
 function splitModels(value: string): string[] {
@@ -84,19 +76,10 @@ function dateInputValue(value?: string): string {
   return value ? value.slice(0, 10) : ''
 }
 
-function syncDefaults() {
-  if (!form.project_id && projects.value[0]) {
-    form.project_id = projects.value[0].id
-  }
-  if (!form.application_id && filteredApplications.value[0]) {
-    form.application_id = filteredApplications.value[0].id
-  }
-}
-
 function openCreate() {
   editing.value = null
   Object.assign(form, {
-    project_id: projects.value[0]?.id || '',
+    project_id: '',
     application_id: '',
     name: '',
     policy_id: '',
@@ -107,7 +90,6 @@ function openCreate() {
   })
   keyStatus.value = 'active'
   modelsText.value = 'gpt-4o-mini'
-  syncDefaults()
   modalOpen.value = true
 }
 
@@ -152,17 +134,12 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [projectData, appData, keyData, policyData] = await Promise.all([
-      getProjects(),
-      getApplications(),
+    const [keyData, policyData] = await Promise.all([
       getAPIKeys(),
       getGovernancePolicies()
     ])
-    projects.value = projectData
-    applications.value = appData
     apiKeys.value = keyData
     policies.value = policyData
-    syncDefaults()
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -274,7 +251,7 @@ onMounted(load)
       <span><strong>{{ summary.total }}</strong>{{ t('apiKeys.keys') }}</span>
       <span><strong>{{ summary.active }}</strong>{{ t('dashboard.active') }}</span>
       <span><strong>{{ summary.disabled }}</strong>{{ t('providers.disabled') }}</span>
-      <span><strong>{{ summary.projects }}</strong>{{ t('dashboard.projects') }}</span>
+      <span><strong>{{ summary.policies }}</strong>{{ t('apiKeys.boundPolicies') }}</span>
     </div>
 
     <section class="table-toolbar">
@@ -306,8 +283,6 @@ onMounted(load)
           <thead>
             <tr>
               <th>{{ t('apiKeys.name') }}</th>
-              <th>{{ t('projects.project') }}</th>
-              <th>{{ t('projects.application') }}</th>
               <th>{{ t('apiKeys.fingerprint') }}</th>
               <th>{{ t('providers.status') }}</th>
               <th>{{ t('policies.policy') }}</th>
@@ -323,8 +298,6 @@ onMounted(load)
                 <strong>{{ key.name }}</strong>
                 <span>{{ key.prefix }}</span>
               </td>
-              <td>{{ projectByID.get(key.project_id)?.name || '-' }}</td>
-              <td>{{ appByID.get(key.application_id)?.name || '-' }}</td>
               <td>{{ key.fingerprint }}</td>
               <td><span class="pill" :class="key.status === 'active' ? 'status-success' : 'status-danger'">{{ key.status }}</span></td>
               <td>
@@ -361,7 +334,7 @@ onMounted(load)
               </td>
             </tr>
             <tr v-if="!filteredKeys.length">
-              <td colspan="10" class="empty-cell">{{ loading ? t('common.loading') : t('apiKeys.empty') }}</td>
+              <td colspan="8" class="empty-cell">{{ loading ? t('common.loading') : t('apiKeys.empty') }}</td>
             </tr>
           </tbody>
         </table>
@@ -379,18 +352,6 @@ onMounted(load)
         </header>
 
         <div class="modal-body form-grid">
-          <div class="field">
-            <label>{{ t('projects.project') }}</label>
-            <select v-model="form.project_id" :disabled="Boolean(editing)" @change="form.application_id = filteredApplications[0]?.id || ''">
-              <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>{{ t('projects.application') }}</label>
-            <select v-model="form.application_id" :disabled="Boolean(editing)">
-              <option v-for="app in filteredApplications" :key="app.id" :value="app.id">{{ app.name }}</option>
-            </select>
-          </div>
           <div class="field form-span-2">
             <label>{{ t('apiKeys.name') }}</label>
             <input v-model="form.name" />
@@ -442,7 +403,7 @@ onMounted(load)
         <header class="modal-header">
           <div>
             <h2>{{ selectedKey.name }}</h2>
-            <p>{{ selectedKey.fingerprint }} · {{ projectByID.get(selectedKey.project_id)?.name || '-' }}</p>
+            <p>{{ selectedKey.fingerprint }} · {{ t('apiKeys.defaultScope') }}</p>
           </div>
           <button class="icon-button" type="button" @click="selectedKey = null"><X :size="19" /></button>
         </header>
@@ -451,8 +412,8 @@ onMounted(load)
           <div v-if="detailError" class="notice">{{ detailError }}</div>
           <div class="detail-grid">
             <div>
-              <label>{{ t('projects.application') }}</label>
-              <p>{{ appByID.get(selectedKey.application_id)?.name || '-' }}</p>
+              <label>{{ t('apiKeys.scope') }}</label>
+              <p>{{ t('apiKeys.defaultScope') }}</p>
             </div>
             <div>
               <label>{{ t('providers.status') }}</label>

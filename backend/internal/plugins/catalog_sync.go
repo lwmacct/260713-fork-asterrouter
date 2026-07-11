@@ -52,6 +52,7 @@ type remoteCatalogIndex struct {
 
 type remoteCatalogPlugin struct {
 	PublicID   string                 `json:"public_id"`
+	PluginID   string                 `json:"plugin_id,omitempty"`
 	Slug       string                 `json:"slug"`
 	Name       string                 `json:"name"`
 	Summary    string                 `json:"summary"`

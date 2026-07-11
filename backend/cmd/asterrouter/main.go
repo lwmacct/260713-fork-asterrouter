@@ -54,9 +54,10 @@ func main() {
 	defer exportJobStore.Close()
 
 	settingsService := settings.NewService(repo, settings.ServiceOptions{
-		Version:     cfg.Version,
-		ProfileHint: cfg.Profile,
-		StorageMode: storageMode,
+		Version:         cfg.Version,
+		EnabledProfiles: cfg.Profiles,
+		DefaultProfile:  cfg.DefaultProfile,
+		StorageMode:     storageMode,
 	})
 	authService := auth.NewService(auth.Config{
 		Username:         cfg.AdminUsername,
@@ -87,10 +88,14 @@ func main() {
 			DisplayName:     cfg.InstanceDisplayName,
 		},
 		PackageCacheDir: cfg.PluginCacheDir,
+		PluginActiveDir: cfg.PluginActiveDir,
 		CoreVersion:     cfg.Version,
 	})
 	if err := pluginService.EnsureSeedData(context.Background()); err != nil {
 		log.Fatalf("seed plugin repository: %v", err)
+	}
+	if err := pluginService.StartEnabledSidecars(context.Background()); err != nil {
+		log.Fatalf("start enabled plugin sidecars: %v", err)
 	}
 	officialCatalogURL := ""
 	officialCatalogKeyID := ""
@@ -144,5 +149,8 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("server shutdown failed: %v", err)
+	}
+	if err := pluginService.Shutdown(context.Background()); err != nil {
+		log.Printf("plugin shutdown failed: %v", err)
 	}
 }

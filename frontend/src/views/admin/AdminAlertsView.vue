@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { BellRing, Check, CircleCheck, RefreshCw, Search } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { acknowledgeAlert, getAlertSummary, getAlerts, resolveAlert } from '@/api/control'
+import { isNotFoundError } from '@/api/client'
 import type { AlertEvent, AlertSummary, RecordListQuery } from '@/types'
 import { datetimeLocalToISOString } from '@/utils/timeRange'
 
@@ -44,6 +45,11 @@ async function load() {
     alerts.value = alertData
     summary.value = summaryData
   } catch (err) {
+    if (isNotFoundError(err)) {
+      alerts.value = []
+      summary.value = { total: 0, active: 0, acknowledged: 0, resolved: 0, warning: 0, critical: 0 }
+      return
+    }
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
     loading.value = false

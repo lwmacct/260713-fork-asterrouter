@@ -43,7 +43,7 @@ func TestPortalWorkspaceAndAPIKeyRoutes(t *testing.T) {
 		t.Fatalf("workspace mismatch: %+v", workspaceResp.Data)
 	}
 
-	body := bytes.NewBufferString(`{"project_id":"proj_platform","application_id":"app_internal_sandbox","name":"Portal HTTP key","model_allowlist":["gpt-4o-mini"],"qps_limit":1,"monthly_token_limit":1000}`)
+	body := bytes.NewBufferString(`{"name":"Portal HTTP key","model_allowlist":["gpt-4o-mini"],"qps_limit":1,"monthly_token_limit":1000}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/portal/api-keys", body)
 	createReq.Header.Set("Authorization", "Bearer "+token)
 	createReq.Header.Set("Content-Type", "application/json")
@@ -60,6 +60,9 @@ func TestPortalWorkspaceAndAPIKeyRoutes(t *testing.T) {
 	}
 	if createResp.Data.Key == "" || createResp.Data.Record.ID == "" {
 		t.Fatalf("create key mismatch: %+v", createResp.Data)
+	}
+	if createResp.Data.Record.ProjectID != "proj_platform" || createResp.Data.Record.ApplicationID != "app_internal_sandbox" {
+		t.Fatalf("workspace default boundary mismatch: %+v", createResp.Data.Record)
 	}
 
 	rotateReq := httptest.NewRequest(http.MethodPost, "/api/v1/portal/api-keys/"+createResp.Data.Record.ID+"/rotate", nil)

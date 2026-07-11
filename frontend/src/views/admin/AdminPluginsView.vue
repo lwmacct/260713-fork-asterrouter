@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Boxes, CheckCircle2, Download, FileClock, LockKeyhole, Plug, RefreshCw, Search, Settings2, Upload, X, XCircle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -12,6 +12,7 @@ import {
   getPluginCatalog,
   getPluginConfig,
   getPluginDeliveries,
+  getSidecarRuntimeStatus,
   importOfficialLicense,
   importPluginPackage,
   installPluginPackage,
@@ -19,7 +20,7 @@ import {
   uninstallPluginPackage,
   updatePluginConfig
 } from '@/api/plugins'
-import type { OfficialCatalogStatus, OfficialLicenseStatus, Plugin, PluginCatalog, PluginConfig, PluginDeliveryAttempt, PluginPackage } from '@/types'
+import type { OfficialCatalogStatus, OfficialLicenseStatus, Plugin, PluginCatalog, PluginConfig, PluginDeliveryAttempt, PluginPackage, SidecarRuntimeStatus } from '@/types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -68,6 +69,8 @@ const catalog = ref<PluginCatalog>({
 })
 const officialCatalogStatus = ref<OfficialCatalogStatus | null>(null)
 const officialLicenseStatus = ref<OfficialLicenseStatus | null>(null)
+const runtimeStatus = ref<SidecarRuntimeStatus | null>(null)
+const runtimeStatusLoading = ref(false)
 
 type SecretField = {
   key: string
@@ -171,6 +174,19 @@ async function load() {
   }
 }
 
+async function loadRuntimeStatus(plugin: Plugin | null) {
+  runtimeStatus.value = null
+  if (!plugin) return
+  runtimeStatusLoading.value = true
+  try {
+    runtimeStatus.value = await getSidecarRuntimeStatus(plugin.id)
+  } catch {
+    runtimeStatus.value = null
+  } finally {
+    runtimeStatusLoading.value = false
+  }
+}
+
 async function loadOfficialCatalogStatus() {
   catalogStatusLoading.value = true
   try {
@@ -226,6 +242,7 @@ async function setEnabled(plugin: Plugin, enabled: boolean) {
     if (updated && selectedPlugin.value?.id === plugin.id) {
       selectedPlugin.value = updated
     }
+    await loadRuntimeStatus(activePlugin.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -283,6 +300,7 @@ async function cachePackage(plugin: Plugin, pkg: PluginPackage | null) {
     if (updated && selectedPlugin.value?.id === plugin.id) {
       selectedPlugin.value = updated
     }
+    await loadRuntimeStatus(activePlugin.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -313,6 +331,7 @@ async function savePackageImport() {
     if (updated && selectedPlugin.value?.id === target.plugin.id) {
       selectedPlugin.value = updated
     }
+    await loadRuntimeStatus(activePlugin.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -333,6 +352,7 @@ async function installPackage(plugin: Plugin, pkg: PluginPackage | null) {
     if (updated && selectedPlugin.value?.id === plugin.id) {
       selectedPlugin.value = updated
     }
+    await loadRuntimeStatus(activePlugin.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -353,6 +373,7 @@ async function uninstallPackage(plugin: Plugin, pkg: PluginPackage | null) {
     if (updated && selectedPlugin.value?.id === plugin.id) {
       selectedPlugin.value = updated
     }
+    await loadRuntimeStatus(activePlugin.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -543,6 +564,13 @@ function formatOptionalTime(value?: string): string {
   return formatTime(value)
 }
 
+function runtimeStateClass(status?: SidecarRuntimeStatus | null) {
+  if (status?.running) return 'status-success'
+  if (status?.supervisor_state === 'backing_off' || status?.supervisor_state === 'starting') return 'status-warning'
+  if (status?.error || status?.last_error) return 'status-danger'
+  return 'status-warning'
+}
+
 function shortHash(value: string): string {
   if (!value) return '-'
   if (value.length <= 18) return value
@@ -555,6 +583,13 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
+
+watch(
+  () => activePlugin.value?.id,
+  () => {
+    void loadRuntimeStatus(activePlugin.value)
+  }
+)
 
 onMounted(load)
 </script>
@@ -817,6 +852,62 @@ onMounted(load)
             <p>{{ activePlugin.entry_point || '-' }}</p>
           </div>
         </div>
+
+        <section class="plugin-detail-section">
+          <div class="plugin-section-title">
+            <h3>{{ t('plugins.runtimeStatus') }}</h3>
+            <button class="button secondary tiny-button" type="button" :disabled="runtimeStatusLoading" @click="loadRuntimeStatus(activePlugin)">
+              <RefreshCw :size="14" />
+              {{ t('common.refresh') }}
+            </button>
+          </div>
+          <div class="plugin-detail-meta compact-meta">
+            <div>
+              <label>{{ t('plugins.runtimeInstalled') }}</label>
+              <span class="pill" :class="runtimeStatus?.installed ? 'status-success' : 'status-warning'">
+                {{ runtimeStatus?.installed ? t('plugins.yes') : t('plugins.no') }}
+              </span>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeEnabled') }}</label>
+              <span class="pill" :class="runtimeStatus?.enabled ? 'status-success' : 'status-warning'">
+                {{ runtimeStatus?.enabled ? t('plugins.yes') : t('plugins.no') }}
+              </span>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeRunning') }}</label>
+              <span class="pill" :class="runtimeStateClass(runtimeStatus)">
+                {{ runtimeStatus?.running ? t('plugins.running') : runtimeStatus?.supervisor_state || '-' }}
+              </span>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeSupervisor') }}</label>
+              <span class="pill" :class="runtimeStatus?.supervised ? 'status-success' : 'status-warning'">
+                {{ runtimeStatus?.supervisor_state || (runtimeStatus?.supervised ? 'supervised' : '-') }}
+              </span>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeRestarts') }}</label>
+              <p>{{ runtimeStatus?.restart_count ?? 0 }}</p>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeStartedAt') }}</label>
+              <p>{{ formatOptionalTime(runtimeStatus?.last_started_at) }}</p>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeExitedAt') }}</label>
+              <p>{{ formatOptionalTime(runtimeStatus?.last_exited_at) }}</p>
+            </div>
+            <div>
+              <label>{{ t('plugins.runtimeNextRestartAt') }}</label>
+              <p>{{ formatOptionalTime(runtimeStatus?.next_restart_at) }}</p>
+            </div>
+            <div v-if="runtimeStatus?.last_error || runtimeStatus?.error" class="form-span-2">
+              <label>{{ t('plugins.error') }}</label>
+              <p>{{ runtimeStatus.last_error || runtimeStatus.error }}</p>
+            </div>
+          </div>
+        </section>
 
         <section class="plugin-detail-section">
           <div class="plugin-section-title">

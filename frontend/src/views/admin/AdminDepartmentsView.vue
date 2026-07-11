@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Building2, Edit3, Plus, RefreshCw, Save, Search, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { createDepartment, getDepartments, updateDepartment } from '@/api/control'
+import { isNotFoundError } from '@/api/client'
 import type { Department, DepartmentRequest } from '@/types'
 
 const { t } = useI18n()
@@ -94,17 +95,13 @@ function formatCost(cents: number): string {
   }).format(cents / 100)
 }
 
-function isEmptyListError(err: unknown): boolean {
-  return err instanceof Error && err.message.trim().toLowerCase() === 'not found'
-}
-
 async function load() {
   loading.value = true
   error.value = ''
   try {
     departments.value = await getDepartments()
   } catch (err) {
-    if (isEmptyListError(err)) {
+    if (isNotFoundError(err)) {
       departments.value = []
       return
     }

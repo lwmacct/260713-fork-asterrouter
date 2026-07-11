@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,16 +21,20 @@ var (
 )
 
 type Service struct {
-	repo            Repository
-	secretKey       string
-	httpClient      *http.Client
-	catalogConfig   OfficialCatalogConfig
-	licenseConfig   OfficialLicenseConfig
-	packageCacheDir string
-	coreVersion     string
-	targetOS        string
-	targetArch      string
-	now             func() time.Time
+	repo             Repository
+	secretKey        string
+	httpClient       *http.Client
+	catalogConfig    OfficialCatalogConfig
+	licenseConfig    OfficialLicenseConfig
+	packageCacheDir  string
+	packageActiveDir string
+	coreVersion      string
+	targetOS         string
+	targetArch       string
+	now              func() time.Time
+	sidecarsMu       sync.Mutex
+	sidecars         map[string]*sidecarProcess
+	supervisors      map[string]*sidecarSupervisor
 }
 
 type ServiceOptions struct {
@@ -38,6 +43,7 @@ type ServiceOptions struct {
 	OfficialCatalog OfficialCatalogConfig
 	OfficialLicense OfficialLicenseConfig
 	PackageCacheDir string
+	PluginActiveDir string
 	CoreVersion     string
 	TargetOS        string
 	TargetArch      string
@@ -65,17 +71,22 @@ func NewServiceWithOptions(repo Repository, options ServiceOptions) *Service {
 	if now == nil {
 		now = time.Now
 	}
+	cacheDir := defaultString(strings.TrimSpace(options.PackageCacheDir), defaultPackageCacheDir())
+	activeDir := defaultString(strings.TrimSpace(options.PluginActiveDir), defaultPackageActiveDir(cacheDir))
 	return &Service{
-		repo:            repo,
-		secretKey:       key,
-		httpClient:      client,
-		catalogConfig:   normalizeOfficialCatalogConfig(options.OfficialCatalog),
-		licenseConfig:   normalizeOfficialLicenseConfig(options.OfficialLicense, options.OfficialCatalog),
-		packageCacheDir: defaultString(strings.TrimSpace(options.PackageCacheDir), defaultPackageCacheDir()),
-		coreVersion:     defaultString(strings.TrimSpace(options.CoreVersion), "0.1.0-dev"),
-		targetOS:        defaultString(strings.ToLower(strings.TrimSpace(options.TargetOS)), runtime.GOOS),
-		targetArch:      defaultString(strings.ToLower(strings.TrimSpace(options.TargetArch)), runtime.GOARCH),
-		now:             now,
+		repo:             repo,
+		secretKey:        key,
+		httpClient:       client,
+		catalogConfig:    normalizeOfficialCatalogConfig(options.OfficialCatalog),
+		licenseConfig:    normalizeOfficialLicenseConfig(options.OfficialLicense, options.OfficialCatalog),
+		packageCacheDir:  cacheDir,
+		packageActiveDir: activeDir,
+		coreVersion:      defaultString(strings.TrimSpace(options.CoreVersion), "0.1.0-dev"),
+		targetOS:         defaultString(strings.ToLower(strings.TrimSpace(options.TargetOS)), runtime.GOOS),
+		targetArch:       defaultString(strings.ToLower(strings.TrimSpace(options.TargetArch)), runtime.GOARCH),
+		now:              now,
+		sidecars:         map[string]*sidecarProcess{},
+		supervisors:      map[string]*sidecarSupervisor{},
 	}
 }
 
@@ -150,6 +161,13 @@ func (s *Service) Enable(ctx context.Context, id string) (Plugin, error) {
 	}
 	plugin.Status = StatusEnabled
 	plugin.UpdatedAt = now
+	if _, ok, err := s.sidecarTarget(ctx, plugin.ID); err != nil {
+		return Plugin{}, err
+	} else if ok {
+		if err := s.ensureSidecarSupervisor(ctx, plugin.ID); err != nil {
+			return Plugin{}, err
+		}
+	}
 	return plugin, nil
 }
 
@@ -170,11 +188,34 @@ func (s *Service) Disable(ctx context.Context, id string) (Plugin, error) {
 	}
 	plugin.Status = StatusDisabled
 	plugin.UpdatedAt = now
+	_ = s.stopSidecarSupervisor(ctx, plugin.ID)
 	return plugin, nil
 }
 
 func (s *Service) Health(ctx context.Context) error {
 	return s.repo.Health(ctx)
+}
+
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.sidecarsMu.Lock()
+	supervisors := make([]*sidecarSupervisor, 0, len(s.supervisors))
+	for key, supervisor := range s.supervisors {
+		supervisors = append(supervisors, supervisor)
+		delete(s.supervisors, key)
+	}
+	sidecars := make([]*sidecarProcess, 0, len(s.sidecars))
+	for key, proc := range s.sidecars {
+		sidecars = append(sidecars, proc)
+		delete(s.sidecars, key)
+	}
+	s.sidecarsMu.Unlock()
+	for _, supervisor := range supervisors {
+		_ = supervisor.stop(ctx)
+	}
+	for _, proc := range sidecars {
+		_ = proc.stop(ctx)
+	}
+	return nil
 }
 
 func summarize(plugins []Plugin) Summary {
@@ -203,4 +244,13 @@ func defaultPackageCacheDir() string {
 		return filepath.Join(".", "data", "plugin-cache")
 	}
 	return filepath.Join(base, "asterrouter", "plugins")
+}
+
+func defaultPackageActiveDir(cacheDir string) string {
+	cacheDir = strings.TrimSpace(cacheDir)
+	if cacheDir == "" {
+		return filepath.Join(".", "data", "plugin-active")
+	}
+	parent := filepath.Dir(cacheDir)
+	return filepath.Join(parent, "plugin-active")
 }

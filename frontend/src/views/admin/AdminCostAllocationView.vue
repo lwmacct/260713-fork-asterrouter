@@ -2,34 +2,25 @@
 import { computed, onMounted, ref } from 'vue'
 import { Activity, Clock3, Coins, Download, PieChart, RefreshCw, Search, Sigma } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { exportCostAllocationCSV, getApplications, getCostAllocationReport, getProjects } from '@/api/control'
-import type { Application, CostAllocationDimension, CostAllocationReport, CostAllocationRow, Project, RecordListQuery } from '@/types'
+import { exportCostAllocationCSV, getCostAllocationReport } from '@/api/control'
+import type { CostAllocationDimension, CostAllocationReport, CostAllocationRow, RecordListQuery } from '@/types'
 import { datetimeLocalToISOString } from '@/utils/timeRange'
 
 const { t } = useI18n()
 const loading = ref(false)
 const error = ref('')
 const report = ref<CostAllocationReport | null>(null)
-const projects = ref<Project[]>([])
-const applications = ref<Application[]>([])
-const dimension = ref<CostAllocationDimension>('project')
+const dimension = ref<CostAllocationDimension>('api_key')
 const query = ref('')
 const modelFilter = ref('')
 const statusFilter = ref('')
-const projectFilter = ref('')
-const applicationFilter = ref('')
 const fromTime = ref('')
 const toTime = ref('')
 const pageSize = ref(50)
 const offset = ref(0)
 
-const dimensions: CostAllocationDimension[] = ['project', 'application', 'api_key', 'model']
+const dimensions: CostAllocationDimension[] = ['api_key', 'model']
 const statusOptions = ['forwarded', 'accepted', 'upstream_error', 'error']
-
-const filteredApplications = computed(() => {
-  if (!projectFilter.value) return applications.value
-  return applications.value.filter((app) => app.project_id === projectFilter.value)
-})
 
 const rows = computed(() => {
   const keyword = query.value.trim().toLowerCase()
@@ -39,9 +30,6 @@ const rows = computed(() => {
     [
       row.resource_name,
       row.resource_id,
-      row.project_name,
-      row.cost_center,
-      row.application_name,
       row.api_key_name,
       row.api_fingerprint,
       row.model
@@ -101,9 +89,7 @@ function dimensionLabel(value: CostAllocationDimension): string {
 }
 
 function rowScope(row: CostAllocationRow): string {
-  if (dimension.value === 'project') return row.cost_center || row.project_id || '-'
-  if (dimension.value === 'application') return row.project_name || row.project_id || '-'
-  if (dimension.value === 'api_key') return row.application_name || row.application_id || '-'
+  if (dimension.value === 'api_key') return row.api_fingerprint || row.api_key_id || '-'
   return row.resource_id || '-'
 }
 
@@ -114,17 +100,9 @@ function listQuery(): RecordListQuery {
     offset: offset.value,
     model: modelFilter.value.trim() || undefined,
     status: statusFilter.value || undefined,
-    project_id: projectFilter.value || undefined,
-    application_id: applicationFilter.value || undefined,
     from: datetimeLocalToISOString(fromTime.value),
     to: datetimeLocalToISOString(toTime.value)
   }
-}
-
-async function loadReferenceData() {
-  const [projectData, appData] = await Promise.all([getProjects(), getApplications()])
-  projects.value = projectData
-  applications.value = appData
 }
 
 async function load() {
@@ -159,13 +137,6 @@ function selectDimension(value: CostAllocationDimension) {
   applyFilters()
 }
 
-function onProjectChange() {
-  if (applicationFilter.value && !filteredApplications.value.some((app) => app.id === applicationFilter.value)) {
-    applicationFilter.value = ''
-  }
-  applyFilters()
-}
-
 function previousPage() {
   if (!canPrevious.value) return
   offset.value = Math.max(0, offset.value - pageSize.value)
@@ -178,14 +149,7 @@ function nextPage() {
   void load()
 }
 
-onMounted(async () => {
-  try {
-    await loadReferenceData()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : t('common.failed')
-  }
-  await load()
-})
+onMounted(load)
 </script>
 
 <template>
@@ -238,14 +202,6 @@ onMounted(async () => {
         <Search :size="17" />
         <input v-model="query" :placeholder="t('costAllocation.searchPlaceholder')" />
       </label>
-      <select v-model="projectFilter" @change="onProjectChange">
-        <option value="">{{ t('costAllocation.allProjects') }}</option>
-        <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
-      </select>
-      <select v-model="applicationFilter" @change="applyFilters">
-        <option value="">{{ t('costAllocation.allApplications') }}</option>
-        <option v-for="app in filteredApplications" :key="app.id" :value="app.id">{{ app.name }}</option>
-      </select>
       <label class="time-filter">
         <span>{{ t('usage.model') }}</span>
         <input v-model="modelFilter" :placeholder="t('usage.allModels')" @keyup.enter="applyFilters" />
@@ -276,15 +232,12 @@ onMounted(async () => {
             <tr>
               <th>{{ t('costAllocation.resource') }}</th>
               <th>{{ t('costAllocation.scope') }}</th>
-              <th>{{ t('projects.project') }}</th>
-              <th>{{ t('projects.application') }}</th>
               <th>{{ t('admin.apiKeys') }}</th>
               <th>{{ t('usage.model') }}</th>
               <th>{{ t('usage.requests') }}</th>
               <th>{{ t('usage.tokens') }}</th>
               <th>{{ t('usage.cost') }}</th>
               <th>{{ t('costAllocation.share') }}</th>
-              <th>{{ t('costAllocation.budget') }}</th>
               <th>{{ t('usage.latency') }}</th>
             </tr>
           </thead>
@@ -295,14 +248,6 @@ onMounted(async () => {
                 <span>{{ row.resource_id || '-' }}</span>
               </td>
               <td>{{ rowScope(row) }}</td>
-              <td>
-                <strong>{{ row.project_name || '-' }}</strong>
-                <span>{{ row.cost_center || row.project_id || '-' }}</span>
-              </td>
-              <td>
-                <strong>{{ row.application_name || '-' }}</strong>
-                <span>{{ row.application_id || '-' }}</span>
-              </td>
               <td>
                 <strong>{{ row.api_key_name || '-' }}</strong>
                 <span>{{ row.api_fingerprint || row.api_key_id || '-' }}</span>
@@ -315,14 +260,10 @@ onMounted(async () => {
               <td>{{ formatNumber(row.total_tokens) }}</td>
               <td>{{ formatCost(row.total_cost_cents) }}</td>
               <td>{{ formatPercent(row.cost_share_percent) }}</td>
-              <td>
-                <strong>{{ row.budget_cents ? formatCost(row.budget_cents) : '-' }}</strong>
-                <span>{{ row.budget_cents ? formatPercent(row.budget_used_percent) : '-' }}</span>
-              </td>
               <td>{{ formatNumber(row.avg_latency_ms) }} ms</td>
             </tr>
             <tr v-if="!rows.length">
-              <td colspan="12" class="empty-cell">{{ t('costAllocation.empty') }}</td>
+              <td colspan="9" class="empty-cell">{{ t('costAllocation.empty') }}</td>
             </tr>
           </tbody>
         </table>

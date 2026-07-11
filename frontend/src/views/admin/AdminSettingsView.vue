@@ -2,11 +2,17 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Database, Download, KeyRound, Power, RefreshCw, RotateCcw, Save, ServerCog, ShieldCheck, SlidersHorizontal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { getAdminSettings, updateAdminSettings } from '@/api/settings'
 import { checkSystemUpdates, performSystemUpdate, restartSystem, rollbackSystemUpdate } from '@/api/system'
+import { setPublicSettingsCache } from '@/router'
+import { useAppStore } from '@/stores/app'
 import type { AdminSettings, SystemUpdateInfo } from '@/types'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const app = useAppStore()
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -28,7 +34,8 @@ const form = reactive<AdminSettings>({
   public_base_url: '',
   api_base_url: '/api/v1',
   gateway_base_path: '/v1',
-  profile: '',
+  default_profile: '',
+  enabled_profiles: [],
   setup_completed: false,
   default_locale: 'en-US',
   enabled_locales: ['en-US', 'zh-CN'],
@@ -50,6 +57,21 @@ const gatewayBaseUrl = computed(() => {
   const base = form.public_base_url || window.location.origin
   return `${base.replace(/\/$/, '')}${form.gateway_base_path}`
 })
+
+function profileRoute(profile: string): string {
+  if (profile === 'personal') return '/console'
+  if (profile === 'relay_operator') return '/operator'
+  return '/admin/settings'
+}
+
+function currentSurfaceDisabled(settings: AdminSettings): boolean {
+  const profiles = settings.enabled_profiles || []
+  if (route.path.startsWith('/console')) return !profiles.includes('personal')
+  if (route.path.startsWith('/operator')) return !profiles.includes('relay_operator')
+  if (route.path.startsWith('/portal')) return !profiles.includes('enterprise')
+  if (route.path.startsWith('/admin') && route.path !== '/admin/settings') return !profiles.includes('enterprise')
+  return false
+}
 
 const updateState = computed(() => {
   if (!updateInfo.value) return t('settings.updateUnknown')
@@ -144,8 +166,14 @@ async function save() {
   error.value = ''
   message.value = ''
   try {
-    assignSettings(await updateAdminSettings({ ...form }))
+    const nextSettings = await updateAdminSettings({ ...form })
+    assignSettings(nextSettings)
+    setPublicSettingsCache(nextSettings)
+    await app.loadPublicSettings()
     message.value = t('common.saved')
+    if (currentSurfaceDisabled(nextSettings)) {
+      await router.replace(profileRoute(nextSettings.default_profile || nextSettings.enabled_profiles[0] || 'enterprise'))
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -161,6 +189,20 @@ function toggleLocale(locale: string) {
     set.add(locale)
   }
   form.enabled_locales = Array.from(set)
+}
+
+function toggleProfile(profile: string) {
+  const set = new Set(form.enabled_profiles)
+  if (set.has(profile)) {
+    if (set.size === 1) return
+    set.delete(profile)
+  } else {
+    set.add(profile)
+  }
+  form.enabled_profiles = Array.from(set)
+  if (!form.default_profile || !set.has(form.default_profile)) {
+    form.default_profile = form.enabled_profiles[0] || ''
+  }
 }
 
 onMounted(async () => {
@@ -253,12 +295,39 @@ onMounted(async () => {
         </div>
         <div class="panel-body">
           <div class="field">
-            <label>{{ t('settings.profile') }}</label>
-            <select v-model="form.profile">
-              <option value="">Not selected</option>
-              <option value="personal">personal</option>
-              <option value="relay_operator">relay_operator</option>
-              <option value="enterprise">enterprise</option>
+            <label>{{ t('settings.enabledProfiles') }}</label>
+            <div class="status-line">
+              <button
+                class="pill"
+                type="button"
+                :class="{ 'status-success': form.enabled_profiles.includes('personal') }"
+                @click="toggleProfile('personal')"
+              >
+                personal
+              </button>
+              <button
+                class="pill"
+                type="button"
+                :class="{ 'status-success': form.enabled_profiles.includes('relay_operator') }"
+                @click="toggleProfile('relay_operator')"
+              >
+                relay_operator
+              </button>
+              <button
+                class="pill"
+                type="button"
+                :class="{ 'status-success': form.enabled_profiles.includes('enterprise') }"
+                @click="toggleProfile('enterprise')"
+              >
+                enterprise
+              </button>
+            </div>
+            <span class="hint">{{ form.enabled_profiles.join(', ') || '-' }}</span>
+          </div>
+          <div class="field">
+            <label>{{ t('settings.defaultProfile') }}</label>
+            <select v-model="form.default_profile">
+              <option v-for="profile in form.enabled_profiles" :key="profile" :value="profile">{{ profile }}</option>
             </select>
           </div>
           <div class="field">

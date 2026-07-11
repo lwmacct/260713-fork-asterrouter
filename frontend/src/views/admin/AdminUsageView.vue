@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Activity, Clock3, Coins, Download, RefreshCw, Search, Sigma } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { exportUsageCSV, getUsageReport } from '@/api/control'
+import { isNotFoundError } from '@/api/client'
 import type { RecordListQuery, UsageReport } from '@/types'
 import { datetimeLocalToISOString } from '@/utils/timeRange'
 
@@ -46,6 +47,16 @@ const statusOptions = computed(() => Array.from(new Set((report.value?.recent ||
 const pageNumber = computed(() => Math.floor(offset.value / pageSize.value) + 1)
 const canPrevious = computed(() => offset.value > 0)
 const canNext = computed(() => (report.value?.recent.length || 0) >= pageSize.value)
+
+const emptyReport: UsageReport = {
+  total_requests: 0,
+  error_requests: 0,
+  total_tokens: 0,
+  total_cost_cents: 0,
+  avg_latency_ms: 0,
+  by_model: [],
+  recent: []
+}
 
 const metrics = computed(() => [
   {
@@ -102,6 +113,10 @@ async function load() {
   try {
     report.value = await getUsageReport(listQuery())
   } catch (err) {
+    if (isNotFoundError(err)) {
+      report.value = emptyReport
+      return
+    }
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
     loading.value = false

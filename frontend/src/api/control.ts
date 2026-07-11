@@ -4,8 +4,6 @@ import type {
   APIKeyCreateResponse,
   APIKeyRecord,
   APIKeyUpdateRequest,
-  Application,
-  ApplicationRequest,
   AlertEvent,
   AlertSummary,
   AuditLog,
@@ -24,8 +22,6 @@ import type {
   ModelPricing,
   ModelPricingRequest,
   PortalWorkspace,
-  Project,
-  ProjectRequest,
   RecordListQuery,
   RoleBinding,
   RoleBindingRequest,
@@ -118,21 +114,6 @@ export async function checkProvider(id: string): Promise<ProviderHealthCheck> {
   return response.data
 }
 
-export async function getProjects(): Promise<Project[]> {
-  const response = await apiClient.get<Project[]>('/admin/projects')
-  return response.data
-}
-
-export async function createProject(payload: ProjectRequest): Promise<Project> {
-  const response = await apiClient.post<Project>('/admin/projects', payload)
-  return response.data
-}
-
-export async function updateProject(id: string, payload: ProjectRequest): Promise<Project> {
-  const response = await apiClient.put<Project>(`/admin/projects/${id}`, payload)
-  return response.data
-}
-
 export async function getDepartments(): Promise<Department[]> {
   const response = await apiClient.get<Department[]>('/admin/departments')
   return response.data
@@ -160,21 +141,6 @@ export async function createGovernancePolicy(payload: GovernancePolicyRequest): 
 
 export async function updateGovernancePolicy(id: string, payload: GovernancePolicyRequest): Promise<GovernancePolicy> {
   const response = await apiClient.put<GovernancePolicy>(`/admin/policies/${id}`, payload)
-  return response.data
-}
-
-export async function getApplications(): Promise<Application[]> {
-  const response = await apiClient.get<Application[]>('/admin/applications')
-  return response.data
-}
-
-export async function createApplication(projectID: string, payload: ApplicationRequest): Promise<Application> {
-  const response = await apiClient.post<Application>(`/admin/projects/${projectID}/applications`, payload)
-  return response.data
-}
-
-export async function updateApplication(id: string, payload: ApplicationRequest): Promise<Application> {
-  const response = await apiClient.put<Application>(`/admin/applications/${id}`, payload)
   return response.data
 }
 

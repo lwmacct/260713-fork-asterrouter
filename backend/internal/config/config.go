@@ -17,7 +17,8 @@ type Config struct {
 	AdminPassword       string
 	DatabaseURL         string
 	FrontendDir         string
-	Profile             string
+	DefaultProfile      string
+	Profiles            []string
 	PublicBase          string
 	SecretKey           string
 	Version             string
@@ -35,10 +36,16 @@ type Config struct {
 	InstanceFingerprint string
 	InstanceDisplayName string
 	PluginCacheDir      string
+	PluginActiveDir     string
 	AllowRestart        bool
 }
 
 func Load() Config {
+	profiles := normalizeProfiles(os.Getenv("ASTER_PROFILES"))
+	defaultProfile := normalizeProfile(os.Getenv("ASTER_DEFAULT_PROFILE"))
+	if defaultProfile == "" && len(profiles) > 0 {
+		defaultProfile = profiles[0]
+	}
 	return Config{
 		Addr:                getEnv("ASTER_ADDR", ":8080"),
 		AdminToken:          strings.TrimSpace(os.Getenv("ASTER_ADMIN_TOKEN")),
@@ -46,7 +53,8 @@ func Load() Config {
 		AdminPassword:       strings.TrimSpace(os.Getenv("ASTER_ADMIN_PASSWORD")),
 		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		FrontendDir:         getEnv("ASTER_FRONTEND_DIR", "../frontend/dist"),
-		Profile:             normalizeProfile(os.Getenv("ASTER_PROFILE")),
+		DefaultProfile:      defaultProfile,
+		Profiles:            profiles,
 		PublicBase:          strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")),
 		SecretKey:           getEnv("ASTER_SECRET_KEY", localDevelopmentSecret),
 		Version:             getEnv("ASTER_VERSION", buildinfo.Version),
@@ -64,6 +72,7 @@ func Load() Config {
 		InstanceFingerprint: strings.TrimSpace(os.Getenv("ASTER_INSTANCE_FINGERPRINT")),
 		InstanceDisplayName: strings.TrimSpace(os.Getenv("ASTER_INSTANCE_DISPLAY_NAME")),
 		PluginCacheDir:      getEnv("ASTER_PLUGIN_CACHE_DIR", "data/plugin-cache"),
+		PluginActiveDir:     strings.TrimSpace(os.Getenv("ASTER_PLUGIN_ACTIVE_DIR")),
 		AllowRestart:        getBoolEnv("ASTER_ALLOW_RESTART"),
 	}
 }
@@ -117,6 +126,23 @@ func normalizeProfile(value string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeProfiles(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|' || r == ' ' || r == '\n' || r == '\t'
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	for _, field := range fields {
+		profile := normalizeProfile(field)
+		if profile == "" || seen[profile] {
+			continue
+		}
+		seen[profile] = true
+		out = append(out, profile)
+	}
+	return out
 }
 
 func getBoolEnv(key string) bool {

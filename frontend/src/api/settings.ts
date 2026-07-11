@@ -16,8 +16,11 @@ export async function updateAdminSettings(payload: AdminSettings): Promise<Admin
   return response.data
 }
 
-export async function applySetupProfile(profile: string): Promise<AdminSettings> {
-  const response = await apiClient.post<AdminSettings>('/setup/profile', { profile })
+export async function applySetupProfiles(profiles: string[], defaultProfile: string): Promise<AdminSettings> {
+  const response = await apiClient.post<AdminSettings>('/setup/profiles', {
+    profiles,
+    default_profile: defaultProfile
+  })
   return response.data
 }
 

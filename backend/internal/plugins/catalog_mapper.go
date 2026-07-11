@@ -16,14 +16,15 @@ func mapRemoteCatalogPlugins(index remoteCatalogIndex, now time.Time) []Plugin {
 		if slug == "" {
 			continue
 		}
+		pluginID := catalogPluginID(item)
 		version, requiresEntitlement := latestCatalogVersion(item.Versions)
 		if version == "" {
 			continue
 		}
 		tier, entitlement, status := remoteTier(item.Tier, requiresEntitlement)
 		out = append(out, Plugin{
-			ID:                officialPluginID(slug),
-			PluginID:          officialPluginID(slug),
+			ID:                pluginID,
+			PluginID:          pluginID,
 			Name:              defaultText(item.Name, slug),
 			Description:       strings.TrimSpace(item.Summary),
 			Category:          defaultText(item.Category, "official"),
@@ -51,7 +52,7 @@ func mapRemoteCatalogPackages(index remoteCatalogIndex, now time.Time) []package
 		if slug == "" {
 			continue
 		}
-		pluginID := officialPluginID(slug)
+		pluginID := catalogPluginID(item)
 		for _, version := range item.Versions {
 			if version.Status != "published" && version.Status != "deprecated" {
 				continue
@@ -101,7 +102,15 @@ func packageURIFromEnvelope(envelope catalogEnvelope) string {
 }
 
 func officialPluginID(slug string) string {
-	return "com.astercloud.catalog." + sanitizeCatalogSlug(slug)
+	slug = sanitizeCatalogSlug(slug)
+	return "com.astercloud.catalog." + slug
+}
+
+func catalogPluginID(item remoteCatalogPlugin) string {
+	if strings.TrimSpace(item.PluginID) != "" {
+		return strings.TrimSpace(item.PluginID)
+	}
+	return officialPluginID(item.Slug)
 }
 
 func sanitizeCatalogSlug(value string) string {

@@ -13,16 +13,18 @@ import (
 )
 
 type ServiceOptions struct {
-	Version     string
-	ProfileHint string
-	StorageMode string
+	Version         string
+	EnabledProfiles []string
+	DefaultProfile  string
+	StorageMode     string
 }
 
 type Service struct {
-	repo        Repository
-	version     string
-	profileHint string
-	storageMode string
+	repo            Repository
+	version         string
+	enabledProfiles []string
+	defaultProfile  string
+	storageMode     string
 }
 
 func NewService(repo Repository, opts ServiceOptions) *Service {
@@ -35,10 +37,11 @@ func NewService(repo Repository, opts ServiceOptions) *Service {
 		storageMode = "unknown"
 	}
 	return &Service{
-		repo:        repo,
-		version:     version,
-		profileHint: opts.ProfileHint,
-		storageMode: storageMode,
+		repo:            repo,
+		version:         version,
+		enabledProfiles: normalizeProfiles(opts.EnabledProfiles),
+		defaultProfile:  strings.TrimSpace(opts.DefaultProfile),
+		storageMode:     storageMode,
 	}
 }
 
@@ -59,8 +62,17 @@ func (s *Service) Admin(ctx context.Context) (AdminSettings, error) {
 	for key, value := range raw {
 		merged[key] = value
 	}
-	if s.profileHint != "" && raw[KeyProfile] == "" {
-		merged[KeyProfile] = s.profileHint
+	if len(s.enabledProfiles) > 0 && raw[KeyEnabledProfiles] == "" && raw[KeyDefaultProfile] == "" {
+		defaultProfile := s.defaultProfile
+		if defaultProfile == "" {
+			defaultProfile = s.enabledProfiles[0]
+		}
+		if !containsString(s.enabledProfiles, defaultProfile) {
+			defaultProfile = s.enabledProfiles[0]
+		}
+		encodedProfiles, _ := json.Marshal(s.enabledProfiles)
+		merged[KeyEnabledProfiles] = string(encodedProfiles)
+		merged[KeyDefaultProfile] = defaultProfile
 		merged[KeySetupCompleted] = "true"
 	}
 	return s.parse(merged), nil
@@ -77,13 +89,23 @@ func (s *Service) Update(ctx context.Context, in AdminSettings) (AdminSettings, 
 	return s.Admin(ctx)
 }
 
-func (s *Service) ApplyProfile(ctx context.Context, profile string) (AdminSettings, error) {
-	if !isProfile(profile) {
-		return AdminSettings{}, fmt.Errorf("unsupported profile %q", profile)
+func (s *Service) ApplyProfiles(ctx context.Context, profiles []string, defaultProfile string) (AdminSettings, error) {
+	enabledProfiles := normalizeProfiles(profiles)
+	if len(enabledProfiles) == 0 {
+		return AdminSettings{}, errors.New("at least one profile is required")
 	}
+	defaultProfile = strings.TrimSpace(defaultProfile)
+	if defaultProfile == "" {
+		defaultProfile = enabledProfiles[0]
+	}
+	if !containsString(enabledProfiles, defaultProfile) {
+		return AdminSettings{}, fmt.Errorf("default profile %q is not enabled", defaultProfile)
+	}
+	encodedProfiles, _ := json.Marshal(enabledProfiles)
 	if err := s.repo.SetMultiple(ctx, map[string]string{
-		KeyProfile:        profile,
-		KeySetupCompleted: "true",
+		KeyDefaultProfile:  defaultProfile,
+		KeyEnabledProfiles: string(encodedProfiles),
+		KeySetupCompleted:  "true",
 	}); err != nil {
 		return AdminSettings{}, err
 	}
@@ -96,6 +118,14 @@ func (s *Service) Health(ctx context.Context) error {
 
 func (s *Service) parse(values map[string]string) AdminSettings {
 	_, offset := time.Now().Zone()
+	enabledProfiles := parseProfileList(values[KeyEnabledProfiles])
+	defaultProfile := strings.TrimSpace(values[KeyDefaultProfile])
+	if defaultProfile == "" && len(enabledProfiles) > 0 {
+		defaultProfile = enabledProfiles[0]
+	}
+	if defaultProfile != "" && !containsString(enabledProfiles, defaultProfile) {
+		enabledProfiles = normalizeProfiles(append([]string{defaultProfile}, enabledProfiles...))
+	}
 	return AdminSettings{
 		PublicSettings: PublicSettings{
 			SiteName:          values[KeySiteName],
@@ -103,7 +133,8 @@ func (s *Service) parse(values map[string]string) AdminSettings {
 			PublicBaseURL:     values[KeyPublicBaseURL],
 			APIBaseURL:        "/api/v1",
 			GatewayBasePath:   values[KeyGatewayBasePath],
-			Profile:           values[KeyProfile],
+			DefaultProfile:    defaultProfile,
+			EnabledProfiles:   enabledProfiles,
 			SetupCompleted:    parseBool(values[KeySetupCompleted]),
 			DefaultLocale:     values[KeyDefaultLocale],
 			EnabledLocales:    parseStringList(values[KeyEnabledLocales], []string{"en-US", "zh-CN"}),
@@ -130,7 +161,8 @@ func defaults() map[string]string {
 		KeyPublicBaseURL:     "",
 		KeyDefaultLocale:     "en-US",
 		KeyEnabledLocales:    `["en-US","zh-CN"]`,
-		KeyProfile:           "",
+		KeyDefaultProfile:    "",
+		KeyEnabledProfiles:   "[]",
 		KeySetupCompleted:    "false",
 		KeyGatewayBasePath:   "/v1",
 		KeyOIDCEnabled:       "false",
@@ -159,8 +191,13 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 			return nil, fmt.Errorf("unsupported locale %q", locale)
 		}
 	}
-	if in.Profile != "" && !isProfile(in.Profile) {
-		return nil, fmt.Errorf("unsupported profile %q", in.Profile)
+	enabledProfiles := normalizeProfiles(in.EnabledProfiles)
+	defaultProfile := strings.TrimSpace(in.DefaultProfile)
+	if defaultProfile == "" && len(enabledProfiles) > 0 {
+		defaultProfile = enabledProfiles[0]
+	}
+	if defaultProfile != "" && !containsString(enabledProfiles, defaultProfile) {
+		return nil, fmt.Errorf("default profile %q is not enabled", defaultProfile)
 	}
 	if in.GatewayBasePath == "" || !strings.HasPrefix(in.GatewayBasePath, "/") {
 		return nil, errors.New("gateway_base_path must start with /")
@@ -178,13 +215,15 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 		return nil, errors.New("service_center_mode must be disabled, online, private_mirror, or offline")
 	}
 	locales, _ := json.Marshal(in.EnabledLocales)
+	profiles, _ := json.Marshal(enabledProfiles)
 	return map[string]string{
 		KeySiteName:          strings.TrimSpace(in.SiteName),
 		KeySiteSubtitle:      strings.TrimSpace(in.SiteSubtitle),
 		KeyPublicBaseURL:     strings.TrimSpace(in.PublicBaseURL),
 		KeyDefaultLocale:     in.DefaultLocale,
 		KeyEnabledLocales:    string(locales),
-		KeyProfile:           in.Profile,
+		KeyDefaultProfile:    defaultProfile,
+		KeyEnabledProfiles:   string(profiles),
 		KeySetupCompleted:    strconv.FormatBool(in.SetupCompleted),
 		KeyGatewayBasePath:   in.GatewayBasePath,
 		KeyOIDCEnabled:       strconv.FormatBool(in.OIDCEnabled),
@@ -218,12 +257,45 @@ func parseStringList(value string, fallback []string) []string {
 	return out
 }
 
+func parseProfileList(value string) []string {
+	var out []string
+	if err := json.Unmarshal([]byte(value), &out); err == nil {
+		if normalized := normalizeProfiles(out); len(normalized) > 0 {
+			return normalized
+		}
+	}
+	return []string{}
+}
+
 func isLocale(value string) bool {
 	return value == "en-US" || value == "zh-CN"
 }
 
 func isProfile(value string) bool {
 	return value == "personal" || value == "relay_operator" || value == "enterprise"
+}
+
+func normalizeProfiles(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		profile := strings.TrimSpace(value)
+		if !isProfile(profile) || seen[profile] {
+			continue
+		}
+		seen[profile] = true
+		out = append(out, profile)
+	}
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func oneOf(value string, allowed ...string) bool {

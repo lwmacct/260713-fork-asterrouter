@@ -6,12 +6,11 @@ import {
   createRoleBinding,
   createWorkspaceUser,
   deleteRoleBinding,
-  getProjects,
   getRoleBindings,
   getWorkspaceUsers,
   updateWorkspaceUser
 } from '@/api/control'
-import type { Project, RoleBinding, RoleBindingRequest, WorkspaceUser, WorkspaceUserRequest } from '@/types'
+import type { RoleBinding, RoleBindingRequest, WorkspaceUser, WorkspaceUserRequest } from '@/types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -22,13 +21,11 @@ const query = ref('')
 const statusFilter = ref('')
 const users = ref<WorkspaceUser[]>([])
 const roleBindings = ref<RoleBinding[]>([])
-const projects = ref<Project[]>([])
 const userModalOpen = ref(false)
 const bindingModalOpen = ref(false)
 const editingUser = ref<WorkspaceUser | null>(null)
 
 const roleOptions = ['super_admin', 'platform_admin', 'project_admin', 'read_only_auditor', 'developer']
-const scopeOptions = ['project', 'global']
 
 const userForm = reactive<WorkspaceUserRequest>({
   email: '',
@@ -39,8 +36,8 @@ const userForm = reactive<WorkspaceUserRequest>({
 
 const bindingForm = reactive<RoleBindingRequest>({
   user_id: '',
-  role: 'project_admin',
-  scope_type: 'project',
+  role: 'developer',
+  scope_type: 'global',
   scope_id: ''
 })
 
@@ -94,9 +91,9 @@ function closeUserModal() {
 function openCreateBinding(user?: WorkspaceUser) {
   Object.assign(bindingForm, {
     user_id: user?.id || users.value[0]?.id || '',
-    role: user?.role === 'developer' ? 'developer' : 'project_admin',
-    scope_type: 'project',
-    scope_id: projects.value[0]?.id || ''
+    role: user?.role || 'developer',
+    scope_type: 'global',
+    scope_id: ''
   })
   bindingModalOpen.value = true
 }
@@ -112,8 +109,7 @@ function userLabel(userID: string): string {
 
 function scopeLabel(binding: RoleBinding): string {
   if (binding.scope_type === 'global') return t('users.globalScope')
-  const project = projects.value.find((item) => item.id === binding.scope_id)
-  return project ? `${project.name} · ${project.cost_center || project.id}` : binding.scope_id
+  return binding.scope_id || binding.scope_type
 }
 
 function statusClass(status: string): string {
@@ -125,10 +121,9 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [userData, bindingData, projectData] = await Promise.all([getWorkspaceUsers(), getRoleBindings(), getProjects()])
+    const [userData, bindingData] = await Promise.all([getWorkspaceUsers(), getRoleBindings()])
     users.value = userData
     roleBindings.value = bindingData
-    projects.value = projectData
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -226,7 +221,7 @@ onMounted(load)
         <RefreshCw :size="17" />
         {{ t('common.refresh') }}
       </button>
-      <button class="button secondary" type="button" :disabled="!users.length || !projects.length" @click="openCreateBinding()">
+      <button class="button secondary" type="button" :disabled="!users.length" @click="openCreateBinding()">
         <ShieldCheck :size="17" />
         {{ t('users.grantRole') }}
       </button>
@@ -268,7 +263,7 @@ onMounted(load)
                     <Edit3 :size="15" />
                     {{ t('common.edit') }}
                   </button>
-                  <button class="button secondary" type="button" :disabled="!projects.length" @click="openCreateBinding(user)">
+                  <button class="button secondary" type="button" @click="openCreateBinding(user)">
                     <ShieldCheck :size="15" />
                     {{ t('users.grantRole') }}
                   </button>
@@ -398,15 +393,7 @@ onMounted(load)
           </div>
           <div class="field">
             <label>{{ t('users.scope') }}</label>
-            <select v-model="bindingForm.scope_type">
-              <option v-for="scope in scopeOptions" :key="scope" :value="scope">{{ scope }}</option>
-            </select>
-          </div>
-          <div v-if="bindingForm.scope_type === 'project'" class="field form-span-2">
-            <label>{{ t('projects.project') }}</label>
-            <select v-model="bindingForm.scope_id" required>
-              <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }} · {{ project.cost_center || project.id }}</option>
-            </select>
+            <input :value="t('users.globalScope')" disabled />
           </div>
         </div>
         <footer class="modal-footer">

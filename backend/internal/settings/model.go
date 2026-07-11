@@ -8,7 +8,8 @@ const (
 	KeyPublicBaseURL     = "public_base_url"
 	KeyDefaultLocale     = "default_locale"
 	KeyEnabledLocales    = "enabled_locales"
-	KeyProfile           = "profile"
+	KeyDefaultProfile    = "default_profile"
+	KeyEnabledProfiles   = "enabled_profiles"
 	KeySetupCompleted    = "setup_completed"
 	KeyGatewayBasePath   = "gateway_base_path"
 	KeyOIDCEnabled       = "oidc_enabled"
@@ -33,7 +34,8 @@ type PublicSettings struct {
 	PublicBaseURL     string   `json:"public_base_url"`
 	APIBaseURL        string   `json:"api_base_url"`
 	GatewayBasePath   string   `json:"gateway_base_path"`
-	Profile           string   `json:"profile"`
+	DefaultProfile    string   `json:"default_profile"`
+	EnabledProfiles   []string `json:"enabled_profiles"`
 	SetupCompleted    bool     `json:"setup_completed"`
 	DefaultLocale     string   `json:"default_locale"`
 	EnabledLocales    []string `json:"enabled_locales"`

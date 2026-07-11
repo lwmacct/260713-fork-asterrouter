@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
-  Boxes,
   Activity,
   BellRing,
   Building2,
@@ -13,9 +12,11 @@ import {
   FileOutput,
   Gauge,
   KeyRound,
+  Laptop,
   Moon,
   PieChart,
   Plug,
+  RadioTower,
   Settings,
   Server,
   ShieldCheck,
@@ -36,6 +37,7 @@ const mobileOpen = ref(false)
 const darkMode = ref(document.documentElement.dataset.theme === 'dark')
 
 const version = computed(() => app.publicSettings?.version || 'Dev')
+const enabledProfiles = computed(() => app.publicSettings?.enabled_profiles || [])
 
 const navGroups = [
   {
@@ -47,7 +49,6 @@ const navGroups = [
       { to: '/admin/users', label: 'admin.users', icon: UsersRound },
       { to: '/admin/departments', label: 'admin.departments', icon: Building2 },
       { to: '/admin/policies', label: 'admin.policies', icon: ShieldCheck },
-      { to: '/admin/projects', label: 'admin.projects', icon: Boxes },
       { to: '/admin/api-keys', label: 'admin.apiKeys', icon: KeyRound },
       { to: '/admin/usage', label: 'admin.usage', icon: WalletCards },
       { to: '/admin/cost-allocation', label: 'admin.costAllocation', icon: PieChart },
@@ -123,8 +124,16 @@ watch(
       </nav>
 
       <div class="sidebar-footer">
-        <RouterLink class="nav-item" to="/portal" :title="collapsed ? t('nav.portal') : undefined">
-          <Boxes :size="19" />
+        <RouterLink v-if="enabledProfiles.includes('personal')" class="nav-item" to="/console" :title="collapsed ? t('nav.console') : undefined">
+          <Laptop :size="19" />
+          <span>{{ t('nav.console') }}</span>
+        </RouterLink>
+        <RouterLink v-if="enabledProfiles.includes('relay_operator')" class="nav-item" to="/operator" :title="collapsed ? t('nav.operator') : undefined">
+          <RadioTower :size="19" />
+          <span>{{ t('nav.operator') }}</span>
+        </RouterLink>
+        <RouterLink v-if="enabledProfiles.includes('enterprise')" class="nav-item" to="/portal" :title="collapsed ? t('nav.portal') : undefined">
+          <KeyRound :size="19" />
           <span>{{ t('nav.portal') }}</span>
         </RouterLink>
         <button

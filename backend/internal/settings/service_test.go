@@ -22,14 +22,14 @@ func TestServiceDefaults(t *testing.T) {
 	}
 }
 
-func TestApplyProfile(t *testing.T) {
+func TestApplyProfiles(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), ServiceOptions{Version: "test", StorageMode: "memory"})
-	got, err := svc.ApplyProfile(context.Background(), "enterprise")
+	got, err := svc.ApplyProfiles(context.Background(), []string{"enterprise", "personal"}, "personal")
 	if err != nil {
-		t.Fatalf("ApplyProfile() error = %v", err)
+		t.Fatalf("ApplyProfiles() error = %v", err)
 	}
-	if !got.SetupCompleted || got.Profile != "enterprise" {
-		t.Fatalf("profile not applied: %+v", got)
+	if !got.SetupCompleted || got.DefaultProfile != "personal" || len(got.EnabledProfiles) != 2 {
+		t.Fatalf("profiles not applied: %+v", got)
 	}
 }
 

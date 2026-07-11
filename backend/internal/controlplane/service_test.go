@@ -36,8 +36,6 @@ func TestCreateAPIKeyReturnsSecretOnceAndStoresHash(t *testing.T) {
 	}
 
 	created, err := svc.CreateAPIKey(context.Background(), "tester", APIKeyCreateRequest{
-		ProjectID:         "proj_platform",
-		ApplicationID:     "app_internal_sandbox",
 		Name:              "CI key",
 		ModelAllowlist:    []string{"gpt-4o-mini"},
 		QPSLimit:          5,
@@ -52,6 +50,9 @@ func TestCreateAPIKeyReturnsSecretOnceAndStoresHash(t *testing.T) {
 	if created.Record.KeyHash == created.Key {
 		t.Fatal("api key stored without hashing")
 	}
+	if created.Record.ProjectID != defaultWorkspaceProjectID || created.Record.ApplicationID != defaultWorkspaceApplicationID {
+		t.Fatalf("workspace default boundary mismatch: %+v", created.Record)
+	}
 
 	keys, err := svc.ListAPIKeys(context.Background())
 	if err != nil {
@@ -62,6 +63,40 @@ func TestCreateAPIKeyReturnsSecretOnceAndStoresHash(t *testing.T) {
 	}
 	if keys[0].KeyHash == "" || keys[0].Fingerprint == "" || keys[0].Prefix == "" {
 		t.Fatalf("stored key metadata incomplete: %+v", keys[0])
+	}
+}
+
+func TestCreateAPIKeyWithProjectOnlyCreatesHiddenWorkspaceApplication(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryRepository()
+	svc := NewService(repo, "/v1")
+	project, err := svc.CreateProject(ctx, "tester", ProjectRequest{
+		Name:       "Engineering",
+		CostCenter: "ENG",
+		Status:     ProjectStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject(): %v", err)
+	}
+
+	created, err := svc.CreateAPIKey(ctx, "tester", APIKeyCreateRequest{
+		ProjectID:         project.ID,
+		Name:              "Engineering workspace key",
+		ModelAllowlist:    []string{"gpt-4o-mini"},
+		MonthlyTokenLimit: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIKey(): %v", err)
+	}
+	if created.Record.ProjectID != project.ID || created.Record.ApplicationID == "" {
+		t.Fatalf("project-only workspace boundary mismatch: %+v", created.Record)
+	}
+	apps, err := repo.ListApplications(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListApplications(): %v", err)
+	}
+	if len(apps) != 1 || apps[0].ID != created.Record.ApplicationID || apps[0].Name != "Workspace Gateway" {
+		t.Fatalf("hidden workspace application mismatch: %+v", apps)
 	}
 }
 

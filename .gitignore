@@ -5,6 +5,7 @@ bin/
 dist/
 *.test
 coverage.out
+backend/data/
 
 # Frontend
 frontend/dist/

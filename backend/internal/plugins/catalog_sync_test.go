@@ -71,6 +71,15 @@ func TestServiceSyncOfficialCatalogVerifiesCachesAndMapsPlugins(t *testing.T) {
 	}
 }
 
+func TestOfficialPluginIDUsesCatalogNamespace(t *testing.T) {
+	if got := officialPluginID("provider-trust-evidence"); got != "com.astercloud.catalog.provider-trust-evidence" {
+		t.Fatalf("officialPluginID(provider-trust-evidence) = %q", got)
+	}
+	if got := officialPluginID("provider-intelligence"); got != "com.astercloud.catalog.provider-intelligence" {
+		t.Fatalf("officialPluginID(provider-intelligence) = %q", got)
+	}
+}
+
 func TestServiceSyncOfficialCatalogRejectsTamperedPayload(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

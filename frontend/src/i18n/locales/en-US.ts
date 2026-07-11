@@ -6,6 +6,9 @@ export default {
     loading: 'Loading',
     saved: 'Settings saved',
     failed: 'Request failed',
+    sessionExpired: 'Session expired. Please sign in again.',
+    resourceUnavailable: 'This data source is not available in the current service.',
+    networkError: 'Network error',
     version: 'Version',
     storage: 'Storage',
     saveCreated: 'Created',
@@ -25,6 +28,8 @@ export default {
   },
   nav: {
     setup: 'Setup',
+    console: 'Console',
+    operator: 'Operator',
     admin: 'Admin',
     portal: 'Portal',
     settings: 'Settings',
@@ -62,6 +67,8 @@ export default {
     relayDesc: 'Operator console for relay resale and provider operations.',
     enterprise: 'Enterprise',
     enterpriseDesc: 'Admin Console and Employee Portal for internal AI governance.',
+    defaultProfile: 'Default entry',
+    selectAtLeastOne: 'Select at least one profile.',
     continue: 'Continue'
   },
   admin: {
@@ -96,8 +103,8 @@ export default {
     active: 'active',
     gatewayCatalog: 'gateway catalog',
     recentAudit: 'Recent audit',
-    noAudit: 'No audit event yet',
-    noModels: 'No model catalog yet'
+    noAudit: '',
+    noModels: ''
   },
   providers: {
     subtitle: 'Register model provider connections without exposing relay-operator language.',
@@ -125,7 +132,7 @@ export default {
     editProvider: 'Edit provider',
     modalSubtitle: 'Keep the provider connection, model catalog, status, priority, and secret in one controlled dialog.',
     keepSecret: 'Leave empty to keep current secret',
-    empty: 'No provider connection matched the current filters.'
+    empty: ''
   },
   routingGroups: {
     subtitle: 'Advanced routing boundaries for fallback, ordering, capacity, and route governance.',
@@ -143,7 +150,7 @@ export default {
     created: 'Routing policy group created',
     updated: 'Routing policy group updated',
     modalSubtitle: 'Policy groups organize route resources, models, and fallback behavior into controlled scheduling boundaries.',
-    empty: 'No routing policy group matched the current filters.'
+    empty: ''
   },
   providerAccounts: {
     subtitle: 'Manage advanced route resources, including policy groups, models, concurrency, priority, cost weight, and credentials.',
@@ -172,10 +179,10 @@ export default {
     disabled: 'Route resource disabled',
     created: 'Route resource created',
     updated: 'Route resource updated',
-    noGroups: 'No policy groups yet. Create an advanced routing group before binding resources.',
+    noGroups: '',
     searchPlaceholder: 'Search route resources, platforms, auth types, groups, or models',
     modalSubtitle: 'Route resources are the advanced foundation for fallback, stability, and model-availability governance.',
-    empty: 'No route resource matched the current filters.'
+    empty: ''
   },
   modelPricings: {
     subtitle: 'Configure model token prices so gateway usage can produce cost, allocation, and budget evidence.',
@@ -195,7 +202,7 @@ export default {
     created: 'Model pricing created',
     updated: 'Model pricing updated',
     modalSubtitle: 'Prices are global model defaults. Provider-specific pricing can be added later without changing usage records.',
-    empty: 'No model pricing matched the current filters.'
+    empty: ''
   },
   projects: {
     subtitle: 'Create project and application boundaries for internal key governance.',
@@ -224,28 +231,28 @@ export default {
     appUpdated: 'Application updated',
     projectModalSubtitle: 'Create a governance boundary for budgets, keys, applications, and audit ownership.',
     appModalSubtitle: 'Attach an application to a project so API keys can be issued against a clear runtime boundary.',
-    empty: 'No project matched the current filters.'
+    empty: ''
   },
   users: {
-    subtitle: 'Manage workspace users, default roles, and project-scoped role bindings.',
+    subtitle: 'Manage workspace users, default roles, and global access bindings.',
     total: 'users',
     active: 'active',
     disabled: 'disabled',
     bindings: 'bindings',
     workspaceUsers: 'Workspace users',
-    workspaceUsersSubtitle: 'Internal developers, auditors, and project operators who can receive scoped access.',
+    workspaceUsersSubtitle: 'Internal developers, auditors, and operators who can receive controlled access.',
     roleBindings: 'Role bindings',
-    roleBindingsSubtitle: 'Grant global or project-scoped access without changing provider or key ownership.',
+    roleBindingsSubtitle: 'Grant workspace-level access without changing provider or key ownership.',
     newUser: 'New user',
     editUser: 'Edit user',
     userModalSubtitle: 'Users are identity records. Login enforcement will be connected through the RBAC gate later.',
-    bindingModalSubtitle: 'Grant one role to one user at a global or project scope.',
+    bindingModalSubtitle: 'Grant one workspace-level role to one user.',
     user: 'User',
     email: 'Email',
     displayName: 'Display name',
     defaultRole: 'Default role',
     role: 'Role',
-    projects: 'Projects',
+    projects: 'Scopes',
     scope: 'Scope',
     globalScope: 'Global',
     createdAt: 'Created at',
@@ -257,8 +264,8 @@ export default {
     bindingCreated: 'Role binding created',
     bindingRevoked: 'Role binding revoked',
     searchPlaceholder: 'Search users, roles, or status',
-    empty: 'No workspace user matched the current filters.',
-    noBindings: 'No role binding yet.'
+    empty: '',
+    noBindings: ''
   },
   departments: {
     subtitle: 'Manage department hierarchy, cost centers, and budget ownership.',
@@ -279,7 +286,7 @@ export default {
     created: 'Department created',
     updated: 'Department updated',
     searchPlaceholder: 'Search departments, codes, cost centers, or status',
-    empty: 'No department matched the current filters.'
+    empty: ''
   },
   policies: {
     subtitle: 'Centralize model access, budget, quota, data governance, and overage behavior as enterprise policies.',
@@ -321,7 +328,7 @@ export default {
     searchPlaceholder: 'Search policies, scopes, targets, models, or governance modes',
     created: 'Policy created',
     updated: 'Policy updated',
-    empty: 'No policy matched the current filters.',
+    empty: '',
     scopes: {
       global: 'Global',
       department: 'Department',
@@ -343,9 +350,14 @@ export default {
     subtitle: 'Issue one workspace key for Codex, CLI, Claude Code, and other OpenAI-compatible clients.',
     newKey: 'New workspace key',
     editKey: 'Edit workspace key',
-    keys: 'Keys',
+    keys: 'Workspace keys',
     name: 'Name',
     models: 'Model allowlist',
+    modelAllowlist: 'Model allowlist',
+    policy: 'Policy',
+    limits: 'Limits',
+    scope: 'Scope',
+    boundPolicies: 'bound policies',
     qps: 'QPS limit',
     monthlyTokens: 'Monthly token limit',
     oneTime: 'Copy now. This key is shown only once.',
@@ -369,9 +381,9 @@ export default {
     policyExplanation: 'Policy explanation',
     policyReason: 'Reason',
     selectedPolicy: 'selected',
-    noPolicyExplanation: 'No policy matched this key.',
+    noPolicyExplanation: '',
     defaultScope: 'Workspace default',
-    empty: 'No API key matched the current filters.'
+    empty: ''
   },
   audit: {
     subtitle: 'Track administrative changes for governance and troubleshooting.',
@@ -387,7 +399,7 @@ export default {
     searchPlaceholder: 'Search actor, action, resource, or summary',
     allActions: 'All actions',
     allResources: 'All resources',
-    empty: 'No audit event matched the current filters.'
+    empty: ''
   },
   usage: {
     subtitle: 'Review gateway requests, token consumption, estimated cost, and latency.',
@@ -403,12 +415,12 @@ export default {
     recentRequests: 'Recent requests',
     model: 'Model',
     route: 'Provider / account',
-    noData: 'No usage data yet',
+    noData: '',
     searchPlaceholder: 'Search model, status, provider, account, key fingerprint, project, or application',
     allModels: 'All models'
   },
   costAllocation: {
-    subtitle: 'Allocate AI gateway cost by project, application, API key, or model with budget context.',
+    subtitle: 'Allocate AI gateway cost by workspace key and model.',
     dimension: 'Allocation dimension',
     breakdown: 'Allocation breakdown',
     resource: 'Resource',
@@ -418,11 +430,11 @@ export default {
     allocatedCost: 'allocated across the selected dimension',
     allProjects: 'All projects',
     allApplications: 'All applications',
-    searchPlaceholder: 'Search resource, project, cost center, application, key, fingerprint, or model',
-    empty: 'No cost allocation row matched the current filters.',
+    searchPlaceholder: 'Search resource, key, fingerprint, or model',
+    empty: '',
     dimensions: {
-      project: 'By project',
-      application: 'By application',
+      project: 'By project (advanced)',
+      application: 'By application (advanced)',
       api_key: 'By API key',
       model: 'By model'
     }
@@ -442,7 +454,7 @@ export default {
     stream: 'stream',
     nonStream: 'non-stream',
     messages: 'messages',
-    empty: 'No gateway trace matched the current filters.'
+    empty: ''
   },
   alerts: {
     subtitle: 'Track budget, provider health, routing risk, and policy incidents from one operations queue.',
@@ -465,7 +477,7 @@ export default {
     allStatuses: 'All statuses',
     allResources: 'All resources',
     searchPlaceholder: 'Search title, summary, resource, project, status, or dedupe key',
-    empty: 'No alert matched the current filters.',
+    empty: '',
     types: {
       project_budget: 'Project budget',
       api_key_quota: 'API key quota',
@@ -509,7 +521,7 @@ export default {
     rows: 'rows',
     allData: 'All matching data',
     expires: 'Expires',
-    empty: 'No export job matched the current filters.',
+    empty: '',
     limit: 'Maximum rows',
     keyword: 'Keyword',
     keywordPlaceholder: 'Optional search keyword',
@@ -567,7 +579,7 @@ export default {
     offlinePackageFile: 'Offline plugin package file JSON',
     installPackage: 'Install',
     uninstallPackage: 'Uninstall',
-    noPackages: 'No downloadable package yet.',
+    noPackages: '',
     status: 'Status',
     actions: 'Actions',
     enable: 'Enable',
@@ -639,16 +651,52 @@ export default {
     allDeliveryStatuses: 'All delivery statuses',
     target: 'Target',
     error: 'Error',
-    noDeliveries: 'No delivery attempt recorded yet.',
+    noDeliveries: '',
     deliveryStatuses: {
       succeeded: 'Succeeded',
       failed: 'Failed',
       skipped: 'Skipped'
     },
+    runtimeStatus: 'Runtime status',
+    runtimeInstalled: 'Installed',
+    runtimeEnabled: 'Enabled',
+    runtimeRunning: 'Sidecar',
+    runtimeSupervisor: 'Supervisor',
+    runtimeRestarts: 'Restarts',
+    runtimeStartedAt: 'Last started',
+    runtimeExitedAt: 'Last exited',
+    runtimeNextRestartAt: 'Next restart',
+    running: 'Running',
+    yes: 'Yes',
+    no: 'No',
     searchPlaceholder: 'Search plugins, vendors, categories, or surfaces',
     allCategories: 'All categories',
     allTiers: 'All tiers',
-    empty: 'No plugin matched the current filters.'
+    empty: ''
+  },
+  console: {
+    title: 'Personal Console',
+    subtitle: 'Personal gateway entry for providers, workspace keys, usage, and client integration.',
+    activeProviders: 'Active providers',
+    activeKeys: 'Active keys',
+    requests: 'Requests',
+    cost: 'Cost',
+    gateway: 'Gateway endpoint',
+    gatewayHelp: 'Use this OpenAI-compatible base URL in Codex, CLI, Claude Code, and local tools.',
+    shortcuts: 'Operations',
+    shortcutsHelp: 'Jump to the focused management pages for providers, keys, and usage.'
+  },
+  operator: {
+    title: 'Relay Operator Console',
+    subtitle: 'Operate route resources, customer keys, provider pools, traffic, and evidence records.',
+    providers: 'Providers',
+    routeResources: 'Route resources',
+    customerKeys: 'Customer keys',
+    cost: 'Cost',
+    dispatch: 'Dispatch operations',
+    dispatchHelp: 'Manage routing groups, route resources, and plugin evidence.',
+    traffic: 'Traffic operations',
+    trafficHelp: 'Inspect customer keys, usage, gateway traces, and error distribution.'
   },
   settings: {
     general: 'General',
@@ -659,7 +707,8 @@ export default {
     siteName: 'Site name',
     siteSubtitle: 'Site subtitle',
     publicBaseUrl: 'Public base URL',
-    profile: 'Profile',
+    enabledProfiles: 'Enabled profiles',
+    defaultProfile: 'Default entry',
     gatewayBasePath: 'Gateway base path',
     defaultLocale: 'Default locale',
     enabledLocales: 'Enabled locales',
@@ -703,29 +752,25 @@ export default {
     cost: 'Cost',
     activeAlerts: 'Active alerts',
     createKey: 'Create API key',
-    createKeyHelp: 'Issue a project-scoped key for an authorized application.',
+    createKeyHelp: 'Issue one workspace key that can be reused by Codex, CLI, Claude Code, and compatible clients.',
     keyNamePlaceholder: 'Internal app key',
     keyCreated: 'API key created',
     keyRotated: 'API key rotated',
     keyDisabled: 'API key disabled',
     secretOnce: 'Store this secret now. It will not be shown again.',
     readOnly: 'Your portal role is read-only for API keys.',
-    myProjects: 'My projects',
     myKeys: 'My API keys',
     usage: 'Usage',
-    usageHelp: 'Usage and cost for projects visible to this portal account.',
+    usageHelp: 'Usage and cost visible to this portal account.',
     alerts: 'Alerts',
-    alertsHelp: 'Active budget, quota, provider, and gateway incidents for your projects.',
+    alertsHelp: 'Active budget, quota, provider, and gateway incidents visible to this portal account.',
     recentTraces: 'Recent traces',
-    traceHelp: 'Request-level evidence for recent gateway calls in your project scope.',
-    keySummary: 'Project-scoped keys visible to this portal workspace.',
-    projectSummary: 'Projects available in this workspace.',
-    appSummary: 'Applications attached to current projects.',
-    emptyProjects: 'No project is assigned to this portal account.',
-    emptyKeys: 'No API key is visible in this portal workspace.',
-    emptyUsage: 'No usage has been recorded for the current project scope.',
-    emptyAlerts: 'No active alert for the current project scope.',
-    emptyTraces: 'No gateway trace is visible in the current project scope.',
+    traceHelp: 'Request-level evidence for recent gateway calls in your workspace scope.',
+    keySummary: 'Workspace keys visible to this portal account.',
+    emptyKeys: '',
+    emptyUsage: '',
+    emptyAlerts: '',
+    emptyTraces: '',
     next: 'Next product surfaces'
   }
 }
