@@ -38,3 +38,7 @@ docs/test/*
 !.env.example
 .playwright-mcp
 .gstack/
+
+# Go workspace
+go.work
+go.work.sum
