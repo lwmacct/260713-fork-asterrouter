@@ -10,15 +10,43 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: asterrouter_test
+          POSTGRES_USER: asterrouter
+          POSTGRES_PASSWORD: asterrouter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asterrouter -d asterrouter_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      ASTER_TEST_DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - name: Unit tests
+      - name: Check formatting
         working-directory: backend
-        run: go test ./...
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+      - name: Tests with PostgreSQL and coverage
+        working-directory: backend
+        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          if-no-files-found: error
 
   frontend:
     runs-on: ubuntu-latest
@@ -32,9 +60,21 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
+      - name: Check Enterprise surface
+        working-directory: frontend
+        run: npm run check:enterprise-surface
       - name: Typecheck
         working-directory: frontend
         run: npm run typecheck
+      - name: Unit and component tests
+        working-directory: frontend
+        run: npm run test:unit:coverage
       - name: Build
         working-directory: frontend
         run: npm run build
+      - name: Upload frontend coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+          if-no-files-found: error

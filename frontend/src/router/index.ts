@@ -33,6 +33,7 @@ const ConsoleHomeView = () => import('@/views/console/ConsoleHomeView.vue')
 const ConsoleShell = () => import('@/views/console/ConsoleShell.vue')
 const CustomerBillingView = () => import('@/views/customer/CustomerBillingView.vue')
 const CustomerHomeView = () => import('@/views/customer/CustomerHomeView.vue')
+const CustomerNotificationSettingsView = () => import('@/views/customer/CustomerNotificationSettingsView.vue')
 const CustomerShell = () => import('@/views/customer/CustomerShell.vue')
 const OperatorHomeView = () => import('@/views/operator/OperatorHomeView.vue')
 const OperatorShell = () => import('@/views/operator/OperatorShell.vue')
@@ -200,6 +201,7 @@ const router = createRouter({
         { path: 'integration', component: PortalIntegrationView, meta: { titleKey: 'customer.integration', descriptionKey: 'customer.integrationHelp' } },
         { path: 'usage', component: CustomerHomeView, meta: { titleKey: 'customer.usage', descriptionKey: 'customer.usageHelp', customerPanel: 'usage' } },
         { path: 'billing', component: CustomerBillingView, meta: { titleKey: 'customer.billing', descriptionKey: 'customer.billingHelp' } },
+		{ path: 'notifications', component: CustomerNotificationSettingsView, meta: { titleKey: 'customer.notificationSettings', descriptionKey: 'customer.notificationSettingsHelp' } },
 		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/customer/overview' }
       ]

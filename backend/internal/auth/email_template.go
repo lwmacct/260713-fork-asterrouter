@@ -9,7 +9,7 @@ import (
 )
 
 type EmailTemplateData struct {
-	SiteName, UserName, ActionURL, Amount, Limit, Period, Message string
+	SiteName, UserName, ActionURL, Title, Amount, Limit, Period, Message string
 }
 
 type EmailTemplateDefinition struct{ Event, Locale, Subject, HTML string }
@@ -26,6 +26,8 @@ func DefaultEmailTemplates() []EmailTemplateDefinition {
 		{Event: "quota_limit", Locale: "en-US", Subject: "{{.SiteName}} quota notification", HTML: `<h2>Quota notification</h2><p>{{.Period}} limit: {{.Limit}}</p>`},
 		{Event: "subscription_expiry", Locale: "zh-CN", Subject: "{{.SiteName}} 访问授权即将到期", HTML: `<h2>授权到期提醒</h2><p>{{.Message}}</p>`},
 		{Event: "subscription_expiry", Locale: "en-US", Subject: "{{.SiteName}} access expires soon", HTML: `<h2>Expiration notice</h2><p>{{.Message}}</p>`},
+		{Event: "customer_notification", Locale: "zh-CN", Subject: "{{.SiteName}} 通知：{{.Title}}", HTML: `<h2>{{.Title}}</h2><p>{{.Message}}</p>{{if .ActionURL}}<p><a href="{{.ActionURL}}">查看详情</a></p>{{end}}`},
+		{Event: "customer_notification", Locale: "en-US", Subject: "{{.SiteName}} notification: {{.Title}}", HTML: `<h2>{{.Title}}</h2><p>{{.Message}}</p>{{if .ActionURL}}<p><a href="{{.ActionURL}}">View details</a></p>{{end}}`},
 	}
 }
 

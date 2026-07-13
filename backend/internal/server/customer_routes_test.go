@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,78 @@ import (
 	"github.com/astercloud/asterrouter/backend/internal/settings"
 	"github.com/astercloud/asterrouter/backend/internal/system"
 )
+
+func TestCustomerNotificationRoutesPersistAndMarkRead(t *testing.T) {
+	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	user, _, err := control.RegisterWorkspaceUser(context.Background(), "notify-routes@example.test", "long-password", "Notify", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.ChangeCurrentAccountPassword(context.Background(), user.Email, controlplane.AccountPasswordUpdateRequest{
+		CurrentPassword: "long-password", NewPassword: "updated-long-password",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("X-Actor", user.Email)
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	settingsRec := request(http.MethodGet, "/api/v1/customer/notification-settings", nil)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("settings status=%d body=%s", settingsRec.Code, settingsRec.Body.String())
+	}
+	var settingsResponse struct {
+		Data controlplane.CustomerNotificationSettings `json:"data"`
+	}
+	if err := json.Unmarshal(settingsRec.Body.Bytes(), &settingsResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(settingsResponse.Data.Preferences) != 9 {
+		t.Fatalf("settings preferences=%d", len(settingsResponse.Data.Preferences))
+	}
+	payload, err := json.Marshal(controlplane.CustomerNotificationSettingsRequest{Preferences: settingsResponse.Data.Preferences})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := request(http.MethodPut, "/api/v1/customer/notification-settings", payload); rec.Code != http.StatusOK {
+		t.Fatalf("save settings status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	listRec := request(http.MethodGet, "/api/v1/customer/notifications", nil)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("notifications status=%d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var listResponse struct {
+		Data controlplane.CustomerNotificationList `json:"data"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResponse); err != nil {
+		t.Fatal(err)
+	}
+	if listResponse.Data.Unread != 1 || len(listResponse.Data.Items) != 1 {
+		t.Fatalf("notifications=%+v", listResponse.Data)
+	}
+	id := listResponse.Data.Items[0].ID
+	if rec := request(http.MethodPost, "/api/v1/customer/notifications/"+id+"/read", nil); rec.Code != http.StatusOK {
+		t.Fatalf("mark read status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	listRec = request(http.MethodGet, "/api/v1/customer/notifications", nil)
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResponse); err != nil {
+		t.Fatal(err)
+	}
+	if listResponse.Data.Unread != 0 || !listResponse.Data.Items[0].IsRead {
+		t.Fatalf("notification was not marked read: %+v", listResponse.Data)
+	}
+}
 
 func TestCustomerBillingRoutesAreSeparateFromOperator(t *testing.T) {
 	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})

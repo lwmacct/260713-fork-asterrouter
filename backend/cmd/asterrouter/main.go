@@ -159,6 +159,9 @@ func main() {
 	}, func(operation string, err error) {
 		log.Printf("channel monitor: %s: %v", operation, err)
 	})
+	go controlService.RunCustomerNotificationScheduler(monitorCtx, func(err error) {
+		log.Printf("customer notification scheduler: %v", err)
+	})
 	pluginService := plugins.NewServiceWithOptions(pluginRepo, plugins.ServiceOptions{
 		SecretKey: cfg.SecretKey,
 		OfficialCatalog: plugins.OfficialCatalogConfig{

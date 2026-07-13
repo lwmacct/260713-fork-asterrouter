@@ -101,6 +101,66 @@ func registerCustomerRoutes(customer *gin.RouterGroup, control *controlplane.Ser
 		}
 		httpx.OK(c, data)
 	})
+	customer.GET("/notification-settings", func(c *gin.Context) {
+		data, err := control.CustomerNotificationSettings(c.Request.Context(), actor(c))
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1265, err.Error())
+			return
+		}
+		httpx.OK(c, data)
+	})
+	customer.PUT("/notification-settings", func(c *gin.Context) {
+		var request controlplane.CustomerNotificationSettingsRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1266, "通知设置请求无效")
+			return
+		}
+		data, err := control.UpdateCustomerNotificationSettings(c.Request.Context(), actor(c), request)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1266, err.Error())
+			return
+		}
+		httpx.OK(c, data)
+	})
+	customer.GET("/notifications", func(c *gin.Context) {
+		limit, err := strconv.Atoi(defaultString(c.Query("limit"), "20"))
+		if err != nil || limit <= 0 {
+			httpx.Error(c, http.StatusBadRequest, 1267, "limit 必须是正整数")
+			return
+		}
+		offset, err := strconv.Atoi(defaultString(c.Query("offset"), "0"))
+		if err != nil || offset < 0 {
+			httpx.Error(c, http.StatusBadRequest, 1267, "offset 必须是非负整数")
+			return
+		}
+		data, err := control.CustomerNotifications(c.Request.Context(), actor(c), controlplane.CustomerNotificationQuery{Limit: limit, Offset: offset})
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1267, err.Error())
+			return
+		}
+		httpx.OK(c, data)
+	})
+	markRead := func(c *gin.Context) {
+		if err := control.MarkCustomerNotificationRead(c.Request.Context(), actor(c), c.Param("id")); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, controlplane.ErrCustomerNotificationNotFound) {
+				status = http.StatusNotFound
+			}
+			httpx.Error(c, status, 1268, err.Error())
+			return
+		}
+		httpx.OK(c, gin.H{"read": true})
+	}
+	customer.POST("/notifications/:id/read", markRead)
+	customer.PATCH("/notifications/:id/read", markRead)
+	customer.POST("/notifications/read-all", func(c *gin.Context) {
+		updated, err := control.MarkAllCustomerNotificationsRead(c.Request.Context(), actor(c))
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1269, err.Error())
+			return
+		}
+		httpx.OK(c, gin.H{"updated": updated})
+	})
 }
 
 func customerBillingQuery(c *gin.Context, defaultLimit int) (controlplane.CustomerBillingQuery, error) {

@@ -11,6 +11,9 @@ backend/data/
 frontend/dist/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
 !frontend/package-lock.json
 
 # Local agent notes and product drafts
@@ -24,6 +27,10 @@ docs/roadmap/v2/*
 !docs/roadmap/v3/
 docs/roadmap/v3/*
 !docs/roadmap/v3/README.md
+!docs/test/
+docs/test/*
+!docs/test/v1/
+!docs/test/v1/**
 
 # Local environment
 .env

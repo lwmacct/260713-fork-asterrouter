@@ -56,6 +56,40 @@ export interface CustomerRedeemResult {
   overview: CustomerBillingOverview
 }
 
+export type CustomerNotificationChannel = 'inapp' | 'email'
+
+export interface CustomerNotificationPreference {
+  event_type: string
+  enabled: boolean
+  channels: CustomerNotificationChannel[]
+  threshold?: number
+  marketing: boolean
+  updated_at?: string
+}
+
+export interface CustomerNotificationSettings {
+  preferences: CustomerNotificationPreference[]
+}
+
+export interface CustomerNotification {
+  id: string
+  type: string
+  title: string
+  content: string
+  link?: string
+  is_read: boolean
+  read_at?: string
+  created_at: string
+}
+
+export interface CustomerNotificationList {
+  items: CustomerNotification[]
+  total: number
+  unread: number
+  limit: number
+  offset: number
+}
+
 export async function getCustomerBilling(): Promise<CustomerBillingOverview> {
   const response = await apiClient.get<CustomerBillingOverview>('/customer/billing')
   return response.data
@@ -90,4 +124,24 @@ export async function downloadCustomerBillingCSV(query: CustomerBillingQuery = {
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
+}
+
+export async function getCustomerNotificationSettings(): Promise<CustomerNotificationSettings> {
+  return (await apiClient.get<CustomerNotificationSettings>('/customer/notification-settings')).data
+}
+
+export async function updateCustomerNotificationSettings(preferences: CustomerNotificationPreference[]): Promise<CustomerNotificationSettings> {
+  return (await apiClient.put<CustomerNotificationSettings>('/customer/notification-settings', { preferences })).data
+}
+
+export async function getCustomerNotifications(limit = 20, offset = 0): Promise<CustomerNotificationList> {
+  return (await apiClient.get<CustomerNotificationList>('/customer/notifications', { params: { limit, offset } })).data
+}
+
+export async function markCustomerNotificationRead(id: string): Promise<void> {
+  await apiClient.post(`/customer/notifications/${encodeURIComponent(id)}/read`)
+}
+
+export async function markAllCustomerNotificationsRead(): Promise<void> {
+  await apiClient.post('/customer/notifications/read-all')
 }

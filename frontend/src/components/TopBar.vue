@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { availableLocales, getLocale, setLocale, type LocaleCode } from '@/i18n'
+import CustomerNotificationBell from '@/components/CustomerNotificationBell.vue'
 
 withDefaults(defineProps<{ showMenu?: boolean }>(), {
   showMenu: false
@@ -100,6 +101,7 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutsideClick)
 
       <div class="topbar-actions">
       <span v-if="demoMode" class="pill status-warning">{{ t('nav.demoMode') }}</span>
+      <CustomerNotificationBell v-if="isCustomerSurface" />
       <label class="locale-control">
         <Globe2 :size="17" aria-hidden="true" />
         <select :value="getLocale()" :aria-label="t('nav.language')" @change="changeLocale">

@@ -55,6 +55,7 @@ func New(opts Options) http.Handler {
 		}
 		if opts.SettingsService != nil {
 			dispatchers = append(dispatchers, emailAlertDispatcher{control: opts.ControlService, settings: opts.SettingsService})
+			opts.ControlService.SetCustomerNotificationDispatcher(customerEmailNotificationDispatcher{settings: opts.SettingsService})
 		}
 		opts.ControlService.SetAlertDispatcher(dispatchers)
 		if opts.AuthService != nil {

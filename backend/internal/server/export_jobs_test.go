@@ -2,8 +2,9 @@ package server
 
 import (
 	"context"
-	"os"
 	"testing"
+
+	"github.com/astercloud/asterrouter/backend/internal/testutil"
 )
 
 func TestCSVExportJobStoreLifecycle(t *testing.T) {
@@ -52,10 +53,7 @@ func TestCSVExportJobStoreLifecycle(t *testing.T) {
 }
 
 func TestPostgresCSVExportJobStorePersistsResult(t *testing.T) {
-	databaseURL := os.Getenv("ASTER_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("ASTER_TEST_DATABASE_URL is not set")
-	}
+	databaseURL := testutil.NewPostgresSchema(t).URL
 
 	ctx := context.Background()
 	store, err := NewCSVExportJobStore(ctx, databaseURL)

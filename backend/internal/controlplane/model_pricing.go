@@ -30,6 +30,7 @@ func (s *Service) CreateModelPricing(ctx context.Context, actor string, req Mode
 	if err := s.audit(ctx, actor, "create", "model_pricing", pricing.ID, fmt.Sprintf("Created pricing for model %s", pricing.Model)); err != nil {
 		return ModelPricing{}, err
 	}
+	_ = s.PublishCustomerBroadcast(ctx, CustomerNotificationModelUpdate, "模型价格已发布", fmt.Sprintf("模型 %s 的价格规则已发布。", pricing.Model), "/customer/integration", "pricing:create:"+pricing.ID)
 	return pricing, nil
 }
 
@@ -54,6 +55,7 @@ func (s *Service) UpdateModelPricing(ctx context.Context, actor string, id strin
 	if err := s.audit(ctx, actor, "update", "model_pricing", pricing.ID, fmt.Sprintf("Updated pricing for model %s", pricing.Model)); err != nil {
 		return ModelPricing{}, err
 	}
+	_ = s.PublishCustomerBroadcast(ctx, CustomerNotificationModelUpdate, "模型价格已调整", fmt.Sprintf("模型 %s 的价格规则已更新。", pricing.Model), "/customer/integration", "pricing:update:"+pricing.ID+":"+pricing.UpdatedAt.Format(time.RFC3339Nano))
 	return pricing, nil
 }
 

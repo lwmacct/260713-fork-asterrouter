@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -86,6 +87,11 @@ func (s *Service) RedeemCustomerCode(ctx context.Context, actor string, request 
 	if err != nil {
 		return CustomerRedeemResult{}, err
 	}
+	_ = s.publishCustomerNotification(ctx, customerNotificationInput{
+		UserID: user.ID, EventType: CustomerNotificationPayment, Title: "兑换到账",
+		Content: fmt.Sprintf("兑换成功，¥%.2f 已到账，当前账户余额 ¥%.2f。", float64(entry.AmountCents)/100, float64(overview.BalanceCents)/100),
+		Link:    "/customer/billing", DedupeKey: "payment:redeem:" + entry.ID,
+	})
 	return CustomerRedeemResult{Entry: entry, Overview: overview}, nil
 }
 

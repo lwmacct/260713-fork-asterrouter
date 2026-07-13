@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, Code2, Gauge, KeyRound, ReceiptText, UserCog } from '@lucide/vue'
+import { Activity, BellRing, Code2, Gauge, KeyRound, ReceiptText, UserCog } from '@lucide/vue'
 import SurfaceShell from '@/components/SurfaceShell.vue'
 
 const navGroups = [
@@ -18,7 +18,8 @@ const navGroups = [
     label: 'nav.activity',
     items: [
       { to: '/customer/usage', label: 'customer.usage', icon: Activity },
-      { to: '/customer/billing', label: 'customer.billing', icon: ReceiptText }
+      { to: '/customer/billing', label: 'customer.billing', icon: ReceiptText },
+      { to: '/customer/notifications', label: 'customer.notificationSettings', icon: BellRing }
     ]
   },
   {

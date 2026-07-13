@@ -680,6 +680,7 @@ textarea:focus-visible {
 }
 
 .surface-customer .admin-main > .content:not(.account-page) {
+  display: grid;
   width: 100%;
   max-width: 1480px;
   margin-inline: auto;
@@ -3403,6 +3404,28 @@ button.pill:hover {
   .surface-customer .content input,
   .surface-customer .content select {
     min-height: 44px;
+  }
+
+  .surface-customer .content .icon-button {
+    min-width: 44px;
+  }
+
+  .surface-customer .content .billing-kind-tabs button,
+  .surface-customer .content .billing-filters input,
+  .surface-customer .content .download-button-grid .button,
+  .surface-customer .content .download-menu a {
+    min-height: 44px;
+  }
+
+  .surface-customer .topbar .mobile-menu-button,
+  .surface-customer .topbar .locale-control,
+  .surface-customer .topbar .locale-control select,
+  .surface-customer .topbar .account-trigger {
+    min-height: 44px;
+  }
+
+  .surface-customer .topbar .mobile-menu-button {
+    min-width: 44px;
   }
 
   .page-header h1 {

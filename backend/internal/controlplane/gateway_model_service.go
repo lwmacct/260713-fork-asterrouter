@@ -28,6 +28,7 @@ func (s *Service) CreateGatewayModel(ctx context.Context, actor string, req Gate
 	if err := s.audit(ctx, actor, "create", "gateway_model", model.ID, fmt.Sprintf("Created gateway model %s", model.ModelID)); err != nil {
 		return GatewayModel{}, err
 	}
+	_ = s.PublishCustomerBroadcast(ctx, CustomerNotificationModelUpdate, "新模型已上架", fmt.Sprintf("模型 %s 已加入可用模型目录。", model.ModelID), "/customer/integration", "model:create:"+model.ID)
 	return model, nil
 }
 
@@ -52,6 +53,7 @@ func (s *Service) UpdateGatewayModel(ctx context.Context, actor string, id strin
 	if err := s.audit(ctx, actor, "update", "gateway_model", model.ID, fmt.Sprintf("Updated gateway model %s", model.ModelID)); err != nil {
 		return GatewayModel{}, err
 	}
+	_ = s.PublishCustomerBroadcast(ctx, CustomerNotificationModelUpdate, "模型信息已更新", fmt.Sprintf("模型 %s 的可用状态或接入信息已更新。", model.ModelID), "/customer/integration", "model:update:"+model.ID+":"+model.UpdatedAt.Format(time.RFC3339Nano))
 	return model, nil
 }
 
@@ -63,7 +65,11 @@ func (s *Service) DeleteGatewayModel(ctx context.Context, actor string, id strin
 	if err := s.repo.DeleteGatewayModel(ctx, model.ID); err != nil {
 		return err
 	}
-	return s.audit(ctx, actor, "delete", "gateway_model", model.ID, fmt.Sprintf("Deleted gateway model %s and its routes", model.ModelID))
+	if err := s.audit(ctx, actor, "delete", "gateway_model", model.ID, fmt.Sprintf("Deleted gateway model %s and its routes", model.ModelID)); err != nil {
+		return err
+	}
+	_ = s.PublishCustomerBroadcast(ctx, CustomerNotificationModelUpdate, "模型已下架", fmt.Sprintf("模型 %s 已从可用模型目录移除。", model.ModelID), "/customer/integration", "model:delete:"+model.ID+":"+time.Now().UTC().Format(time.RFC3339Nano))
+	return nil
 }
 
 func (s *Service) ListModelRoutes(ctx context.Context) ([]ModelRoute, error) {

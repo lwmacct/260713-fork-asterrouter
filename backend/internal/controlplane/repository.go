@@ -32,6 +32,13 @@ type Repository interface {
 	ListAvailableCustomerVouchers(ctx context.Context, userID string, now time.Time) ([]CustomerVoucher, error)
 	RedeemCustomerCode(ctx context.Context, request CustomerCodeRedemption) (CustomerBillingEntry, error)
 	SaveCustomerRedemptionCode(ctx context.Context, code CustomerRedemptionCode) error
+	GetCustomerNotificationPreferences(ctx context.Context, userID string) ([]CustomerNotificationPreference, error)
+	SaveCustomerNotificationPreferences(ctx context.Context, userID string, preferences []CustomerNotificationPreference, updatedAt time.Time) error
+	CreateCustomerNotification(ctx context.Context, notification CustomerNotification) (bool, error)
+	ListCustomerNotifications(ctx context.Context, query CustomerNotificationQuery) ([]CustomerNotification, int, int, error)
+	MarkCustomerNotificationRead(ctx context.Context, userID, id string, readAt time.Time) (bool, error)
+	MarkAllCustomerNotificationsRead(ctx context.Context, userID string, readAt time.Time) (int, error)
+	SaveCustomerNotificationDelivery(ctx context.Context, delivery CustomerNotificationDelivery) error
 	ListAuthIdentities(ctx context.Context, userID string) ([]AuthIdentity, error)
 	FindAuthIdentity(ctx context.Context, issuer, subject string) (AuthIdentity, bool, error)
 	SaveAuthIdentity(ctx context.Context, identity AuthIdentity) error
@@ -99,61 +106,67 @@ func NewRepository(ctx context.Context, databaseURL string) (Repository, string,
 }
 
 type MemoryRepository struct {
-	mu                  sync.RWMutex
-	providers           map[string]ProviderConnection
-	healthChecks        map[string]ProviderHealthCheck
-	departments         map[string]Department
-	organizationGroups  map[string]OrganizationGroup
-	governancePolicies  map[string]GovernancePolicy
-	workspaceUsers      map[string]WorkspaceUser
-	customerWallets     map[string]CustomerWallet
-	customerEntries     map[string]CustomerBillingEntry
-	customerCodes       map[string]CustomerRedemptionCode
-	customerRedemptions map[string]CustomerRedemption
-	customerVouchers    map[string]CustomerVoucher
-	authIdentities      map[string]AuthIdentity
-	roleBindings        map[string]RoleBinding
-	groups              map[string]RoutingGroup
-	accounts            map[string]ProviderAccount
-	gatewayModels       map[string]GatewayModel
-	modelRoutes         map[string]ModelRoute
-	accountHealthChecks map[string]ProviderAccountHealthCheck
-	modelPricings       map[string]ModelPricing
-	apiKeys             map[string]APIKeyRecord
-	riskBlocks          map[string]GatewayRiskBlock
-	usageRecords        map[string]UsageRecord
-	gatewayTraces       map[string]GatewayTrace
-	auditLogs           map[string]AuditLog
-	alertEvents         map[string]AlertEvent
+	mu                              sync.RWMutex
+	providers                       map[string]ProviderConnection
+	healthChecks                    map[string]ProviderHealthCheck
+	departments                     map[string]Department
+	organizationGroups              map[string]OrganizationGroup
+	governancePolicies              map[string]GovernancePolicy
+	workspaceUsers                  map[string]WorkspaceUser
+	customerWallets                 map[string]CustomerWallet
+	customerEntries                 map[string]CustomerBillingEntry
+	customerCodes                   map[string]CustomerRedemptionCode
+	customerRedemptions             map[string]CustomerRedemption
+	customerVouchers                map[string]CustomerVoucher
+	customerNotificationPreferences map[string]map[string]CustomerNotificationPreference
+	customerNotifications           map[string]CustomerNotification
+	customerNotificationDeliveries  map[string]CustomerNotificationDelivery
+	authIdentities                  map[string]AuthIdentity
+	roleBindings                    map[string]RoleBinding
+	groups                          map[string]RoutingGroup
+	accounts                        map[string]ProviderAccount
+	gatewayModels                   map[string]GatewayModel
+	modelRoutes                     map[string]ModelRoute
+	accountHealthChecks             map[string]ProviderAccountHealthCheck
+	modelPricings                   map[string]ModelPricing
+	apiKeys                         map[string]APIKeyRecord
+	riskBlocks                      map[string]GatewayRiskBlock
+	usageRecords                    map[string]UsageRecord
+	gatewayTraces                   map[string]GatewayTrace
+	auditLogs                       map[string]AuditLog
+	alertEvents                     map[string]AlertEvent
 }
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		providers:           map[string]ProviderConnection{},
-		healthChecks:        map[string]ProviderHealthCheck{},
-		departments:         map[string]Department{},
-		organizationGroups:  map[string]OrganizationGroup{},
-		governancePolicies:  map[string]GovernancePolicy{},
-		workspaceUsers:      map[string]WorkspaceUser{},
-		customerWallets:     map[string]CustomerWallet{},
-		customerEntries:     map[string]CustomerBillingEntry{},
-		customerCodes:       map[string]CustomerRedemptionCode{},
-		customerRedemptions: map[string]CustomerRedemption{},
-		customerVouchers:    map[string]CustomerVoucher{},
-		authIdentities:      map[string]AuthIdentity{},
-		roleBindings:        map[string]RoleBinding{},
-		groups:              map[string]RoutingGroup{},
-		accounts:            map[string]ProviderAccount{},
-		gatewayModels:       map[string]GatewayModel{},
-		modelRoutes:         map[string]ModelRoute{},
-		accountHealthChecks: map[string]ProviderAccountHealthCheck{},
-		modelPricings:       map[string]ModelPricing{},
-		apiKeys:             map[string]APIKeyRecord{},
-		riskBlocks:          map[string]GatewayRiskBlock{},
-		usageRecords:        map[string]UsageRecord{},
-		gatewayTraces:       map[string]GatewayTrace{},
-		auditLogs:           map[string]AuditLog{},
-		alertEvents:         map[string]AlertEvent{},
+		providers:                       map[string]ProviderConnection{},
+		healthChecks:                    map[string]ProviderHealthCheck{},
+		departments:                     map[string]Department{},
+		organizationGroups:              map[string]OrganizationGroup{},
+		governancePolicies:              map[string]GovernancePolicy{},
+		workspaceUsers:                  map[string]WorkspaceUser{},
+		customerWallets:                 map[string]CustomerWallet{},
+		customerEntries:                 map[string]CustomerBillingEntry{},
+		customerCodes:                   map[string]CustomerRedemptionCode{},
+		customerRedemptions:             map[string]CustomerRedemption{},
+		customerVouchers:                map[string]CustomerVoucher{},
+		customerNotificationPreferences: map[string]map[string]CustomerNotificationPreference{},
+		customerNotifications:           map[string]CustomerNotification{},
+		customerNotificationDeliveries:  map[string]CustomerNotificationDelivery{},
+		authIdentities:                  map[string]AuthIdentity{},
+		roleBindings:                    map[string]RoleBinding{},
+		groups:                          map[string]RoutingGroup{},
+		accounts:                        map[string]ProviderAccount{},
+		gatewayModels:                   map[string]GatewayModel{},
+		modelRoutes:                     map[string]ModelRoute{},
+		accountHealthChecks:             map[string]ProviderAccountHealthCheck{},
+		modelPricings:                   map[string]ModelPricing{},
+		apiKeys:                         map[string]APIKeyRecord{},
+		riskBlocks:                      map[string]GatewayRiskBlock{},
+		usageRecords:                    map[string]UsageRecord{},
+		gatewayTraces:                   map[string]GatewayTrace{},
+		auditLogs:                       map[string]AuditLog{},
+		alertEvents:                     map[string]AlertEvent{},
 	}
 }
 
@@ -853,6 +866,7 @@ ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS balance_cents INTEGER NOT N
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER NOT NULL DEFAULT 5;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS rpm_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS session_version BIGINT NOT NULL DEFAULT 1;
 
 DO $$ BEGIN
   ALTER TABLE workspace_users ADD CONSTRAINT workspace_users_avatar_size CHECK (octet_length(avatar_data_url) <= 262144);
@@ -973,6 +987,57 @@ CREATE TABLE IF NOT EXISTS customer_vouchers (
 
 CREATE INDEX IF NOT EXISTS customer_vouchers_user_status_idx
   ON customer_vouchers(user_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS customer_notification_preferences (
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  channels TEXT NOT NULL DEFAULT '[]',
+  threshold DOUBLE PRECISION,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(user_id, event_type),
+  CHECK (threshold IS NULL OR threshold >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS customer_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  link TEXT NOT NULL DEFAULT '',
+  dedupe_key TEXT NOT NULL DEFAULT '',
+  visible_in_app BOOLEAN NOT NULL DEFAULT TRUE,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS customer_notifications_user_dedupe_idx
+  ON customer_notifications(user_id, dedupe_key)
+  WHERE dedupe_key <> '';
+
+CREATE INDEX IF NOT EXISTS customer_notifications_user_created_idx
+  ON customer_notifications(user_id, visible_in_app, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS customer_notifications_user_unread_idx
+  ON customer_notifications(user_id, is_read, created_at DESC)
+  WHERE visible_in_app = TRUE;
+
+CREATE TABLE IF NOT EXISTS customer_notification_deliveries (
+  id TEXT PRIMARY KEY,
+  notification_id TEXT NOT NULL REFERENCES customer_notifications(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS customer_notification_deliveries_notification_idx
+  ON customer_notification_deliveries(notification_id, channel);
 
 CREATE TABLE IF NOT EXISTS routing_groups (
   id TEXT PRIMARY KEY,
@@ -1209,6 +1274,10 @@ CREATE INDEX IF NOT EXISTS api_keys_owner_user_idx
   ON api_keys(owner_user_id, status)
   WHERE owner_user_id <> '';
 
+CREATE INDEX IF NOT EXISTS api_keys_customer_idx
+  ON api_keys(customer_id, status)
+  WHERE customer_id <> '';
+
 CREATE TABLE IF NOT EXISTS gateway_risk_blocks (
   api_key_id TEXT PRIMARY KEY,
   rule_id TEXT NOT NULL DEFAULT '',
@@ -1250,6 +1319,10 @@ CREATE TABLE IF NOT EXISTS usage_records (
 ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS provider_account_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS customer_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS upstream_model TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS usage_records_customer_created_idx
+  ON usage_records(customer_id, created_at DESC)
+  WHERE customer_id <> '';
 
 CREATE TABLE IF NOT EXISTS gateway_traces (
   id TEXT PRIMARY KEY,

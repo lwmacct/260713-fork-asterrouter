@@ -37,20 +37,25 @@ var (
 )
 
 type Service struct {
-	repo            Repository
-	gatewayPath     string
-	secretKey       string
-	alertDispatcher AlertDispatcher
-	usageObserver   UsageObserver
-	rateMu          sync.Mutex
-	rateWindows     map[string][]time.Time
-	slotMu          sync.Mutex
-	accountSlots    map[string]int
-	scheduler       *gatewayScheduler
+	repo                           Repository
+	gatewayPath                    string
+	secretKey                      string
+	alertDispatcher                AlertDispatcher
+	customerNotificationDispatcher CustomerNotificationDispatcher
+	usageObserver                  UsageObserver
+	rateMu                         sync.Mutex
+	rateWindows                    map[string][]time.Time
+	slotMu                         sync.Mutex
+	accountSlots                   map[string]int
+	scheduler                      *gatewayScheduler
 }
 
 type AlertDispatcher interface {
 	DispatchAlert(ctx context.Context, event AlertEvent) error
+}
+
+type CustomerNotificationDispatcher interface {
+	DispatchCustomerNotification(ctx context.Context, user WorkspaceUser, notification CustomerNotification) error
 }
 
 // UsageObserver receives a usage record after it has been durably saved by the
@@ -112,6 +117,10 @@ func (s *Service) providerAccountSlotUsage(accountID string) int {
 
 func (s *Service) SetAlertDispatcher(dispatcher AlertDispatcher) {
 	s.alertDispatcher = dispatcher
+}
+
+func (s *Service) SetCustomerNotificationDispatcher(dispatcher CustomerNotificationDispatcher) {
+	s.customerNotificationDispatcher = dispatcher
 }
 
 func (s *Service) SetUsageObserver(observer UsageObserver) {
@@ -1068,6 +1077,7 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 			_ = s.audit(ctx, systemActor, "usage_observer_error", "usage_record", record.ID, err.Error())
 		}
 	}
+	_ = s.syncCustomerUsageNotifications(ctx, auth, record)
 	if auth.effectiveMonthlyTokenLimit() > 0 && (in.InputTokens > 0 || in.OutputTokens > 0) {
 		_ = s.syncAPIKeyQuotaAlertForAuth(ctx, auth)
 	}

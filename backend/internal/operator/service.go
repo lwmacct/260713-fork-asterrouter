@@ -649,6 +649,7 @@ func (s *Service) SaveNotice(ctx context.Context, id string, req NoticeRequest) 
 		publishAt = &parsed
 	}
 	now := time.Now().UTC()
+	wasPublished := false
 	v := Notice{ID: id, Title: strings.TrimSpace(req.Title), Content: strings.TrimSpace(req.Content), Audience: strings.TrimSpace(req.Audience), Status: status, PublishAt: publishAt, CreatedAt: now, UpdatedAt: now}
 	if v.Audience == "" {
 		v.Audience = "all"
@@ -665,9 +666,20 @@ func (s *Service) SaveNotice(ctx context.Context, id string, req NoticeRequest) 
 			return Notice{}, err
 		}
 		v.CreatedAt = old.CreatedAt
+		wasPublished = old.Status == "published"
 	}
 	if err := s.repo.SaveNotice(ctx, v); err != nil {
 		return Notice{}, err
+	}
+	if s.control != nil && v.Status == "published" && !wasPublished {
+		eventType := controlplane.CustomerNotificationAnnouncement
+		switch strings.ToLower(v.Audience) {
+		case "marketing":
+			eventType = controlplane.CustomerNotificationMarketing
+		case "product", "product_update":
+			eventType = controlplane.CustomerNotificationProductUpdate
+		}
+		_ = s.control.PublishCustomerBroadcast(ctx, eventType, v.Title, v.Content, "/customer/notifications", v.ID+":"+v.UpdatedAt.Format(time.RFC3339Nano))
 	}
 	return v, nil
 }

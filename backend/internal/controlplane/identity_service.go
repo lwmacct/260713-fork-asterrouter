@@ -168,7 +168,11 @@ func (s *Service) ChangeCurrentAccountPassword(ctx context.Context, actor string
 	if settingPassword {
 		action, summary = "account_password_enabled", "Enabled local password login"
 	}
-	return s.audit(ctx, actor, action, "workspace_user", user.ID, summary)
+	if err := s.audit(ctx, actor, action, "workspace_user", user.ID, summary); err != nil {
+		return err
+	}
+	_ = s.publishAccountSecurityNotification(ctx, user, "账户密码已更新", "您的账户密码刚刚发生变更。如非本人操作，请立即重置密码并撤销其他登录会话。", action)
+	return nil
 }
 
 func (s *Service) CurrentAccountPasswordHash(ctx context.Context, actor string) (string, error) {
@@ -367,7 +371,11 @@ func (s *Service) CompletePasswordReset(ctx context.Context, token, password str
 			if err := s.repo.SaveWorkspaceUser(ctx, user); err != nil {
 				return err
 			}
-			return s.audit(ctx, user.Email, "password_reset_completed", "workspace_user", user.ID, "Completed password reset")
+			if err := s.audit(ctx, user.Email, "password_reset_completed", "workspace_user", user.ID, "Completed password reset"); err != nil {
+				return err
+			}
+			_ = s.publishAccountSecurityNotification(ctx, user, "账户密码已重置", "您的账户密码已通过密码找回流程重置，其他登录会话已失效。", "password_reset_completed")
+			return nil
 		}
 	}
 	return errors.New("password reset token is invalid or expired")
@@ -418,7 +426,11 @@ func (s *Service) ConfirmTOTP(ctx context.Context, actor, code string) error {
 	if err := s.repo.SaveWorkspaceUser(ctx, user); err != nil {
 		return err
 	}
-	return s.audit(ctx, actor, "totp_enabled", "workspace_user", user.ID, "Enabled TOTP authentication")
+	if err := s.audit(ctx, actor, "totp_enabled", "workspace_user", user.ID, "Enabled TOTP authentication"); err != nil {
+		return err
+	}
+	_ = s.publishAccountSecurityNotification(ctx, user, "两步验证已启用", "您的账户已启用 TOTP 两步验证。", "totp_enabled")
+	return nil
 }
 
 func (s *Service) DisableTOTP(ctx context.Context, actor, code string) error {
@@ -437,7 +449,11 @@ func (s *Service) DisableTOTP(ctx context.Context, actor, code string) error {
 	if err := s.repo.SaveWorkspaceUser(ctx, user); err != nil {
 		return err
 	}
-	return s.audit(ctx, actor, "totp_disabled", "workspace_user", user.ID, "Disabled TOTP authentication")
+	if err := s.audit(ctx, actor, "totp_disabled", "workspace_user", user.ID, "Disabled TOTP authentication"); err != nil {
+		return err
+	}
+	_ = s.publishAccountSecurityNotification(ctx, user, "两步验证已关闭", "您的账户已关闭 TOTP 两步验证。如非本人操作，请立即检查账户安全。", "totp_disabled")
+	return nil
 }
 
 func (s *Service) VerifyUserTOTP(ctx context.Context, userID, code string) (WorkspaceUser, error) {

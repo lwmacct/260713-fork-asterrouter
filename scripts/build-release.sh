@@ -117,7 +117,7 @@ release = {
     "version": version,
     "channel": "stable",
     "name": f"AsterRouter {version}",
-    "notes": "Linux release build with systemd deployment assets.",
+    "notes": "Customer portal, account security, social OAuth, billing governance, retention cleanup, and backup automation improvements.",
     "published_at": build_date,
     "html_url": html_url,
     "assets": assets,
