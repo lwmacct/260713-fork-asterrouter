@@ -20,6 +20,20 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: asterrouter_release_test
+          POSTGRES_USER: asterrouter
+          POSTGRES_PASSWORD: asterrouter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asterrouter -d asterrouter_release_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -53,6 +67,26 @@ jobs:
       - name: Build release assets
         run: bash scripts/build-release.sh "${{ steps.version.outputs.version }}"
 
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Validate release assets
+        env:
+          ASTER_TEST_ARM64_RUNTIME: '1'
+        run: bash scripts/test-release-artifacts.sh "${{ steps.version.outputs.version }}"
+
+      - name: Validate candidate release runtime
+        env:
+          ASTER_RELEASE_RUNTIME_DIR: ${{ runner.temp }}/asterrouter-release-runtime
+          ASTER_RELEASE_TEST_DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_release_test?sslmode=disable
+        run: bash scripts/test-release-runtime.sh "${{ steps.version.outputs.version }}"
+
+      - name: Validate Linux install, upgrade, and rollback
+        env:
+          ASTER_INSTALLER_TEST_DIR: ${{ runner.temp }}/asterrouter-installer-test
+        run: sudo --preserve-env=ASTER_INSTALLER_TEST_DIR bash scripts/test-installer.sh
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -64,4 +98,19 @@ jobs:
             dist/asterrouter_*_linux_arm64.tar.gz
             dist/checksums.txt
             dist/asterrouter_update_manifest.json
+          if-no-files-found: error
+      - name: Upload installer evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: asterrouter-installer-evidence
+          path: ${{ runner.temp }}/asterrouter-installer-test/report.txt
+          if-no-files-found: error
+      - name: Upload release runtime evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: asterrouter-release-runtime-evidence
+          path: |
+            ${{ runner.temp }}/asterrouter-release-runtime/report.txt
+            ${{ runner.temp }}/asterrouter-release-runtime/runtime.log
+            ${{ runner.temp }}/asterrouter-release-runtime/fail-closed.log
           if-no-files-found: error

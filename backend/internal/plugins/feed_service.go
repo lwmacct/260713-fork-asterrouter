@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/astercloud/asterrouter/backend/internal/cryptoutil"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -254,8 +255,11 @@ func (s *Service) applyOfficialFeedRevocations(ctx context.Context, serviceKey s
 }
 
 func (s *Service) officialFeedKeyPair() (*ecdh.PrivateKey, *ecdh.PublicKey, error) {
-	seed := sha256.Sum256([]byte("asterrouter:official-feed:x25519:v1|" + s.secretKey))
-	privateKey, err := ecdh.X25519().NewPrivateKey(seed[:])
+	seed, err := cryptoutil.DeriveKey(s.secretKey, "asterrouter:official-feed:x25519:v2")
+	if err != nil {
+		return nil, nil, err
+	}
+	privateKey, err := ecdh.X25519().NewPrivateKey(seed)
 	if err != nil {
 		return nil, nil, err
 	}

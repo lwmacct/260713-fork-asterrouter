@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -31,6 +34,8 @@ var (
 	ErrBackupDatabase     = errors.New("PostgreSQL is required for persistent backups")
 	ErrBackupInvalid      = errors.New("backup archive is invalid")
 )
+
+var archiveIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$`)
 
 type BackupInfo struct {
 	ID        string    `json:"id"`
@@ -88,7 +93,7 @@ func defaultArchiveBytes(value int64) int64 {
 	return value
 }
 
-func (s *Service) CreateBackup(ctx context.Context, operationID string) (BackupInfo, error) {
+func (s *Service) CreateBackup(ctx context.Context, _ string) (BackupInfo, error) {
 	if s.databaseURL == "" {
 		return BackupInfo{}, ErrBackupDatabase
 	}
@@ -135,7 +140,7 @@ func (s *Service) CreateBackup(ctx context.Context, operationID string) (BackupI
 		return BackupInfo{}, err
 	}
 
-	id := archiveID(backupPrefix, operationID, now)
+	id := archiveID(backupPrefix, now)
 	target := filepath.Join(backupDir, id+".tar.gz")
 	if err := createTarGzip(target, workDir, s.maxArchiveBytes); err != nil {
 		_ = os.Remove(target)
@@ -241,7 +246,7 @@ func (s *Service) RestoreBackup(ctx context.Context, operationID string, request
 	return RestoreResult{OperationID: operationID, BackupID: request.BackupID, NeedRestart: true, Message: "Backup restored. Restart the service before serving traffic."}, nil
 }
 
-func (s *Service) CreateDiagnosticBundle(_ context.Context, operationID string, details map[string]any) (DiagnosticInfo, error) {
+func (s *Service) CreateDiagnosticBundle(_ context.Context, _ string, details map[string]any) (DiagnosticInfo, error) {
 	now := time.Now().UTC()
 	dir := s.archiveDirectory("diagnostic")
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -267,7 +272,7 @@ func (s *Service) CreateDiagnosticBundle(_ context.Context, operationID string, 
 	if err := writeJSONFile(filepath.Join(workDir, "diagnostic.json"), redacted); err != nil {
 		return DiagnosticInfo{}, err
 	}
-	id := archiveID(diagnosticPrefix, operationID, now)
+	id := archiveID(diagnosticPrefix, now)
 	target := filepath.Join(dir, id+".tar.gz")
 	if err := createTarGzip(target, workDir, s.maxArchiveBytes); err != nil {
 		_ = os.Remove(target)
@@ -285,7 +290,7 @@ func (s *Service) BackupArchivePath(id string) (string, error) {
 }
 
 func (s *Service) StoreBackupArchive(id string, source io.Reader) (BackupInfo, error) {
-	if id == "" || !strings.HasPrefix(id, backupPrefix) || strings.ContainsAny(id, `/\\`) {
+	if !validArchiveID(id, backupPrefix) {
 		return BackupInfo{}, ErrBackupInvalid
 	}
 	dir := s.archiveDirectory("backup")
@@ -343,7 +348,7 @@ func (s *Service) findArchive(kind, id string) (string, error) {
 	if kind == "diagnostic" {
 		prefix = diagnosticPrefix
 	}
-	if strings.ContainsAny(id, `/\\`) || id == "" || !strings.HasPrefix(id, prefix) {
+	if !validArchiveID(id, prefix) {
 		return "", ErrBackupNotFound
 	}
 	path := filepath.Join(s.archiveDirectory(kind), id+".tar.gz")
@@ -356,17 +361,16 @@ func (s *Service) findArchive(kind, id string) (string, error) {
 	return path, nil
 }
 
-func archiveID(prefix, operationID string, now time.Time) string {
-	clean := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			return r
-		}
-		return '-'
-	}, strings.TrimSpace(operationID))
-	if clean == "" {
-		clean = "manual"
+func archiveID(prefix string, now time.Time) string {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return prefix + now.UTC().Format("20060102T150405Z") + fmt.Sprintf("-%d", now.UnixNano())
 	}
-	return prefix + now.UTC().Format("20060102T150405Z") + "-" + clean
+	return prefix + now.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(random)
+}
+
+func validArchiveID(id, prefix string) bool {
+	return strings.HasPrefix(id, prefix) && archiveIDPattern.MatchString(id)
 }
 
 func fileArchiveInfo(id, path string) (BackupInfo, error) {
@@ -527,6 +531,14 @@ func extractTarGzip(source, target string, limit int64) error {
 	}
 	defer gzipReader.Close()
 	reader := tar.NewReader(io.LimitReader(gzipReader, limit+1))
+	if err := os.MkdirAll(target, 0750); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(target)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	var extracted int64
 	for {
 		header, err := reader.Next()
@@ -536,27 +548,26 @@ func extractTarGzip(source, target string, limit int64) error {
 		if err != nil {
 			return err
 		}
-		name := filepath.Clean(header.Name)
-		if name == "." || strings.HasPrefix(name, "..") || filepath.IsAbs(name) {
+		if !filepath.IsLocal(header.Name) {
 			return fmt.Errorf("unsafe archive path")
 		}
-		path := filepath.Join(target, name)
-		if !strings.HasPrefix(path, filepath.Clean(target)+string(os.PathSeparator)) {
-			return fmt.Errorf("archive path escapes target")
+		name := filepath.Clean(header.Name)
+		if name == "." {
+			continue
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0750); err != nil {
+			if err := root.MkdirAll(name, 0750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
 			if header.Size < 0 || limit > 0 && extracted+header.Size > limit {
 				return fmt.Errorf("archive exceeds limit")
 			}
-			if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			if err := root.MkdirAll(filepath.Dir(name), 0750); err != nil {
 				return err
 			}
-			output, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+			output, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 			if err != nil {
 				return err
 			}

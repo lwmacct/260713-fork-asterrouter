@@ -6,7 +6,7 @@ ARTIFACT_DIR="${ASTER_TEST_ARTIFACT_DIR:-${TMPDIR:-/tmp}/asterrouter-test-artifa
 
 mkdir -p "${ARTIFACT_DIR}"
 
-backend() {
+backend_checks() {
   local unformatted
   unformatted="$(cd "${ROOT_DIR}/backend" && gofmt -l .)"
   if [ -n "${unformatted}" ]; then
@@ -18,8 +18,20 @@ backend() {
   (
     cd "${ROOT_DIR}/backend"
     go vet ./...
+    go test ./...
+  )
+}
+
+backend_coverage() {
+  (
+    cd "${ROOT_DIR}/backend"
     go test -covermode=atomic -coverprofile="${ARTIFACT_DIR}/backend-coverage.out" ./...
   )
+}
+
+backend() {
+  backend_checks
+  backend_coverage
 }
 
 frontend() {
@@ -41,6 +53,8 @@ e2e() {
 
 case "${1:-all}" in
   backend) backend ;;
+  backend-checks) backend_checks ;;
+  backend-coverage) backend_coverage ;;
   frontend) frontend ;;
   e2e) e2e ;;
   all)
@@ -48,7 +62,7 @@ case "${1:-all}" in
     frontend
     ;;
   *)
-    echo "Usage: $0 [backend|frontend|e2e|all]" >&2
+    echo "Usage: $0 [backend|backend-checks|backend-coverage|frontend|e2e|all]" >&2
     exit 2
     ;;
 esac

@@ -48,6 +48,42 @@ jobs:
           path: backend/coverage.out
           if-no-files-found: error
 
+  recovery:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: asterrouter_recovery_test
+          POSTGRES_USER: asterrouter
+          POSTGRES_PASSWORD: asterrouter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asterrouter -d asterrouter_recovery_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: PostgreSQL backup and empty-database restore rehearsal
+        working-directory: backend
+        env:
+          ASTER_RECOVERY_TEST_DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_recovery_test?sslmode=disable
+          ASTER_RECOVERY_TEST_ALLOW_DESTRUCTIVE: '1'
+        run: go test -json -count=1 -run '^TestPostgresBackupRestoreRehearsal$' ./internal/system | tee "${{ runner.temp }}/recovery-test.json"
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: postgres-recovery-evidence
+          path: ${{ runner.temp }}/recovery-test.json
+          if-no-files-found: error
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -78,3 +114,51 @@ jobs:
           name: frontend-coverage
           path: frontend/coverage
           if-no-files-found: error
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser smoke tests
+        working-directory: frontend
+        run: npm run test:e2e:smoke
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-evidence
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run release container acceptance
+        env:
+          ASTER_TEST_ARTIFACT_DIR: ${{ runner.temp }}/asterrouter-container-evidence
+        run: bash scripts/test-container.sh
+      - name: Upload container evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-evidence
+          path: ${{ runner.temp }}/asterrouter-container-evidence
+          if-no-files-found: ignore

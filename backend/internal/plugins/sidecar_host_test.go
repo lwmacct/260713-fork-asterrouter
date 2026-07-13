@@ -31,7 +31,10 @@ func TestSidecarFeedPayloadRequiresRuntimeTokenAndManifestPermission(t *testing.
 	}); err != nil {
 		t.Fatalf("SavePackageInstallation(): %v", err)
 	}
-	activeDir := svc.activePackageDir(pluginID, version)
+	activeDir, err := svc.activePackageDir(pluginID, version)
+	if err != nil {
+		t.Fatalf("activePackageDir(): %v", err)
+	}
 	if err := os.MkdirAll(activeDir, 0750); err != nil {
 		t.Fatalf("MkdirAll(): %v", err)
 	}

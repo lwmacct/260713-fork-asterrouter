@@ -125,7 +125,10 @@ func (s *Service) UninstallPackage(ctx context.Context, pluginID string, package
 	if err := s.stopSidecarSupervisor(ctx, pluginID); err != nil {
 		return PackageInstallation{}, fmt.Errorf("stop existing plugin runtime: %w", err)
 	}
-	activeDir := s.activePackageDir(pluginID, installation.Version)
+	activeDir, err := s.activePackageDir(pluginID, installation.Version)
+	if err != nil {
+		return PackageInstallation{}, err
+	}
 	backupDir := activeDir + ".uninstall-" + fmt.Sprint(s.now().UnixNano())
 	hadActive := false
 	if _, statErr := os.Stat(activeDir); statErr == nil {

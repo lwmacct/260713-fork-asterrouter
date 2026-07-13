@@ -1,8 +1,6 @@
 package controlplane
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"math"
 	"math/rand"
 	"sync"
@@ -20,14 +18,14 @@ type gatewayScheduler struct {
 	mu             sync.Mutex
 	rateSamples    map[string][]gatewayRateSample
 	halfOpenProbes map[string]bool
-	stickyBindings map[string]gatewayStickyBinding
+	stickyBindings map[gatewayStickyKey]gatewayStickyBinding
 }
 
 func newGatewayScheduler() *gatewayScheduler {
 	return &gatewayScheduler{
 		rateSamples:    map[string][]gatewayRateSample{},
 		halfOpenProbes: map[string]bool{},
-		stickyBindings: map[string]gatewayStickyBinding{},
+		stickyBindings: map[gatewayStickyKey]gatewayStickyBinding{},
 	}
 }
 
@@ -35,6 +33,13 @@ type gatewayStickyBinding struct {
 	routeID   string
 	accountID string
 	expiresAt time.Time
+}
+
+type gatewayStickyKey struct {
+	apiKeyID       string
+	requestedModel string
+	protocol       string
+	stickyID       string
 }
 
 func (s *Service) PreferStickyGatewayCandidate(apiKeyID string, requestedModel string, protocol string, stickyID string, candidates []GatewayProvider) []GatewayProvider {
@@ -84,9 +89,8 @@ func (s *Service) BindStickyGatewayCandidate(apiKeyID string, requestedModel str
 	s.scheduler.mu.Unlock()
 }
 
-func stickyBindingKey(apiKeyID string, requestedModel string, protocol string, stickyID string) string {
-	sum := sha256.Sum256([]byte(apiKeyID + "\x00" + requestedModel + "\x00" + protocol + "\x00" + stickyID))
-	return hex.EncodeToString(sum[:])
+func stickyBindingKey(apiKeyID string, requestedModel string, protocol string, stickyID string) gatewayStickyKey {
+	return gatewayStickyKey{apiKeyID: apiKeyID, requestedModel: requestedModel, protocol: protocol, stickyID: stickyID}
 }
 
 type ProviderAccountPermit struct {

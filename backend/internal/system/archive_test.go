@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,12 +22,54 @@ func TestStoreBackupArchiveValidatesIDAndSize(t *testing.T) {
 	if _, err := svc.StoreBackupArchive("../escape", bytes.NewReader([]byte("data"))); !errors.Is(err, ErrBackupInvalid) {
 		t.Fatalf("invalid id error = %v", err)
 	}
+	if _, err := svc.StoreBackupArchive("asterrouter-backup-valid.tar.gz", bytes.NewReader([]byte("data"))); !errors.Is(err, ErrBackupInvalid) {
+		t.Fatalf("invalid extension error = %v", err)
+	}
 	if _, err := svc.StoreBackupArchive("asterrouter-backup-valid", bytes.NewReader([]byte("0123456789"))); !errors.Is(err, ErrBackupInvalid) {
 		t.Fatalf("oversized error = %v", err)
 	}
 	info, err := svc.StoreBackupArchive("asterrouter-backup-valid", bytes.NewReader([]byte("archive")))
 	if err != nil || info.ID != "asterrouter-backup-valid" {
 		t.Fatalf("StoreBackupArchive() = %+v, %v", info, err)
+	}
+}
+
+func TestS3BackupUploadRejectsInvalidArchiveIDBeforeAccessingStorage(t *testing.T) {
+	store := &S3BackupStore{}
+	if _, err := store.Upload(context.Background(), "../secrets", bytes.NewReader([]byte("data"))); !errors.Is(err, ErrBackupInvalid) {
+		t.Fatalf("Upload() error = %v, want ErrBackupInvalid", err)
+	}
+}
+
+func TestS3BackupUploadUsesArchiveIDAndReader(t *testing.T) {
+	const id = "asterrouter-backup-20260713T010203Z-0011223344556677"
+	var uploaded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/test-bucket/backups/"+id+".tar.gz" {
+			t.Errorf("unexpected S3 request: %s %s", r.Method, r.URL.Path)
+		}
+		var err error
+		uploaded, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upload body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	store, err := NewS3BackupStore(context.Background(), S3BackupConfig{
+		Endpoint: server.URL, Region: "test", Bucket: "test-bucket", Prefix: "backups",
+		AccessKey: "test-access", SecretKey: "test-secret", PathStyle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.Upload(context.Background(), id, bytes.NewReader([]byte("archive-content")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "backups/"+id+".tar.gz" || string(uploaded) != "archive-content" {
+		t.Fatalf("Upload() key=%q body=%q", key, uploaded)
 	}
 }
 
@@ -145,6 +190,25 @@ func TestBackupRequiresPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestRecoveryDatabaseURLRequiresDedicatedDatabase(t *testing.T) {
+	for _, databaseURL := range []string{
+		"postgres://user:pass@localhost/postgres",
+		"postgres://user:pass@localhost/production",
+		"postgres://user:pass@localhost/production_asterrouter_recovery_test",
+		"mysql://user:pass@localhost/asterrouter_recovery_test",
+	} {
+		if err := validateRecoveryTestDatabaseURL(databaseURL); err == nil {
+			t.Fatalf("validateRecoveryTestDatabaseURL(%q) unexpectedly succeeded", databaseURL)
+		}
+	}
+	if err := validateRecoveryTestDatabaseURL("postgres://user:pass@localhost/asterrouter_recovery_test"); err != nil {
+		t.Fatalf("validateRecoveryTestDatabaseURL() = %v", err)
+	}
+	if err := validateRecoveryTestDatabaseURL("postgres://user:pass@localhost/asterrouter_recovery_test_ci"); err != nil {
+		t.Fatalf("validateRecoveryTestDatabaseURL() with suffix = %v", err)
+	}
+}
+
 func TestDiagnosticBundleIsRedacted(t *testing.T) {
 	root := t.TempDir()
 	svc := NewService(Config{
@@ -153,9 +217,12 @@ func TestDiagnosticBundleIsRedacted(t *testing.T) {
 		DatabaseURL:   "postgres://user:secret@example.invalid/router",
 		DiagnosticDir: filepath.Join(root, "diagnostics"),
 	})
-	info, err := svc.CreateDiagnosticBundle(context.Background(), "test-diagnostic", map[string]any{"storage_mode": "postgres"})
+	info, err := svc.CreateDiagnosticBundle(context.Background(), "../../attacker-controlled", map[string]any{"storage_mode": "postgres"})
 	if err != nil {
 		t.Fatalf("CreateDiagnosticBundle(): %v", err)
+	}
+	if strings.Contains(info.ID, "attacker") || !validArchiveID(info.ID, diagnosticPrefix) {
+		t.Fatalf("diagnostic id contains request data or is invalid: %q", info.ID)
 	}
 	archivePath, err := svc.DiagnosticArchivePath(info.ID)
 	if err != nil {
@@ -207,6 +274,43 @@ func TestExtractTarGzipRejectsPathTraversal(t *testing.T) {
 	}
 	if err := extractTarGzip(archivePath, filepath.Join(root, "target"), defaultArchiveLimit); err == nil {
 		t.Fatal("extractTarGzip accepted path traversal")
+	}
+}
+
+func TestExtractTarGzipRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(target, "link")); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(root, "unsafe-symlink.tar.gz")
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+	content := []byte("unsafe")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "link/escape", Mode: 0600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractTarGzip(archivePath, target, defaultArchiveLimit); err == nil {
+		t.Fatal("extractTarGzip followed a symlink outside the target")
 	}
 }
 

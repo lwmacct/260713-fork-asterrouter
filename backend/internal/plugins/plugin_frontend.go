@@ -56,5 +56,9 @@ func (s *Service) pluginFrontendDir(ctx context.Context, pluginID string) (strin
 	if !ok || installation.Status != PackageInstallInstalled {
 		return "", ErrPackageNotInstalled
 	}
-	return filepath.Join(s.activePackageDir(pluginID, installation.Version), "frontend"), nil
+	activeDir, err := s.activePackageDir(pluginID, installation.Version)
+	if err != nil {
+		return "", ErrPluginFrontendNotFound
+	}
+	return filepath.Join(activeDir, "frontend"), nil
 }

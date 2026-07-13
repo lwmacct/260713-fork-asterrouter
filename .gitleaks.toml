@@ -1,0 +1,6 @@
+title = "AsterRouter gitleaks config"
+
+[[allowlists]]
+description = "RFC 6238 base32 TOTP test vector"
+paths = ['''backend/internal/auth/totp_test\.go''']
+regexes = ['''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''']

@@ -1,146 +1,175 @@
+<div align="center">
+
 # AsterRouter
 
-AsterRouter is an enterprise AI API Gateway and governance control plane. It provides a stable, private, and auditable access layer for authorized, documented AI APIs.
+**Spend less on AI. Keep every request under control.**
 
-The current product direction is standard-API-first: OpenAI-compatible, Anthropic Messages, and Gemini APIs are the supported integration contracts. Upstream providers or third-party gateways remain the source of upstream accounts, quotas, and provider-specific operations; AsterRouter does not implement account scraping, browser sessions, reverse-engineered APIs, token refresh automation, or private management APIs.
+One gateway for multiple AI providers, automatic cost optimization, enterprise governance, and managed delivery.
 
-See [the global product positioning](docs/product-positioning.md) and [the V3 roadmap](docs/roadmap/v3/README.md) for the current scope. The V2 documents are retained as historical design records.
+[English](./README.md) · [简体中文](./README.zh-CN.md)
 
-## Product Build
+[![Release](https://img.shields.io/github/v/release/astercloud/asterrouter?style=flat-square)](https://github.com/astercloud/asterrouter/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/astercloud/asterrouter/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/astercloud/asterrouter/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/astercloud/asterrouter?style=flat-square)](./LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square)](./backend/go.mod)
 
-The current product build provides:
+</div>
 
-- Single-origin routes for `/setup`, `/admin`, `/portal`, `/api/v1/*`, and `/v1/*`.
-- Basic settings APIs using a key/value settings model.
-- Provider Connection, Workspace Key, policy, usage, and Audit Log control-plane APIs.
-- Admin settings UI for site, profile, OIDC, data governance, service-center mode, and system update operations.
-- Admin Console pages for overview, providers, workspace keys, policies, plugin center, audit logs, and system settings.
-- Built-in plugin registry with free core, profile bundle, and paid add-on entitlement gates.
-- Employee Portal workspace summary backed by the same control-plane data.
-- Gateway API key authentication for `/v1/models` and `/v1/chat/completions`.
-- OpenAI-compatible gateway authentication, model policy validation, provider forwarding, usage recording, and audit logging.
-- OpenAI-compatible provider forwarding when a matching Provider Connection has an encrypted secret configured.
-- Setup wizard for choosing `personal`, `relay_operator`, or `enterprise`.
-- English-first i18n with Simplified Chinese as the second locale.
+## One gateway. Better AI economics.
 
-## Development
+AsterRouter gives your team one controlled AI gateway today and is evolving into a single access layer for text, image, audio, and video AI. Connect the providers you already use, issue secure access to teams and products, and see where every token and dollar goes. The multimodal roadmap extends the same controls to media tasks and artifacts.
 
-Install frontend dependencies once:
+The next stage goes beyond cost reporting: pricing plugins keep supplier rates current, and cost-aware routing chooses the lowest-cost route that still meets your policy, health, and capacity requirements.
 
-```bash
-cd frontend
-npm install
+| | What you get |
+| --- | --- |
+| Lower cost | Compare eligible provider prices and route each request toward the best available economics. |
+| One integration | Keep applications on stable APIs for streaming, media, and long-running jobs while providers and routes change behind the gateway. |
+| Reliable traffic | Fail over around unhealthy, rate-limited, or capacity-constrained routes. |
+| Enterprise control | Manage team access, model permissions, budgets, alerts, audit trails, and data retention. |
+| Flexible delivery | Self-host on your infrastructure or use private deployment and managed operations. |
+
+## How AsterRouter saves money
+
+1. **Connect your providers.** Keep using authorized provider accounts and standard APIs.
+2. **Keep prices current.** Price-source plugins sync supplier rates from supported APIs, signed feeds, imports, or the optional browser extension.
+3. **Route with constraints.** AsterRouter first protects policy, availability, and capacity, then chooses the lowest expected-cost eligible route.
+4. **Prove the result.** Usage and route evidence show the selected price, alternatives, actual cost, and measurable savings.
+
+> Cost-aware quote selection, third-party price plugins, the savings ledger, and the browser extension are roadmap capabilities. The routing, governance, usage, cost allocation, audit, and plugin foundations are available today.
+
+## Built for real organizations
+
+**Engineering teams** get one endpoint and one key workflow across providers.
+
+**Finance and operations** get cost allocation by user, department, group, key, and model, plus budgets and alerts.
+
+**Security teams** get private deployment, encrypted secrets, scoped access, audit evidence, retention controls, and offline-capable operations.
+
+**Platform owners** get route health, fallback, capacity controls, backups, upgrades, diagnostics, and a plugin system for provider-specific extensions.
+
+## Deliver AI to your team or your customers
+
+AsterRouter can power AI access behind internal tools and customer-facing products without forcing every business service to become an AI gateway.
+
+| Scenario | How AsterRouter helps |
+| --- | --- |
+| Internal AI platform | Give employees, departments, services, and automation scoped AI access with shared governance and cost controls. |
+| SaaS and desktop products | Keep your existing customer authentication while AsterRouter validates delegated access and enforces AI policy, quota, routing, and usage. |
+| Content and media products | Extend the gateway to image, video, and audio workloads without rebuilding burst queues, provider-capacity scheduling, long-running jobs, artifact delivery, and media billing in every product. |
+| Agent and developer platforms | Offer one branded AI endpoint across models and providers without exposing upstream credentials. |
+| Partner and OEM delivery | Isolate tenants, apply partner-specific policy, and report usage back to the system that owns the commercial relationship. |
+
+```text
+Platform identity, session, plan, or entitlement
+                       ↓
+Platform-issued credential or signed request context
+                       ↓
+Internal app or customer client -> AsterRouter Gateway -> AI providers
 ```
 
-Run backend and frontend together for local UI development:
+Your platform remains the only source of truth for users, login sessions, tokens, tenants, subscriptions, and entitlements. AsterRouter does not create external users or replace platform authentication. It validates a platform-issued credential or trusted signed context, then owns only AI request enforcement: model policy, quota, routing, cost, usage, risk controls, and audit. Provider credentials never need to ship inside a desktop app, mobile app, or browser client.
 
-```bash
-bash scripts/dev.sh
-```
+The shared key, policy, routing, metering, and isolation foundations are available today. A canonical External Access Context plus standard JWT/JWKS, OIDC introspection, and platform-auth plugin contracts are roadmap capabilities for product and OEM integrations.
 
-The development frontend listens on `http://localhost:5173` and proxies `/api/*` and `/v1/*` to the backend on `http://localhost:8080`. If either development port is occupied, the script shows the listener, sends `SIGTERM`, and waits up to five seconds for the port to be released.
+## One trusted Core, extended for each scenario
 
-To keep occupied processes running and fail instead:
+Different customers need different workflows, but they should not create different gateways. AsterRouter keeps security-critical decisions in one Core and adds optional integrations through plugins.
 
-```bash
-./scripts/dev.sh --no-kill-occupied
-```
+| Trusted Core | Scenario plugins |
+| --- | --- |
+| Gateway credentials, external access context, and tenant isolation | Platform authentication, JWT/JWKS, introspection, directory, and SSO adapters |
+| Model policy, quota, budget, and risk controls | SaaS plans, subscriptions, and entitlement sync |
+| Provider routing, fallback, and cost metering | Supplier pricing and browser-assisted collection |
+| Fair queues, streaming sessions, media jobs, artifact policy, usage, and billing state | Provider protocols for GPT Image, Gemini, Midjourney-compatible services, Jimeng, and others |
+| One Core from a single server to Kubernetes | Replaceable queue and artifact adapters for Redis, S3-compatible storage, Cloudflare R2, Alibaba Cloud OSS, and future brokers |
+| Usage, trace, audit, and data governance | Notifications, exports, branding, and customer workflows |
 
-For IDE tasks or persistent shell configuration, set `ASTER_DEV_KILL_OCCUPIED=0`. Automatic cleanup never escalates to `SIGKILL`.
+Plugins contribute provider or business facts through controlled interfaces. They cannot bypass Core policy, issue unrestricted tokens, read unrelated secrets, or choose routes outside the trusted scheduler.
 
-Backend:
+## Available today
 
-```bash
-cd backend
-go test ./...
-go run ./cmd/asterrouter
-```
+- OpenAI-compatible model listing and Chat Completions, including streaming.
+- Multi-provider routing with priority, weight, capacity, RPM/TPM limits, cooldown, circuit breaking, sticky routing, and fallback.
+- Workspace Keys, model allowlists, rate limits, token quotas, budgets, and overage controls.
+- Usage analytics, cost allocation, alerts, route traces, policy evidence, audit logs, and exports.
+- Enterprise sign-in and access governance with OIDC, Feishu/Lark, DingTalk, departments, groups, and scoped roles.
+- Admin Console, employee Portal, plugin center, backup and restore, diagnostics, and verified release updates.
+- Personal, relay operator, and enterprise deployment profiles with English and Simplified Chinese interfaces.
 
-Frontend:
+The current gateway exposes OpenAI-compatible Models and Chat Completions. Responses, Embeddings, Anthropic Messages, Gemini, realtime sessions, image generation and editing, audio, video, media uploads, asynchronous jobs, and artifact delivery are roadmap capabilities and are not presented as available today.
 
-```bash
-cd frontend
-npm install
-npm run build
-npm run dev
-```
+The multimodal roadmap keeps low-cost deployments practical: PostgreSQL and Redis form the minimum production infrastructure, with no mandatory external message broker. Start with the same Core on one server, then split API, scheduler, modality workers, reconciliation, and artifact delivery into Kubernetes workloads when traffic becomes bursty. Worker pods and optional burst nodes can scale down during quiet periods, while provider capacity, tenant budgets, and cost ceilings remain hard limits. Media can stay local, use S3-compatible storage such as AWS S3, Cloudflare R2, or MinIO, use Alibaba Cloud OSS, or be delivered to customer-owned storage.
 
-Single-origin preview:
+## Quick start
 
-```bash
-cd frontend
-npm run build
-cd ../backend
-go run ./cmd/asterrouter
-```
-
-Then open `http://localhost:8080/setup`, `http://localhost:8080/admin/settings`, or `http://localhost:8080/portal`.
-
-Docker single-service deployment:
-
-```bash
-docker compose up --build
-```
-
-The container builds the frontend and serves it from the Go backend, so one route origin is enough for private deployments.
-
-Environment:
-
-```bash
-export DATABASE_URL="postgres://asterrouter:asterrouter@localhost:5432/asterrouter?sslmode=disable"
-export ASTER_ADMIN_TOKEN="change-me"
-export ASTER_ADMIN_USERNAME="admin"
-export ASTER_ADMIN_PASSWORD="change-me"
-export ASTER_PROFILES="enterprise"
-export ASTER_DEFAULT_PROFILE="enterprise"
-export ASTER_SECRET_KEY="replace-with-a-stable-random-secret"
-export ASTER_BUILD_TYPE="source"
-export ASTER_UPDATE_MANIFEST_URL=""
-export ASTER_CATALOG_MODE="disabled"
-export ASTER_CATALOG_BOOTSTRAP_URL=""
-export ASTER_OFFICIAL_SERVICES_URL=""
-export ASTER_PLUGIN_HOST_URL=""
-export ASTER_REDEEM_URL=""
-export ASTER_ALLOW_RESTART="false"
-export ASTER_BACKUP_DIR="data/backups"
-export ASTER_DIAGNOSTIC_DIR="data/diagnostics"
-export ASTER_MAX_ARCHIVE_BYTES="2147483648"
-```
-
-If `DATABASE_URL` is not set, the backend uses an in-memory settings repository for local development preview. PostgreSQL remains the intended persistent store.
-Use a stable `ASTER_SECRET_KEY` before adding Provider secrets; changing it prevents existing encrypted Provider secrets from being decrypted.
-The local login page uses `ASTER_ADMIN_USERNAME` and `ASTER_ADMIN_PASSWORD`. If `ASTER_ADMIN_PASSWORD` is empty, it falls back to `ASTER_ADMIN_TOKEN`; if both are empty, the local development default is `admin/admin`.
-
-## Linux Release Deployment
-
-AsterRouter ships Linux-only GitHub Release assets for `amd64` and `arm64`.
+### Linux release
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/astercloud/asterrouter/main/deploy/install.sh | sudo bash
 ```
 
-The installer deploys to `/opt/asterrouter`, installs the `asterrouter` command wrapper, and creates `/etc/asterrouter/asterrouter.env` when missing. Production release builds refuse to start until `DATABASE_URL`, a stable `ASTER_SECRET_KEY`, and an admin password or token are configured.
+The installer deploys AsterRouter to `/opt/asterrouter` and creates the service configuration under `/etc/asterrouter`. Production startup requires PostgreSQL, a stable encryption key, and an administrator password or token.
 
-Common operations:
+### Docker
 
 ```bash
-asterrouter status
-asterrouter logs -n 200
-asterrouter upgrade
-asterrouter upgrade -v v0.1.0
-asterrouter rollback v0.1.0
+docker compose up --build
 ```
 
-System update:
+Open `http://localhost:8080/setup` to choose a profile and complete the initial configuration.
 
-- `ASTER_BUILD_TYPE=source` disables in-place binary replacement and reports manual update guidance.
-- `ASTER_BUILD_TYPE=release` enables one-click update when `ASTER_UPDATE_MANIFEST_URL` points to a trusted JSON manifest with a matching `os`/`arch` asset and `sha256`.
-- `ASTER_REDEEM_URL` configures the official one-time redemption endpoint; redemption codes are not stored locally.
-- `ASTER_CATALOG_MODE` selects `online`, `private_mirror`, `offline`, or `disabled` official service behavior.
-- `ASTER_OFFICIAL_SERVICES_URL` optionally overrides the canonical `/official/v1/services` base URL used by encrypted Feed synchronization. When empty, the client derives it from the signed catalog bootstrap or catalog URL.
-- `ASTER_PLUGIN_HOST_URL` overrides the loopback Host API passed to Sidecar plugins. The default is derived from `ASTER_ADDR` and is never intended for browser or external integration use.
-- Online Feed synchronization sends only License and instance binding metadata, the instance X25519 public key, Core version, and a request ID. It never uploads prompts, responses, Provider secrets, Workspace Keys, or Gateway usage details.
-- `ASTER_ALLOW_RESTART=true` allows the Admin Console restart action to terminate the process so an external supervisor can restart it.
-- `ASTER_BACKUP_DIR` controls PostgreSQL and local plugin asset backup archives; the default is `data/backups`.
-- `ASTER_DIAGNOSTIC_DIR` controls redacted diagnostic bundles; the default is `data/diagnostics`.
-- `ASTER_MAX_ARCHIVE_BYTES` limits backup and diagnostic archive size. PostgreSQL deployments require `pg_dump` and `pg_restore` on the service host.
+## Private deployment and managed delivery
+
+AsterRouter supports three delivery models:
+
+- **Self-managed:** deploy and operate AsterRouter in your own environment.
+- **Private delivery:** deploy into a customer-controlled network with installation, migration, and acceptance support.
+- **Managed operations:** ongoing upgrades, backups, health checks, diagnostics, and operational support while the customer retains control of data and provider credentials.
+
+Every delivery model can start with a low-cost single-server deployment for predictable traffic, then move the same Core and data model to role-based Kubernetes workloads. Kubernetes scales AsterRouter pods and optional worker nodes around bursts; it never treats upstream provider concurrency as unlimited capacity.
+
+The Core remains usable when official online services are unavailable. Prompts, responses, Provider Secrets, Workspace Keys, detailed gateway usage, and browser-captured supplier sessions are not uploaded by the official Feed synchronization path.
+
+## Project links
+
+- [Releases](https://github.com/astercloud/asterrouter/releases)
+- [Build status](https://github.com/astercloud/asterrouter/actions)
+- [Deployment environment template](./deploy/asterrouter.env.example)
+- [简体中文说明](./README.zh-CN.md)
+
+<details>
+<summary><strong>Local development</strong></summary>
+
+Install frontend dependencies and start both services:
+
+```bash
+cd frontend
+npm install
+cd ..
+bash scripts/dev.sh
+```
+
+The frontend runs at `http://localhost:5173` and proxies API traffic to the backend at `http://localhost:8080`.
+
+Run backend tests:
+
+```bash
+cd backend
+go test ./...
+```
+
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+See the [deployment environment template](./deploy/asterrouter.env.example).
+
+</details>
+
+## License
+
+AsterRouter is licensed under the [Apache License 2.0](./LICENSE).

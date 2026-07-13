@@ -26,7 +26,13 @@ export default defineConfig({
         'src/router/**/*.ts',
         'src/stores/**/*.ts',
         'src/utils/**/*.ts'
-      ]
+      ],
+      thresholds: {
+        statements: 37,
+        branches: 35,
+        functions: 27,
+        lines: 42
+      }
     }
   }
 })

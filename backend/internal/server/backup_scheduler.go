@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
@@ -96,7 +97,16 @@ func createManagedBackup(ctx context.Context, svc *system.Service, settingsSvc *
 	if err != nil {
 		return system.BackupInfo{}, err
 	}
-	if _, err := store.UploadFile(ctx, data.Path); err != nil {
+	archivePath, err := svc.BackupArchivePath(data.ID)
+	if err != nil {
+		return system.BackupInfo{}, err
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return system.BackupInfo{}, err
+	}
+	defer archive.Close()
+	if _, err := store.Upload(ctx, data.ID, archive); err != nil {
 		return system.BackupInfo{}, err
 	}
 	if err := store.Cleanup(ctx, time.Now().UTC()); err != nil {

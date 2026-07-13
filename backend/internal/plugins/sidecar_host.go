@@ -37,7 +37,11 @@ func (s *Service) SidecarFeedPayload(ctx context.Context, pluginID string, token
 	if state != sidecarTargetReady {
 		return nil, ErrPluginHostUnauthorized
 	}
-	manifest, err := readSidecarManifest(filepath.Join(s.activePackageDir(pluginID, installation.Version), "plugin.json"))
+	activeDir, err := s.activePackageDir(pluginID, installation.Version)
+	if err != nil {
+		return nil, ErrPluginHostUnauthorized
+	}
+	manifest, err := readSidecarManifest(filepath.Join(activeDir, "plugin.json"))
 	if err != nil {
 		return nil, err
 	}

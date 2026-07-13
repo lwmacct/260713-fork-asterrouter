@@ -8,9 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var packagePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
 
 type sidecarManifest struct {
 	ID         string            `json:"id"`
@@ -56,7 +59,10 @@ func inspectPackageRuntime(cachePath string) (string, bool, error) {
 }
 
 func (s *Service) activatePackage(record packageRecord, cachePath string) (runtime string, finalize func() error, rollback func() error, err error) {
-	activeDir := s.activePackageDir(record.PluginID, record.Version)
+	activeDir, err := s.activePackageDir(record.PluginID, record.Version)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	stageDir := activeDir + ".staging"
 	if err := os.RemoveAll(stageDir); err != nil {
 		return "", nil, nil, err
@@ -136,8 +142,14 @@ func (s *Service) activatePackage(record packageRecord, cachePath string) (runti
 	return manifest.Runtime, finalize, rollback, nil
 }
 
-func (s *Service) activePackageDir(pluginID string, version string) string {
-	return filepath.Join(s.packageActiveDir, sanitizePathSegment(pluginID), sanitizePathSegment(version))
+func (s *Service) activePackageDir(pluginID string, version string) (string, error) {
+	pluginID = strings.TrimSpace(pluginID)
+	version = strings.TrimSpace(version)
+	if !packagePathSegmentPattern.MatchString(pluginID) || !packagePathSegmentPattern.MatchString(version) ||
+		!filepath.IsLocal(pluginID) || !filepath.IsLocal(version) {
+		return "", fmt.Errorf("plugin package path is invalid")
+	}
+	return filepath.Join(s.packageActiveDir, pluginID, version), nil
 }
 
 func (s *Service) sidecarEntrypointFromManifest(baseDir string, manifest sidecarManifest) (string, error) {
@@ -196,7 +208,11 @@ func extractTarGzip(source string, targetDir string) error {
 	}
 	defer gzipReader.Close()
 	reader := tar.NewReader(gzipReader)
-	cleanTarget := filepath.Clean(targetDir)
+	root, err := os.OpenRoot(targetDir)
+	if err != nil {
+		return fmt.Errorf("open plugin staging directory: %w", err)
+	}
+	defer root.Close()
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -205,27 +221,23 @@ func extractTarGzip(source string, targetDir string) error {
 		if err != nil {
 			return fmt.Errorf("read plugin archive: %w", err)
 		}
+		if !filepath.IsLocal(header.Name) {
+			return fmt.Errorf("plugin archive contains unsafe path")
+		}
 		name := filepath.Clean(header.Name)
 		if name == "." {
 			continue
 		}
-		if strings.HasPrefix(name, "..") || filepath.IsAbs(name) {
-			return fmt.Errorf("plugin archive contains unsafe path")
-		}
-		path := filepath.Join(cleanTarget, name)
-		if !strings.HasPrefix(path, cleanTarget+string(os.PathSeparator)) && path != cleanTarget {
-			return fmt.Errorf("plugin archive path escapes target directory")
-		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0750); err != nil {
+			if err := root.MkdirAll(name, 0750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			if err := root.MkdirAll(filepath.Dir(name), 0750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
+			out, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
 			if err != nil {
 				return err
 			}

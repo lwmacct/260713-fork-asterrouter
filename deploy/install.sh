@@ -8,13 +8,14 @@ CONFIG_DIR="${ASTERROUTER_CONFIG_DIR:-/etc/asterrouter}"
 DATA_DIR="${ASTERROUTER_DATA_DIR:-/var/lib/asterrouter}"
 SERVICE_NAME="${ASTERROUTER_SERVICE_NAME:-asterrouter}"
 SERVICE_USER="${ASTERROUTER_SERVICE_USER:-asterrouter}"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+SERVICE_FILE="${ASTERROUTER_SERVICE_FILE:-/etc/systemd/system/${SERVICE_NAME}.service}"
 ENV_FILE="${CONFIG_DIR}/asterrouter.env"
 BINARY_NAME="asterrouter"
 COMMAND_NAME="asterrouter"
-COMMAND_PATH="/usr/local/bin/${COMMAND_NAME}"
+COMMAND_PATH="${ASTERROUTER_COMMAND_PATH:-/usr/local/bin/${COMMAND_NAME}}"
 DEFAULT_ADDR="127.0.0.1:8082"
-REMOTE_RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy"
+REMOTE_RAW_BASE="${ASTERROUTER_REMOTE_RAW_BASE:-https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy}"
+RELEASE_BASE_URL="${ASTERROUTER_RELEASE_BASE_URL:-https://github.com/${GITHUB_REPO}/releases/download}"
 DOWNLOAD_TMP=""
 
 RED='\033[0;31m'
@@ -53,6 +54,9 @@ Environment overrides:
   ASTERROUTER_INSTALL_DIR   Default: ${INSTALL_DIR}
   ASTERROUTER_CONFIG_DIR    Default: ${CONFIG_DIR}
   ASTERROUTER_DATA_DIR      Default: ${DATA_DIR}
+  ASTERROUTER_SERVICE_FILE  Default: ${SERVICE_FILE}
+  ASTERROUTER_COMMAND_PATH  Default: ${COMMAND_PATH}
+  ASTERROUTER_RELEASE_BASE_URL  Default: ${RELEASE_BASE_URL}
 EOF
 }
 
@@ -299,7 +303,7 @@ install_release() {
   version="${tag#v}"
   asset="asterrouter_${version}_${os}_${arch}"
   archive_name="${asset}.tar.gz"
-  base_url="https://github.com/${GITHUB_REPO}/releases/download/${tag}"
+  base_url="${RELEASE_BASE_URL}/${tag}"
   DOWNLOAD_TMP="$(mktemp -d)"
   tmp="$DOWNLOAD_TMP"
   extract_dir="${tmp}/${asset}"

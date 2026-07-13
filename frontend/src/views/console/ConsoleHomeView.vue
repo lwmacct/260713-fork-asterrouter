@@ -229,8 +229,8 @@ onMounted(load)
             <KeyRound :size="18" />
           </div>
           <div class="panel-body">
-            <input :value="gatewayBaseUrl" readonly />
-            <pre class="code-block">curl {{ gatewayBaseUrl }}/chat/completions \
+            <input :value="gatewayBaseUrl" :aria-label="t('console.gateway')" readonly />
+            <pre class="code-block" tabindex="0">curl {{ gatewayBaseUrl }}/chat/completions \
   -H "Authorization: Bearer $ASTERROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"{{ availableModels[0] || 'gpt-4o-mini' }}","messages":[{"role":"user","content":"ping"}]}'</pre>

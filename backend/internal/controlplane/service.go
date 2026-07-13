@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/astercloud/asterrouter/backend/internal/cryptoutil"
 )
 
 const systemActor = "system"
@@ -2232,7 +2234,11 @@ func encryptSecret(secretKey string, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	block, err := aes.NewCipher(secretKeyBytes(secretKey))
+	key, err := cryptoutil.DeriveKey(secretKey, "asterrouter:controlplane:secret-encryption:v2")
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -2245,7 +2251,7 @@ func encryptSecret(secretKey string, value string) (string, error) {
 		return "", err
 	}
 	sealed := gcm.Seal(nonce, nonce, []byte(value), nil)
-	return base64.RawURLEncoding.EncodeToString(sealed), nil
+	return "v2:" + base64.RawURLEncoding.EncodeToString(sealed), nil
 }
 
 func decryptSecret(secretKey string, ciphertext string) (string, error) {
@@ -2253,11 +2259,22 @@ func decryptSecret(secretKey string, ciphertext string) (string, error) {
 	if ciphertext == "" {
 		return "", nil
 	}
+	var key []byte
+	if strings.HasPrefix(ciphertext, "v2:") {
+		ciphertext = strings.TrimPrefix(ciphertext, "v2:")
+		derivedKey, err := cryptoutil.DeriveKey(secretKey, "asterrouter:controlplane:secret-encryption:v2")
+		if err != nil {
+			return "", err
+		}
+		key = derivedKey
+	} else {
+		key = cryptoutil.LegacySHA256Key(secretKey)
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(secretKeyBytes(secretKey))
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -2275,11 +2292,6 @@ func decryptSecret(secretKey string, ciphertext string) (string, error) {
 		return "", err
 	}
 	return string(opened), nil
-}
-
-func secretKeyBytes(secretKey string) []byte {
-	sum := sha256.Sum256([]byte(secretKey))
-	return sum[:]
 }
 
 func validHTTPURL(value string) bool {

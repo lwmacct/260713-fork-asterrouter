@@ -16,7 +16,7 @@ if [ -z "$COMMIT" ] && command -v git >/dev/null 2>&1; then
 fi
 COMMIT="${COMMIT:-unknown}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}"
-DIST_DIR="${ROOT_DIR}/dist"
+DIST_DIR="${ASTER_DIST_DIR:-${ROOT_DIR}/dist}"
 PACKAGE_DIR="${DIST_DIR}/packages"
 
 ldflags() {
@@ -35,7 +35,10 @@ checksum() {
   shasum -a 256 "$1"
 }
 
-rm -rf "$DIST_DIR"
+if [ -d "$DIST_DIR" ] && find "$DIST_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  echo "Refusing to overwrite non-empty release directory: ${DIST_DIR}" >&2
+  exit 1
+fi
 mkdir -p "$PACKAGE_DIR"
 
 echo "==> Building frontend"
@@ -117,7 +120,7 @@ release = {
     "version": version,
     "channel": "stable",
     "name": f"AsterRouter {version}",
-    "notes": "Customer portal, account security, social OAuth, billing governance, retention cleanup, and backup automation improvements.",
+    "notes": "Release hardening with expanded CI, Playwright accessibility coverage, installer/runtime checks, benchmark tooling, and secret handling improvements.",
     "published_at": build_date,
     "html_url": html_url,
     "assets": assets,
@@ -131,7 +134,5 @@ with open(os.path.join(dist_dir, "asterrouter_update_manifest.json"), "w", encod
     json.dump(manifest, f, ensure_ascii=False, indent=2)
     f.write("\n")
 PY
-
-rm -rf "$PACKAGE_DIR"
 
 echo "==> Release assets are ready in ${DIST_DIR}"

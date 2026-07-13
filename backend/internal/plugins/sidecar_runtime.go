@@ -164,7 +164,11 @@ func (s *Service) sidecarTargetState(ctx context.Context, pluginID string) (pack
 	if !ok || installation.Status != PackageInstallInstalled {
 		return packageInstallationRecord{}, sidecarTargetUninstalled, nil
 	}
-	manifest, err := readSidecarManifest(filepath.Join(s.activePackageDir(pluginID, installation.Version), "plugin.json"))
+	activeDir, err := s.activePackageDir(pluginID, installation.Version)
+	if err != nil {
+		return packageInstallationRecord{}, sidecarTargetUninstalled, err
+	}
+	manifest, err := readSidecarManifest(filepath.Join(activeDir, "plugin.json"))
 	if err != nil {
 		if runtime, ok, inspectErr := inspectPackageRuntime(installation.CachePath); inspectErr == nil && (!ok || runtime != "sidecar") {
 			return packageInstallationRecord{}, sidecarTargetNotSidecar, nil
@@ -178,7 +182,10 @@ func (s *Service) sidecarTargetState(ctx context.Context, pluginID string) (pack
 }
 
 func (s *Service) startSidecar(ctx context.Context, installation packageInstallationRecord) (*sidecarProcess, error) {
-	baseDir := s.activePackageDir(installation.PluginID, installation.Version)
+	baseDir, err := s.activePackageDir(installation.PluginID, installation.Version)
+	if err != nil {
+		return nil, err
+	}
 	manifest, err := readSidecarManifest(filepath.Join(baseDir, "plugin.json"))
 	if err != nil {
 		return nil, err

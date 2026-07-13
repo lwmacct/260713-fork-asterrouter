@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -61,18 +60,16 @@ func (s *S3BackupStore) Test(ctx context.Context) error {
 	return nil
 }
 
-func (s *S3BackupStore) UploadFile(ctx context.Context, path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
+func (s *S3BackupStore) Upload(ctx context.Context, id string, body io.Reader) (string, error) {
+	if !validArchiveID(id, backupPrefix) || body == nil {
+		return "", ErrBackupInvalid
 	}
-	defer file.Close()
 	key := strings.Trim(s.config.Prefix, "/")
 	if key != "" {
 		key += "/"
 	}
-	key += filepath.Base(path)
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.config.Bucket), Key: aws.String(key), Body: file, ContentType: aws.String("application/gzip")})
+	key += id + ".tar.gz"
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.config.Bucket), Key: aws.String(key), Body: body, ContentType: aws.String("application/gzip")})
 	if err != nil {
 		return "", fmt.Errorf("upload S3 backup: %w", err)
 	}

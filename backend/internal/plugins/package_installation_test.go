@@ -56,11 +56,61 @@ func TestInstallPackageRollsBackActiveDirectoryWhenRepositoryWriteFails(t *testi
 	if _, err := svc.InstallPackage(ctx, pluginID, packageID); !errors.Is(err, errInstallationWrite) {
 		t.Fatalf("InstallPackage() error = %v, want errInstallationWrite", err)
 	}
-	if _, err := os.Stat(svc.activePackageDir(pluginID, version)); !os.IsNotExist(err) {
+	activeDir, err := svc.activePackageDir(pluginID, version)
+	if err != nil {
+		t.Fatalf("activePackageDir(): %v", err)
+	}
+	if _, err := os.Stat(activeDir); !os.IsNotExist(err) {
 		t.Fatalf("failed installation left active directory, stat error=%v", err)
 	}
 	if _, ok, err := memory.FindPackageInstallation(ctx, pluginID); err != nil || ok {
 		t.Fatalf("failed installation persisted record: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestActivePackageDirRejectsUnsafeSegments(t *testing.T) {
+	svc := NewServiceWithOptions(NewMemoryRepository(), ServiceOptions{PluginActiveDir: t.TempDir()})
+	for _, test := range []struct {
+		pluginID string
+		version  string
+	}{
+		{pluginID: "../escape", version: "1.0.0"},
+		{pluginID: "com.asterrouter.safe", version: "../../escape"},
+		{pluginID: "com.asterrouter/safe", version: "1.0.0"},
+		{pluginID: "", version: "1.0.0"},
+	} {
+		if path, err := svc.activePackageDir(test.pluginID, test.version); err == nil {
+			t.Fatalf("activePackageDir(%q, %q) = %q, want error", test.pluginID, test.version, path)
+		}
+	}
+}
+
+func TestExtractTarGzipRejectsUnsafeEntryAndSymlinkEscape(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		entry      string
+		useSymlink bool
+	}{
+		{name: "parent traversal", entry: "../escape"},
+		{name: "symlink escape", entry: "link/escape", useSymlink: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "target")
+			if err := os.MkdirAll(target, 0750); err != nil {
+				t.Fatal(err)
+			}
+			if test.useSymlink {
+				if err := os.Symlink(t.TempDir(), filepath.Join(target, "link")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			archivePath := filepath.Join(root, "unsafe.tar.gz")
+			writeTestTarEntry(t, archivePath, test.entry, []byte("unsafe"))
+			if err := extractTarGzip(archivePath, target); err == nil {
+				t.Fatalf("extractTarGzip accepted %q", test.entry)
+			}
+		})
 	}
 }
 
@@ -77,6 +127,31 @@ func writeTestPluginArchive(t *testing.T, target, pluginID, version string) {
 		t.Fatal(err)
 	}
 	if _, err := tarWriter.Write(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTestTarEntry(t *testing.T, target, name string, content []byte) {
+	t.Helper()
+	file, err := os.Create(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+	if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
 		t.Fatal(err)
 	}
 	if err := tarWriter.Close(); err != nil {
