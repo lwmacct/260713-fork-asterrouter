@@ -39,3 +39,14 @@ func TestMapOIDCProfileUsesStableSubjectAndFallbackName(t *testing.T) {
 		t.Fatalf("missing subject error = %v", err)
 	}
 }
+
+func TestOIDCEmailVerifiedClaimRequiresBooleanTrue(t *testing.T) {
+	if !oidcEmailVerified(map[string]any{"email_verified": true}) {
+		t.Fatal("boolean true must be accepted")
+	}
+	for _, claims := range []map[string]any{{}, {"email_verified": false}, {"email_verified": "true"}, {"email_verified": 1}} {
+		if oidcEmailVerified(claims) {
+			t.Fatalf("unexpected verified claim: %#v", claims)
+		}
+	}
+}

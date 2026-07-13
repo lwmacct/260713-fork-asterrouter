@@ -20,6 +20,14 @@ func registerOperatorRoutes(group *gin.RouterGroup, svc *operatorcore.Service) {
 	registerOperatorCRUD(group, "plans", svc.ListPlans, svc.SavePlan, svc.DeletePlan)
 	registerOperatorCRUD(group, "pricing-rules", svc.ListPricingRules, svc.SavePricingRule, svc.DeletePricingRule)
 	registerOperatorCRUD(group, "risk-rules", svc.ListRiskRules, svc.SaveRiskRule, svc.DeleteRiskRule)
+	group.GET("/risk-blocks", func(c *gin.Context) {
+		data, err := svc.ListRiskBlocks(c.Request.Context())
+		operatorResponse(c, data, err)
+	})
+	group.DELETE("/risk-blocks/:id", func(c *gin.Context) {
+		err := svc.ClearRiskBlock(c.Request.Context(), actor(c), c.Param("id"))
+		operatorResponse(c, gin.H{"status": "cleared"}, err)
+	})
 	registerOperatorCRUD(group, "notices", svc.ListNotices, svc.SaveNotice, svc.DeleteNotice)
 	group.GET("/balance-entries", func(c *gin.Context) {
 		data, err := svc.ListBalanceEntries(c.Request.Context())

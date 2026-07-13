@@ -24,11 +24,12 @@ var (
 )
 
 type OIDCConfig struct {
-	Enabled     bool
-	IssuerURL   string
-	ClientID    string
-	RedirectURL string
-	StateTTL    time.Duration
+	Enabled              bool
+	RequireVerifiedEmail bool
+	IssuerURL            string
+	ClientID             string
+	RedirectURL          string
+	StateTTL             time.Duration
 }
 
 type OIDCState struct {
@@ -105,7 +106,17 @@ func (s *OIDCService) VerifyIDToken(ctx context.Context, raw string, nonce strin
 	if err := token.Claims(&claims); err != nil {
 		return OIDCProfile{}, fmt.Errorf("decode oidc claims: %w", err)
 	}
+	if s.config.RequireVerifiedEmail {
+		if !oidcEmailVerified(claims) {
+			return OIDCProfile{}, errors.New("oidc email must be verified")
+		}
+	}
 	return MapOIDCProfile(claims)
+}
+
+func oidcEmailVerified(claims map[string]any) bool {
+	verified, ok := claims["email_verified"].(bool)
+	return ok && verified
 }
 
 func NewOIDCService(cfg OIDCConfig) (*OIDCService, error) {

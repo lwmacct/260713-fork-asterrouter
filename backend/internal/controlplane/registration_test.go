@@ -46,3 +46,14 @@ func TestWorkspaceRegistrationVerificationAndAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRegisterWorkspaceUserAppliesDefaults(t *testing.T) {
+	svc := NewService(NewMemoryRepository(), "/v1")
+	user, _, err := svc.RegisterWorkspaceUser(context.Background(), "defaults@example.test", "long-password", "Defaults", false, WorkspaceUserDefaults{BalanceCents: 1200, ConcurrencyLimit: 8, RPMLimit: 90})
+	if err != nil {
+		t.Fatalf("RegisterWorkspaceUser() error = %v", err)
+	}
+	if user.BalanceCents != 1200 || user.ConcurrencyLimit != 8 || user.RPMLimit != 90 {
+		t.Fatalf("user defaults not applied: %+v", user)
+	}
+}

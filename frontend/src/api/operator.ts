@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { APIKeyCreateRequest, APIKeyCreateResponse, APIKeyRecord, OperatorBalanceEntry, OperatorCustomer, OperatorCustomerGroup, OperatorDashboard, OperatorNotice, OperatorPlan, OperatorPricingRule, OperatorRiskRule, UsageReport } from '@/types'
+import type { APIKeyCreateRequest, APIKeyCreateResponse, APIKeyRecord, GatewayRiskBlock, OperatorBalanceEntry, OperatorCustomer, OperatorCustomerGroup, OperatorDashboard, OperatorNotice, OperatorPlan, OperatorPricingRule, OperatorRiskRule, UsageReport } from '@/types'
 
 export type OperatorResource = 'customer-groups'|'customers'|'plans'|'pricing-rules'|'risk-rules'|'notices'
 export type OperatorEntity = OperatorCustomerGroup|OperatorCustomer|OperatorPlan|OperatorPricingRule|OperatorRiskRule|OperatorNotice
@@ -16,3 +16,5 @@ export async function rotateOperatorCustomerKey(id:string):Promise<APIKeyCreateR
 export async function disableOperatorCustomerKey(id:string):Promise<void>{await apiClient.post(`/operator/customer-keys/${id}/disable`)}
 export async function createOperatorCustomerKey(customerID:string,payload:APIKeyCreateRequest):Promise<APIKeyCreateResponse>{return (await apiClient.post<APIKeyCreateResponse>(`/operator/customers/${customerID}/keys`,payload)).data}
 export async function getOperatorUsage(params?:Record<string,unknown>):Promise<UsageReport>{return (await apiClient.get<UsageReport>('/operator/usage',{params})).data}
+export async function getOperatorRiskBlocks():Promise<GatewayRiskBlock[]>{return (await apiClient.get<GatewayRiskBlock[]>('/operator/risk-blocks')).data || []}
+export async function clearOperatorRiskBlock(apiKeyID:string):Promise<void>{await apiClient.delete(`/operator/risk-blocks/${encodeURIComponent(apiKeyID)}`)}

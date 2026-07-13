@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var ErrInvalidCredentials = errors.New("invalid username or password")
@@ -17,6 +19,7 @@ var ErrInvalidCredentials = errors.New("invalid username or password")
 type Config struct {
 	Username         string
 	Password         string
+	PasswordHash     string
 	LegacyAdminToken string
 	SecretKey        string
 	TokenTTL         time.Duration
@@ -26,12 +29,14 @@ type Config struct {
 type Service struct {
 	username         string
 	password         string
+	passwordHash     string
 	legacyAdminToken string
 	secretKey        []byte
 	tokenTTL         time.Duration
 	demoMode         bool
 	mfaMu            sync.Mutex
 	mfaChallenges    map[string]mfaChallenge
+	sessionVersion   func(string) (int64, bool)
 }
 
 type mfaChallenge struct {
@@ -40,9 +45,16 @@ type mfaChallenge struct {
 }
 
 type Principal struct {
-	Subject string `json:"sub"`
-	Role    string `json:"role"`
-	Expires int64  `json:"exp"`
+	Subject        string `json:"sub"`
+	Role           string `json:"role"`
+	Expires        int64  `json:"exp"`
+	SessionVersion int64  `json:"sv,omitempty"`
+}
+
+func (s *Service) SetSessionVersionResolver(resolver func(string) (int64, bool)) {
+	s.mfaMu.Lock()
+	s.sessionVersion = resolver
+	s.mfaMu.Unlock()
 }
 
 type LoginResult struct {
@@ -80,6 +92,7 @@ func NewService(cfg Config) *Service {
 	return &Service{
 		username:         username,
 		password:         password,
+		passwordHash:     strings.TrimSpace(cfg.PasswordHash),
 		legacyAdminToken: strings.TrimSpace(cfg.LegacyAdminToken),
 		secretKey:        []byte(secret),
 		tokenTTL:         ttl,
@@ -123,10 +136,30 @@ func (s *Service) Login(_ context.Context, username string, password string) (Lo
 	if s.demoMode && strings.TrimSpace(username) == "demo" && constantTimeEqual(password, "demo") {
 		return s.loginFor("demo", "demo", "demo_admin")
 	}
-	if strings.TrimSpace(username) != s.username || !constantTimeEqual(password, s.password) {
+	if strings.TrimSpace(username) != s.username || !s.validLocalPassword(password) {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	return s.loginFor(s.username, s.username, "super_admin")
+}
+
+func (s *Service) BootstrapIdentity() (string, string) {
+	return s.username, s.password
+}
+
+func (s *Service) SetPasswordHash(passwordHash string) {
+	s.mfaMu.Lock()
+	s.passwordHash = strings.TrimSpace(passwordHash)
+	s.mfaMu.Unlock()
+}
+
+func (s *Service) validLocalPassword(password string) bool {
+	s.mfaMu.Lock()
+	passwordHash := s.passwordHash
+	s.mfaMu.Unlock()
+	if passwordHash != "" {
+		return bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) == nil
+	}
+	return constantTimeEqual(password, s.password)
 }
 
 // LoginOIDC creates the same signed local session as password login after the
@@ -143,7 +176,16 @@ func (s *Service) LoginOIDC(subject, role string) (LoginResult, error) {
 func (s *Service) loginFor(username string, subject string, role string) (LoginResult, error) {
 	expiresAt := time.Now().UTC().Add(s.tokenTTL)
 	user := User{Username: username, Role: role}
-	token, err := s.sign(Principal{Subject: subject, Role: user.Role, Expires: expiresAt.Unix()})
+	version := int64(0)
+	s.mfaMu.Lock()
+	resolver := s.sessionVersion
+	s.mfaMu.Unlock()
+	if resolver != nil {
+		if current, ok := resolver(subject); ok {
+			version = current
+		}
+	}
+	token, err := s.sign(Principal{Subject: subject, Role: user.Role, Expires: expiresAt.Unix(), SessionVersion: version})
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -182,7 +224,20 @@ func (s *Service) Verify(token string) (Principal, bool) {
 	if principal.Expires <= time.Now().UTC().Unix() {
 		return Principal{}, false
 	}
+	s.mfaMu.Lock()
+	resolver := s.sessionVersion
+	s.mfaMu.Unlock()
+	if resolver != nil {
+		if current, exists := resolver(principal.Subject); exists && current != principal.SessionVersion {
+			return Principal{}, false
+		}
+	}
 	return principal, true
+}
+
+func (s *Service) IsLocalPrincipal(subject string) bool {
+	subject = strings.TrimSpace(subject)
+	return subject == s.username || (s.demoMode && subject == "demo")
 }
 
 func (s *Service) sign(principal Principal) (string, error) {

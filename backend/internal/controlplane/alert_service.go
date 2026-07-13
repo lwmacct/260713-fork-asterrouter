@@ -37,6 +37,20 @@ func (s *Service) AlertSummaryQuery(ctx context.Context, query AlertQuery) (Aler
 	return s.repo.SummarizeAlertEvents(ctx, query)
 }
 
+func (s *Service) AlertEventByID(ctx context.Context, id string) (AlertEvent, error) {
+	return s.alertByID(ctx, id)
+}
+
+func (s *Service) RecordRiskRuleAlert(ctx context.Context, apiKeyID, ruleID, ruleName, summary string, value, threshold float64) error {
+	return s.upsertAlert(ctx, alertInput{
+		Type: AlertTypeRiskRule, Severity: AlertSeverityWarning,
+		Title: "Gateway risk rule requires review", Summary: summary,
+		ResourceType: "api_key", ResourceID: apiKeyID,
+		DedupeKey: "risk_rule:" + strings.TrimSpace(ruleID) + ":" + strings.TrimSpace(apiKeyID),
+		Metadata:  map[string]string{"rule_id": ruleID, "rule_name": ruleName, "value": fmt.Sprintf("%.2f", value), "threshold": fmt.Sprintf("%.2f", threshold)},
+	})
+}
+
 func (s *Service) AcknowledgeAlert(ctx context.Context, actor string, id string) (AlertEvent, error) {
 	event, err := s.alertByID(ctx, id)
 	if err != nil {
@@ -191,6 +205,36 @@ func (s *Service) syncAPIKeyQuotaAlertForAuth(ctx context.Context, auth GatewayA
 		return err
 	}
 	return s.syncAPIKeyQuotaAlert(ctx, auth, used)
+}
+
+func (s *Service) syncAPIKeyBudgetAlert(ctx context.Context, auth GatewayAuthContext, usedCents int) error {
+	limit := auth.effectiveMonthlyBudgetCents()
+	dedupeKey := "api_key_budget:" + auth.APIKey.ID + ":" + alertMonthKey(time.Now().UTC())
+	if limit <= 0 {
+		return s.resolveAlertByDedupeKey(ctx, systemActor, dedupeKey, fmt.Sprintf("API key %s has no monthly budget policy.", auth.APIKey.Name))
+	}
+	usedPercent := percentCeil(usedCents, limit)
+	if usedPercent < apiKeyQuotaWarningPercent {
+		return s.resolveAlertByDedupeKey(ctx, systemActor, dedupeKey, fmt.Sprintf("API key %s budget usage is within policy.", auth.APIKey.Name))
+	}
+	severity := AlertSeverityWarning
+	title := "API key monthly budget reached warning threshold"
+	if usedCents >= limit {
+		severity = AlertSeverityCritical
+		title = "API key monthly budget exhausted"
+	}
+	return s.upsertAlert(ctx, alertInput{Type: AlertTypeAPIKeyBudget, Severity: severity, Title: title, Summary: fmt.Sprintf("API key %s used %d of %d monthly cost cents (%d%%).", auth.APIKey.Name, usedCents, limit, usedPercent), ResourceType: "api_key", ResourceID: auth.APIKey.ID, DedupeKey: dedupeKey, Metadata: map[string]string{"api_key_name": auth.APIKey.Name, "api_key_fingerprint": auth.APIKey.Fingerprint, "monthly_budget_cents": strconv.Itoa(limit), "current_month_cost_cents": strconv.Itoa(usedCents), "budget_used_percent": strconv.Itoa(usedPercent), "budget_month": alertMonthKey(time.Now().UTC())}})
+}
+
+func (s *Service) syncAPIKeyBudgetAlertForAuth(ctx context.Context, auth GatewayAuthContext) error {
+	if auth.effectiveMonthlyBudgetCents() <= 0 {
+		return nil
+	}
+	used, err := s.repo.SumUsageCostCentsByAPIKeySince(ctx, auth.APIKey.ID, monthStart(time.Now().UTC()))
+	if err != nil {
+		return err
+	}
+	return s.syncAPIKeyBudgetAlert(ctx, auth, used)
 }
 
 func (s *Service) syncGatewayErrorRateAlert(ctx context.Context, auth GatewayAuthContext) error {

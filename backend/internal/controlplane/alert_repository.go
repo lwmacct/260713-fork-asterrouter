@@ -259,6 +259,7 @@ func appendAlertEventFilters(clauses *[]string, args *[]any, query AlertQuery) {
 	appendExactFilter(clauses, args, "severity", query.Severity)
 	appendExactFilter(clauses, args, "status", query.Status)
 	appendExactFilter(clauses, args, "resource_type", query.ResourceType)
+	appendAnyExactFilter(clauses, args, "resource_id", query.ResourceIDs)
 	appendTimeFilter(clauses, args, "last_seen_at", ">=", query.CreatedFrom)
 	appendTimeFilter(clauses, args, "last_seen_at", "<=", query.CreatedTo)
 	appendSearchFilter(clauses, args, query.Search, []string{"type", "severity", "status", "title", "summary", "resource_type", "resource_id", "dedupe_key"})
@@ -275,6 +276,9 @@ func memoryAlertEventMatches(event AlertEvent, query AlertQuery) bool {
 		return false
 	}
 	if query.ResourceType != "" && event.ResourceType != query.ResourceType {
+		return false
+	}
+	if len(query.ResourceIDs) > 0 && !contains(query.ResourceIDs, event.ResourceID) {
 		return false
 	}
 	if !query.CreatedFrom.IsZero() && event.LastSeenAt.Before(query.CreatedFrom) {

@@ -2,14 +2,78 @@ package system
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestStoreBackupArchiveValidatesIDAndSize(t *testing.T) {
+	svc := NewService(Config{BackupDir: t.TempDir(), MaxArchiveBytes: 8})
+	if _, err := svc.StoreBackupArchive("../escape", bytes.NewReader([]byte("data"))); !errors.Is(err, ErrBackupInvalid) {
+		t.Fatalf("invalid id error = %v", err)
+	}
+	if _, err := svc.StoreBackupArchive("asterrouter-backup-valid", bytes.NewReader([]byte("0123456789"))); !errors.Is(err, ErrBackupInvalid) {
+		t.Fatalf("oversized error = %v", err)
+	}
+	info, err := svc.StoreBackupArchive("asterrouter-backup-valid", bytes.NewReader([]byte("archive")))
+	if err != nil || info.ID != "asterrouter-backup-valid" {
+		t.Fatalf("StoreBackupArchive() = %+v, %v", info, err)
+	}
+}
+
+func TestCleanupBackupsEnforcesAgeAndMaximumCount(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(Config{BackupDir: dir})
+	now := time.Now().UTC()
+	for index, age := range []time.Duration{time.Hour, 2 * time.Hour, 40 * 24 * time.Hour} {
+		name := fmt.Sprintf("asterrouter-backup-20260101T00000%dZ-test.tar.gz", index)
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("backup"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		createdAt := now.Add(-age)
+		if err := os.Chtimes(path, createdAt, createdAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleted, err := svc.CleanupBackups(context.Background(), 30, 1, now)
+	if err != nil || deleted != 2 {
+		t.Fatalf("deleted=%d err=%v", deleted, err)
+	}
+	remaining, err := svc.ListBackups(context.Background())
+	if err != nil || len(remaining) != 1 {
+		t.Fatalf("remaining=%+v err=%v", remaining, err)
+	}
+}
+
+func TestS3BackupDownloadRejectsObjectsOutsideBackupNamespace(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		key    string
+	}{
+		{name: "arbitrary object without prefix", key: "secrets.txt"},
+		{name: "nested object without prefix", key: "other/asterrouter-backup-20260101.tar.gz"},
+		{name: "outside configured prefix", prefix: "backups", key: "other/asterrouter-backup-20260101.tar.gz"},
+		{name: "nested below configured prefix", prefix: "backups", key: "backups/archive/asterrouter-backup-20260101.tar.gz"},
+		{name: "path traversal", prefix: "backups", key: "backups/../asterrouter-backup-20260101.tar.gz"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &S3BackupStore{config: S3BackupConfig{Prefix: test.prefix}}
+			if _, err := store.Download(context.Background(), test.key); err == nil {
+				t.Fatalf("Download(%q) unexpectedly succeeded", test.key)
+			}
+		})
+	}
+}
 
 func TestBackupRestoreIncludesPluginAssetsAndRequiresConfirmation(t *testing.T) {
 	root := t.TempDir()

@@ -82,7 +82,14 @@ func TestAdminIdentityUserAndRoleBindingEndpoints(t *testing.T) {
 	if err := json.Unmarshal(usersRec.Body.Bytes(), &usersResp); err != nil {
 		t.Fatalf("decode users: %v", err)
 	}
-	if len(usersResp.Data) != 1 || usersResp.Data[0].Role != controlplane.RoleKeyManager {
+	var createdUser *controlplane.WorkspaceUser
+	for index := range usersResp.Data {
+		if usersResp.Data[index].ID == createResp.Data.ID {
+			createdUser = &usersResp.Data[index]
+			break
+		}
+	}
+	if createdUser == nil || createdUser.Role != controlplane.RoleKeyManager {
 		t.Fatalf("users list mismatch: %+v", usersResp.Data)
 	}
 
@@ -113,5 +120,35 @@ func TestAdminIdentityUserAndRoleBindingEndpoints(t *testing.T) {
 	handler.ServeHTTP(duplicateRec, duplicateReq)
 	if duplicateRec.Code != http.StatusBadRequest || !strings.Contains(duplicateRec.Body.String(), "already exists") {
 		t.Fatalf("duplicate user should be rejected status=%d body=%s", duplicateRec.Code, duplicateRec.Body.String())
+	}
+}
+
+func TestAdminOrganizationGroupLifecycle(t *testing.T) {
+	handler, control := newTestRuntime(t, config.Config{})
+	user, err := control.CreateWorkspaceUser(t.Context(), "tester", controlplane.WorkspaceUserRequest{Email: "group-member@example.test", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/organization-groups", bytes.NewBufferString(`{"name":"AI Platform","status":"active","member_ids":["`+user.ID+`"]}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.ServeHTTP(createRec, createReq)
+	var createResponse struct {
+		Data controlplane.OrganizationGroup `json:"data"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResponse); err != nil || createRec.Code != http.StatusOK || len(createResponse.Data.MemberIDs) != 1 {
+		t.Fatalf("create status=%d body=%s err=%v", createRec.Code, createRec.Body.String(), err)
+	}
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/organization-groups", nil)
+	listRec := httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), createResponse.Data.ID) {
+		t.Fatalf("list status=%d body=%s", listRec.Code, listRec.Body.String())
+	}
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/organization-groups/"+createResponse.Data.ID, nil)
+	deleteRec := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 }

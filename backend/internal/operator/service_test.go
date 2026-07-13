@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -24,9 +25,18 @@ func TestOperatorCustomerBalanceAndOwnershipLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveCustomer(): %v", err)
 	}
-	entry, err := svc.ApplyBalanceEntry(ctx, "tester", BalanceEntryRequest{CustomerID: customer.ID, Kind: "recharge", AmountCents: 1000})
+	entry, err := svc.ApplyBalanceEntry(ctx, "tester", BalanceEntryRequest{CustomerID: customer.ID, Kind: "allocation_increase", AmountCents: 1000})
 	if err != nil {
 		t.Fatalf("ApplyBalanceEntry(): %v", err)
+	}
+	if _, err := svc.ApplyBalanceEntry(ctx, "tester", BalanceEntryRequest{CustomerID: customer.ID, Kind: "recharge", AmountCents: 1000}); err == nil {
+		t.Fatal("recharge semantics must be rejected")
+	}
+	if _, err := svc.ApplyBalanceEntry(ctx, "tester", BalanceEntryRequest{CustomerID: customer.ID, Kind: "allocation_decrease", AmountCents: 100}); err == nil {
+		t.Fatal("allocation decrease must require a negative amount")
+	}
+	if _, err := svc.SavePlan(ctx, "", PlanRequest{Name: "Paid", MonthlyFeeCents: 100, Status: StatusActive}); err == nil {
+		t.Fatal("recurring fee must be rejected")
 	}
 	if entry.BalanceAfter != 1000 {
 		t.Fatalf("balance after = %d", entry.BalanceAfter)
@@ -101,5 +111,60 @@ func TestOperatorUsageObserverChargesCustomerIdempotently(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Reference != record.ID {
 		t.Fatalf("balance entries = %+v", entries)
+	}
+}
+
+func TestRiskRuleCreatesPersistentTemporaryGatewayBlock(t *testing.T) {
+	ctx := context.Background()
+	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
+	service := NewService(NewMemoryRepository(), control)
+	service.SetRiskConfigProvider(func(context.Context) (RiskRuntimeConfig, error) {
+		return RiskRuntimeConfig{Enabled: true, AutoBlock: true, BlockTimeout: time.Minute}, nil
+	})
+	control.SetUsageObserver(service)
+	if _, err := service.SaveRiskRule(ctx, "", RiskRuleRequest{Name: "Burst", RuleType: "rpm", Threshold: 1, WindowMins: 1, Action: "block", Status: StatusActive}); err != nil {
+		t.Fatalf("SaveRiskRule(): %v", err)
+	}
+	created, err := control.CreateAPIKey(ctx, "tester", controlplane.APIKeyCreateRequest{Name: "Risk key", ModelAllowlist: []string{"model"}})
+	if err != nil {
+		t.Fatalf("CreateAPIKey(): %v", err)
+	}
+	auth, err := control.AuthorizeGatewayModel(ctx, created.Key, "model")
+	if err != nil {
+		t.Fatalf("AuthorizeGatewayModel(): %v", err)
+	}
+	if err := control.RecordGatewayUsage(ctx, auth, controlplane.GatewayUsageInput{Model: "model", Status: "forwarded"}); err != nil {
+		t.Fatalf("RecordGatewayUsage(): %v", err)
+	}
+	if err := control.EnforceGatewayPolicy(ctx, auth); !errors.Is(err, controlplane.ErrGatewayRiskBlocked) {
+		t.Fatalf("EnforceGatewayPolicy() err = %v", err)
+	}
+}
+
+func TestReviewRiskRuleCreatesAlertWhenAutoBlockIsDisabled(t *testing.T) {
+	ctx := context.Background()
+	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
+	service := NewService(NewMemoryRepository(), control)
+	service.SetRiskConfigProvider(func(context.Context) (RiskRuntimeConfig, error) {
+		return RiskRuntimeConfig{Enabled: true, AutoBlock: false, BlockTimeout: time.Minute}, nil
+	})
+	control.SetUsageObserver(service)
+	if _, err := service.SaveRiskRule(ctx, "", RiskRuleRequest{Name: "Review burst", RuleType: "rpm", Threshold: 1, WindowMins: 1, Action: "review", Status: StatusActive}); err != nil {
+		t.Fatalf("SaveRiskRule(): %v", err)
+	}
+	created, err := control.CreateAPIKey(ctx, "tester", controlplane.APIKeyCreateRequest{Name: "Review key", ModelAllowlist: []string{"model"}})
+	if err != nil {
+		t.Fatalf("CreateAPIKey(): %v", err)
+	}
+	auth, _ := control.AuthorizeGatewayModel(ctx, created.Key, "model")
+	if err := control.RecordGatewayUsage(ctx, auth, controlplane.GatewayUsageInput{Model: "model", Status: "forwarded"}); err != nil {
+		t.Fatalf("RecordGatewayUsage(): %v", err)
+	}
+	alerts, err := control.ListAlertEventsQuery(ctx, controlplane.AlertQuery{Type: controlplane.AlertTypeRiskRule, ResourceType: "api_key", ResourceIDs: []string{auth.APIKey.ID}})
+	if err != nil || len(alerts) != 1 || alerts[0].Status != controlplane.AlertStatusActive {
+		t.Fatalf("risk alerts=%+v err=%v", alerts, err)
+	}
+	if err := control.EnforceGatewayPolicy(ctx, auth); err != nil {
+		t.Fatalf("review action must not block the key: %v", err)
 	}
 }

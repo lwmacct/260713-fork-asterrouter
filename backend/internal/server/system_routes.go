@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -110,7 +112,7 @@ func registerSystemRoutes(group *gin.RouterGroup, svc *system.Service, settingsS
 			return
 		}
 		operationID := systemOperationID(c, "backup")
-		data, err := svc.CreateBackup(c.Request.Context(), operationID)
+		data, err := createManagedBackup(c.Request.Context(), svc, settingsSvc, operationID)
 		if err != nil {
 			_ = recordSystemEvent(c, control, "backup_failed", operationID, err.Error())
 			writeArchiveError(c, err)
@@ -118,6 +120,110 @@ func registerSystemRoutes(group *gin.RouterGroup, svc *system.Service, settingsS
 		}
 		_ = recordSystemEvent(c, control, "backup", data.ID, fmt.Sprintf("Created backup %s", data.ID))
 		httpx.OK(c, data)
+	})
+	group.POST("/backups/s3/test", func(c *gin.Context) {
+		config, err := backupS3Config(c, settingsSvc)
+		if err != nil || config == nil {
+			httpx.Error(c, http.StatusBadRequest, 1618, "S3 backup is not configured")
+			return
+		}
+		store, err := system.NewS3BackupStore(c.Request.Context(), *config)
+		if err == nil {
+			err = store.Test(c.Request.Context())
+		}
+		if err != nil {
+			httpx.Error(c, http.StatusBadGateway, 1619, err.Error())
+			return
+		}
+		httpx.OK(c, gin.H{"connected": true})
+	})
+	group.GET("/backups/s3", func(c *gin.Context) {
+		config, err := backupS3Config(c, settingsSvc)
+		if err != nil || config == nil {
+			httpx.Error(c, http.StatusBadRequest, 1618, "S3 backup is not configured")
+			return
+		}
+		store, err := system.NewS3BackupStore(c.Request.Context(), *config)
+		if err != nil {
+			httpx.Error(c, http.StatusBadGateway, 1619, err.Error())
+			return
+		}
+		objects, err := store.List(c.Request.Context())
+		if err != nil {
+			httpx.Error(c, http.StatusBadGateway, 1619, err.Error())
+			return
+		}
+		httpx.OK(c, objects)
+	})
+	group.GET("/backups/s3/download", func(c *gin.Context) {
+		config, err := backupS3Config(c, settingsSvc)
+		if err != nil || config == nil {
+			httpx.Error(c, http.StatusBadRequest, 1618, "S3 backup is not configured")
+			return
+		}
+		store, err := system.NewS3BackupStore(c.Request.Context(), *config)
+		if err != nil {
+			writeArchiveError(c, err)
+			return
+		}
+		body, err := store.Download(c.Request.Context(), c.Query("key"))
+		if err != nil {
+			writeArchiveError(c, err)
+			return
+		}
+		defer body.Close()
+		filename := filepath.Base(c.Query("key"))
+		c.Header("Content-Type", "application/gzip")
+		c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, body); err != nil {
+			c.Error(err)
+		}
+	})
+	group.POST("/backups/s3/restore", func(c *gin.Context) {
+		if svc == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1600, "system service is not available")
+			return
+		}
+		var request struct {
+			Key     string `json:"key"`
+			Confirm bool   `json:"confirm"`
+		}
+		if c.ShouldBindJSON(&request) != nil || !request.Confirm {
+			httpx.Error(c, http.StatusConflict, 1612, "backup restore requires explicit confirmation")
+			return
+		}
+		config, err := backupS3Config(c, settingsSvc)
+		if err != nil || config == nil {
+			httpx.Error(c, http.StatusBadRequest, 1618, "S3 backup is not configured")
+			return
+		}
+		store, err := system.NewS3BackupStore(c.Request.Context(), *config)
+		if err != nil {
+			writeArchiveError(c, err)
+			return
+		}
+		body, err := store.Download(c.Request.Context(), request.Key)
+		if err != nil {
+			writeArchiveError(c, err)
+			return
+		}
+		defer body.Close()
+		name := filepath.Base(request.Key)
+		id := strings.TrimSuffix(name, ".tar.gz")
+		if _, err := svc.StoreBackupArchive(id, body); err != nil {
+			writeArchiveError(c, err)
+			return
+		}
+		operationID := systemOperationID(c, "restore-s3")
+		result, err := svc.RestoreBackup(c.Request.Context(), operationID, system.RestoreRequest{BackupID: id, Confirm: true})
+		if err != nil {
+			_ = recordSystemEvent(c, control, "restore_s3_failed", id, err.Error())
+			writeArchiveError(c, err)
+			return
+		}
+		_ = recordSystemEvent(c, control, "restore_s3", id, fmt.Sprintf("Restored S3 backup %s", request.Key))
+		httpx.OK(c, result)
 	})
 	group.GET("/backups/:id/download", func(c *gin.Context) {
 		if svc == nil {
@@ -178,6 +284,17 @@ func registerSystemRoutes(group *gin.RouterGroup, svc *system.Service, settingsS
 		}
 		c.FileAttachment(path, filepath.Base(path))
 	})
+}
+
+func backupS3Config(c *gin.Context, service *settings.Service) (*system.S3BackupConfig, error) {
+	if service == nil {
+		return nil, nil
+	}
+	config, err := service.BackupS3Config(c.Request.Context())
+	if err != nil || !config.Enabled {
+		return nil, err
+	}
+	return &system.S3BackupConfig{Endpoint: config.Endpoint, Region: config.Region, Bucket: config.Bucket, Prefix: config.Prefix, AccessKey: config.AccessKey, SecretKey: config.SecretKey, PathStyle: config.PathStyle, RetentionDays: config.RetentionDays, MaxRetained: config.MaxRetained}, nil
 }
 
 func systemDiagnosticDetails(c *gin.Context, settingsSvc *settings.Service, control *controlplane.Service) map[string]any {

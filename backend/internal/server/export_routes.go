@@ -27,21 +27,35 @@ func registerCSVExportJobRoutes(group *gin.RouterGroup, control *controlplane.Se
 		return
 	}
 	group.GET("", func(c *gin.Context) {
-		jobs, err := store.list(c.Request.Context(), intQuery(c, "limit", 50))
+		limit := intQuery(c, "limit", 50)
+		jobs, err := store.list(c.Request.Context(), 100)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1804, err.Error())
 			return
 		}
-		httpx.OK(c, jobs)
+		visible := make([]csvExportJob, 0, len(jobs))
+		for _, job := range jobs {
+			if exportJobVisible(c, job) {
+				visible = append(visible, job)
+			}
+		}
+		if limit > 0 && len(visible) > limit {
+			visible = visible[:limit]
+		}
+		httpx.OK(c, visible)
 	})
 	group.POST("", func(c *gin.Context) {
 		kind := exportJobKind(c)
+		if kind == "audit_logs" && !principalAccess(c).Global {
+			httpx.Error(c, http.StatusForbidden, 1451, "department-scoped access does not include global audit logs")
+			return
+		}
 		filename, run, ok := exportJobRunner(c, control, kind)
 		if !ok {
 			httpx.Error(c, http.StatusBadRequest, 1801, "unsupported export kind")
 			return
 		}
-		job, err := store.create(c.Request.Context(), kind, filename, exportJobParameters(c))
+		job, err := store.create(c.Request.Context(), actor(c), kind, filename, exportJobParameters(c))
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1804, err.Error())
 			return
@@ -60,6 +74,10 @@ func registerCSVExportJobRoutes(group *gin.RouterGroup, control *controlplane.Se
 			httpx.Error(c, http.StatusNotFound, 1802, "export job not found")
 			return
 		}
+		if !exportJobVisible(c, job) {
+			httpx.Error(c, http.StatusNotFound, 1802, "export job not found")
+			return
+		}
 		httpx.OK(c, job)
 	})
 	group.GET("/:id/download", func(c *gin.Context) {
@@ -72,10 +90,18 @@ func registerCSVExportJobRoutes(group *gin.RouterGroup, control *controlplane.Se
 			httpx.Error(c, http.StatusNotFound, 1803, "export job result is not available")
 			return
 		}
+		if !exportJobVisible(c, job) {
+			httpx.Error(c, http.StatusNotFound, 1803, "export job result is not available")
+			return
+		}
 		_ = control.RecordExportEvent(c.Request.Context(), actor(c), "download", job.ID, fmt.Sprintf("Downloaded %s export job with %d rows", job.Kind, job.RowCount))
 		c.Header("Content-Disposition", `attachment; filename="`+job.Filename+`"`)
 		c.Data(http.StatusOK, job.ContentType, body)
 	})
+}
+
+func exportJobVisible(c *gin.Context, job csvExportJob) bool {
+	return principalAccess(c).Global || (job.Owner != "" && job.Owner == actor(c))
 }
 
 func runCSVExportJob(store CSVExportJobStore, id string, run func(context.Context) ([][]string, error)) {
@@ -129,8 +155,11 @@ func exportJobRunner(c *gin.Context, control *controlplane.Service, kind string)
 	totalLimit, baseOffset := asyncExportWindow(c)
 	switch kind {
 	case "usage":
-		query := usageQuery(c)
+		query, scopeErr := scopeUsageQuery(c.Request.Context(), control, principalAccess(c), usageQuery(c))
 		return "usage-records.csv", func(ctx context.Context) ([][]string, error) {
+			if scopeErr != nil {
+				return nil, scopeErr
+			}
 			records, err := collectUsageRecordsForExportQuery(ctx, control, query, totalLimit, baseOffset)
 			if err != nil {
 				return nil, err
@@ -138,8 +167,11 @@ func exportJobRunner(c *gin.Context, control *controlplane.Service, kind string)
 			return usageCSVRows(records), nil
 		}, true
 	case "gateway_traces":
-		query := gatewayTraceQuery(c)
+		query, scopeErr := scopeGatewayTraceQuery(c.Request.Context(), control, principalAccess(c), gatewayTraceQuery(c))
 		return "gateway-traces.csv", func(ctx context.Context) ([][]string, error) {
+			if scopeErr != nil {
+				return nil, scopeErr
+			}
 			traces, err := collectGatewayTracesForExportQuery(ctx, control, query, totalLimit, baseOffset)
 			if err != nil {
 				return nil, err

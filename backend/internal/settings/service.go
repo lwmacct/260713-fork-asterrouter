@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,6 +109,18 @@ func (s *Service) Update(ctx context.Context, in AdminSettings) (AdminSettings, 
 		if strings.TrimSpace(in.SMTPPassword) == "" && existing[KeySMTPPassword] != "" {
 			values[KeySMTPPassword] = existing[KeySMTPPassword]
 		}
+		if strings.TrimSpace(in.GitHubOAuthClientSecret) == "" && existing[KeyGitHubOAuthSecret] != "" {
+			values[KeyGitHubOAuthSecret] = existing[KeyGitHubOAuthSecret]
+		}
+		if strings.TrimSpace(in.GoogleOAuthClientSecret) == "" && existing[KeyGoogleOAuthSecret] != "" {
+			values[KeyGoogleOAuthSecret] = existing[KeyGoogleOAuthSecret]
+		}
+		if strings.TrimSpace(in.DingTalkClientSecret) == "" && existing[KeyDingTalkClientSecret] != "" {
+			values[KeyDingTalkClientSecret] = existing[KeyDingTalkClientSecret]
+		}
+		if strings.TrimSpace(in.BackupS3SecretKey) == "" && existing[KeyBackupS3SecretKey] != "" {
+			values[KeyBackupS3SecretKey] = existing[KeyBackupS3SecretKey]
+		}
 	}
 	if err := s.repo.SetMultiple(ctx, values); err != nil {
 		return AdminSettings{}, err
@@ -148,6 +161,22 @@ func (s *Service) FeishuSecret(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return values[KeyFeishuAppSecret], nil
+}
+
+func (s *Service) SocialOAuthSecrets(ctx context.Context) (github, google string, err error) {
+	values, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	return values[KeyGitHubOAuthSecret], values[KeyGoogleOAuthSecret], nil
+}
+
+func (s *Service) DingTalkSecret(ctx context.Context) (string, error) {
+	values, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	return values[KeyDingTalkClientSecret], nil
 }
 
 type LoginSecuritySettings struct {
@@ -218,20 +247,24 @@ func (s *Service) parse(values map[string]string) AdminSettings {
 	}
 	return AdminSettings{
 		PublicSettings: PublicSettings{
-			SiteName:              values[KeySiteName],
-			SiteSubtitle:          values[KeySiteSubtitle],
-			PublicBaseURL:         values[KeyPublicBaseURL],
-			APIBaseURL:            "/api/v1",
-			GatewayBasePath:       values[KeyGatewayBasePath],
-			DefaultProfile:        defaultProfile,
-			EnabledProfiles:       enabledProfiles,
-			SetupCompleted:        parseBool(values[KeySetupCompleted]),
-			DefaultLocale:         values[KeyDefaultLocale],
-			EnabledLocales:        parseStringList(values[KeyEnabledLocales], []string{"en-US", "zh-CN"}),
-			OIDCEnabled:           parseBool(values[KeyOIDCEnabled]),
-			OIDCProviderName:      values[KeyOIDCProviderName],
-			FeishuEnabled:         parseBool(values[KeyFeishuEnabled]),
-			FeishuRegion:          values[KeyFeishuRegion],
+			SiteName:                 values[KeySiteName],
+			SiteSubtitle:             values[KeySiteSubtitle],
+			SiteLogo:                 values[KeySiteLogo],
+			PublicBaseURL:            values[KeyPublicBaseURL],
+			APIBaseURL:               "/api/v1",
+			GatewayBasePath:          values[KeyGatewayBasePath],
+			DefaultProfile:           defaultProfile,
+			EnabledProfiles:          enabledProfiles,
+			SetupCompleted:           parseBool(values[KeySetupCompleted]),
+			DefaultLocale:            values[KeyDefaultLocale],
+			EnabledLocales:           parseStringList(values[KeyEnabledLocales], []string{"en-US", "zh-CN"}),
+			OIDCEnabled:              parseBool(values[KeyOIDCEnabled]),
+			OIDCProviderName:         values[KeyOIDCProviderName],
+			OIDCRequireVerifiedEmail: parseBool(values[KeyOIDCRequireVerifiedEmail]),
+			FeishuEnabled:            parseBool(values[KeyFeishuEnabled]),
+			FeishuRegion:             values[KeyFeishuRegion],
+			GitHubOAuthEnabled:       parseBool(values[KeyGitHubOAuthEnabled]), GoogleOAuthEnabled: parseBool(values[KeyGoogleOAuthEnabled]),
+			DingTalkEnabled:       parseBool(values[KeyDingTalkEnabled]),
 			RegistrationEnabled:   parseBool(values[KeyRegistrationEnabled]),
 			EmailVerifyEnabled:    parseBool(values[KeyEmailVerifyEnabled]),
 			TOTPEnabled:           parseBool(values[KeyTOTPEnabled]),
@@ -240,17 +273,22 @@ func (s *Service) parse(values map[string]string) AdminSettings {
 			InvitationRequired:    parseBool(values[KeyInvitationRequired]),
 			LoginAgreementEnabled: parseBool(values[KeyLoginAgreementEnabled]),
 			LoginAgreementMode:    values[KeyLoginAgreementMode], LoginAgreementUpdatedAt: values[KeyLoginAgreementUpdatedAt], LegalDocuments: parseLegalDocuments(values[KeyLegalDocuments]), BackendMode: parseBool(values[KeyBackendMode]), SupportContact: values[KeySupportContact], DocumentationURL: values[KeyDocumentationURL],
-			ServiceCenterMode: values[KeyServiceCenterMode],
-			Version:           s.version,
-			ServerTimezone:    timezoneName(),
-			ServerUTCOffset:   formatUTCOffset(offset),
-			StorageMode:       s.storageMode,
-			DemoMode:          s.demoMode,
+			CustomEndpoints: parseCustomEndpoints(values[KeyCustomEndpoints]), CustomMenuItems: parseCustomMenuItems(values[KeyCustomMenuItems]),
+			ServiceCenterMode:     values[KeyServiceCenterMode],
+			ChannelMonitorEnabled: parseBool(values[KeyChannelMonitorEnabled]), AvailableChannelsEnabled: parseBool(values[KeyAvailableChannels]), RiskControlEnabled: parseBool(values[KeyRiskControlEnabled]), CyberSessionBlockEnabled: parseBool(values[KeyCyberSessionBlock]),
+			BackupS3Enabled: parseBool(values[KeyBackupS3Enabled]),
+			Version:         s.version,
+			ServerTimezone:  timezoneName(),
+			ServerUTCOffset: formatUTCOffset(offset),
+			StorageMode:     s.storageMode,
+			DemoMode:        s.demoMode,
 		},
 		OIDCIssuerURL:       values[KeyOIDCIssuerURL],
 		OIDCClientID:        values[KeyOIDCClientID],
 		FeishuAppID:         values[KeyFeishuAppID],
 		FeishuConfigured:    strings.TrimSpace(values[KeyFeishuAppSecret]) != "",
+		GitHubOAuthClientID: values[KeyGitHubOAuthClientID], GitHubOAuthConfigured: strings.TrimSpace(values[KeyGitHubOAuthSecret]) != "", GoogleOAuthClientID: values[KeyGoogleOAuthClientID], GoogleOAuthConfigured: strings.TrimSpace(values[KeyGoogleOAuthSecret]) != "",
+		DingTalkClientID: values[KeyDingTalkClientID], DingTalkConfigured: strings.TrimSpace(values[KeyDingTalkClientSecret]) != "",
 		AllowedEmailDomains: parseStringList(values[KeyAllowedEmailDomains], []string{}),
 		InvitationCodes:     parseStringList(values[KeyInvitationCodes], []string{}),
 		TrustedProxyHeaders: parseBool(values[KeyTrustedProxyHeaders]),
@@ -258,36 +296,64 @@ func (s *Service) parse(values map[string]string) AdminSettings {
 		DefaultBalanceCents: parseInt(values[KeyDefaultBalanceCents], 0),
 		DefaultConcurrency:  parseInt(values[KeyDefaultConcurrency], 5),
 		DefaultRPM:          parseInt(values[KeyDefaultRPM], 0),
+		AuthSourceDefaults:  parseAuthSourceDefaults(values[KeyAuthSourceDefaults]),
 		SMTPHost:            values[KeySMTPHost], SMTPPort: parseInt(values[KeySMTPPort], 587), SMTPUsername: values[KeySMTPUsername], SMTPFrom: values[KeySMTPFrom], SMTPConfigured: strings.TrimSpace(values[KeySMTPPassword]) != "",
+		EmailTemplates:      parseEmailTemplates(values[KeyEmailTemplates]),
 		LoginAgreementTitle: values[KeyLoginAgreementTitle], LoginAgreementContent: values[KeyLoginAgreementContent],
 		DefaultPageSize: parseInt(values[KeyDefaultPageSize], 20), PageSizeOptions: parseIntList(values[KeyPageSizeOptions], []int{10, 20, 50}), HomeContent: values[KeyHomeContent], HideImportButton: parseBool(values[KeyHideImportButton]),
+		ChannelMonitorIntervalSeconds: parseInt(values[KeyChannelMonitorInterval], 300), CyberSessionBlockTTLSeconds: parseInt(values[KeyCyberSessionBlockTTL], 3600),
+		BackupS3Endpoint: values[KeyBackupS3Endpoint], BackupS3Region: values[KeyBackupS3Region], BackupS3Bucket: values[KeyBackupS3Bucket], BackupS3Prefix: values[KeyBackupS3Prefix], BackupS3AccessKey: values[KeyBackupS3AccessKey], BackupS3Configured: strings.TrimSpace(values[KeyBackupS3SecretKey]) != "", BackupS3PathStyle: parseBool(values[KeyBackupS3PathStyle]), BackupRetentionDays: parseInt(values[KeyBackupRetentionDays], 30), BackupMaxRetained: parseInt(values[KeyBackupMaxRetained], 10), BackupScheduleEnabled: parseBool(values[KeyBackupScheduleEnabled]), BackupIntervalHours: parseInt(values[KeyBackupIntervalHours], 24),
 		DataRetentionDays: parseInt(values[KeyDataRetentionDays], 30),
 		PromptLoggingMode: values[KeyPromptLoggingMode],
 		UpdateChannel:     values[KeyUpdateChannel],
 	}
 }
 
+type BackupS3Config struct {
+	Enabled, PathStyle               bool
+	Endpoint, Region, Bucket, Prefix string
+	AccessKey, SecretKey             string
+	RetentionDays, MaxRetained       int
+}
+
+func (s *Service) BackupS3Config(ctx context.Context) (BackupS3Config, error) {
+	values, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return BackupS3Config{}, err
+	}
+	return BackupS3Config{Enabled: parseBool(values[KeyBackupS3Enabled]), PathStyle: parseBool(values[KeyBackupS3PathStyle]), Endpoint: values[KeyBackupS3Endpoint], Region: values[KeyBackupS3Region], Bucket: values[KeyBackupS3Bucket], Prefix: values[KeyBackupS3Prefix], AccessKey: values[KeyBackupS3AccessKey], SecretKey: values[KeyBackupS3SecretKey], RetentionDays: parseInt(values[KeyBackupRetentionDays], 30), MaxRetained: parseInt(values[KeyBackupMaxRetained], 10)}, nil
+}
+
 func defaults() map[string]string {
 	return map[string]string{
-		KeySiteName:            "AsterRouter",
-		KeySiteSubtitle:        "AI Gateway Control Plane",
-		KeyPublicBaseURL:       "",
-		KeyDefaultLocale:       "en-US",
-		KeyEnabledLocales:      `["en-US","zh-CN"]`,
-		KeyDefaultProfile:      "",
-		KeyEnabledProfiles:     "[]",
-		KeySetupCompleted:      "false",
-		KeyGatewayBasePath:     "/v1",
-		KeyOIDCEnabled:         "false",
-		KeyOIDCProviderName:    "OIDC",
-		KeyOIDCIssuerURL:       "",
-		KeyOIDCClientID:        "",
-		KeyFeishuEnabled:       "false",
-		KeyFeishuRegion:        "cn",
-		KeyFeishuAppID:         "",
-		KeyFeishuAppSecret:     "",
+		KeySiteName:                 "AsterRouter",
+		KeySiteSubtitle:             "AI Gateway Control Plane",
+		KeySiteLogo:                 "",
+		KeyPublicBaseURL:            "",
+		KeyDefaultLocale:            "en-US",
+		KeyEnabledLocales:           `["en-US","zh-CN"]`,
+		KeyDefaultProfile:           "",
+		KeyEnabledProfiles:          "[]",
+		KeySetupCompleted:           "false",
+		KeyGatewayBasePath:          "/v1",
+		KeyOIDCEnabled:              "false",
+		KeyOIDCProviderName:         "OIDC",
+		KeyOIDCIssuerURL:            "",
+		KeyOIDCClientID:             "",
+		KeyOIDCRequireVerifiedEmail: "true",
+		KeyFeishuEnabled:            "false",
+		KeyFeishuRegion:             "cn",
+		KeyFeishuAppID:              "",
+		KeyFeishuAppSecret:          "",
+		KeyGitHubOAuthEnabled:       "false", KeyGitHubOAuthClientID: "", KeyGitHubOAuthSecret: "", KeyGoogleOAuthEnabled: "false", KeyGoogleOAuthClientID: "", KeyGoogleOAuthSecret: "",
+		KeyDingTalkEnabled: "false", KeyDingTalkClientID: "", KeyDingTalkClientSecret: "",
 		KeyRegistrationEnabled: "false", KeyEmailVerifyEnabled: "false", KeyAllowedEmailDomains: "[]", KeyInvitationRequired: "false", KeyInvitationCodes: "[]", KeyTOTPEnabled: "false", KeyTrustedProxyHeaders: "false", KeyTurnstileEnabled: "false", KeyTurnstileSiteKey: "", KeyTurnstileSecretKey: "", KeyDefaultBalanceCents: "0", KeyDefaultConcurrency: "5", KeyDefaultRPM: "0", KeySMTPHost: "", KeySMTPPort: "587", KeySMTPUsername: "", KeySMTPPassword: "", KeySMTPFrom: "", KeyLoginAgreementEnabled: "false", KeyLoginAgreementTitle: "Terms of Service", KeyLoginAgreementContent: "",
-		KeyBackendMode: "false", KeyDefaultPageSize: "20", KeyPageSizeOptions: "[10,20,50]", KeySupportContact: "", KeyDocumentationURL: "", KeyHomeContent: "", KeyHideImportButton: "false", KeyLoginAgreementMode: "modal", KeyLoginAgreementUpdatedAt: "", KeyLegalDocuments: "[]",
+		KeyAuthSourceDefaults: "{}",
+		KeyEmailTemplates:     "[]",
+		KeyBackendMode:        "false", KeyDefaultPageSize: "20", KeyPageSizeOptions: "[10,20,50]", KeySupportContact: "", KeyDocumentationURL: "", KeyHomeContent: "", KeyHideImportButton: "false", KeyLoginAgreementMode: "modal", KeyLoginAgreementUpdatedAt: "", KeyLegalDocuments: "[]",
+		KeyCustomEndpoints: "[]", KeyCustomMenuItems: "[]",
+		KeyChannelMonitorEnabled: "true", KeyChannelMonitorInterval: "300", KeyAvailableChannels: "true", KeyRiskControlEnabled: "true", KeyCyberSessionBlock: "true", KeyCyberSessionBlockTTL: "3600",
+		KeyBackupS3Enabled: "false", KeyBackupS3Endpoint: "", KeyBackupS3Region: "auto", KeyBackupS3Bucket: "", KeyBackupS3Prefix: "asterrouter", KeyBackupS3AccessKey: "", KeyBackupS3SecretKey: "", KeyBackupS3PathStyle: "false", KeyBackupRetentionDays: "30", KeyBackupMaxRetained: "10", KeyBackupScheduleEnabled: "false", KeyBackupIntervalHours: "24",
 		KeyDataRetentionDays: "30",
 		KeyPromptLoggingMode: "metadata_only",
 		KeyUpdateChannel:     "stable",
@@ -339,8 +405,26 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 	if in.FeishuEnabled && strings.TrimSpace(in.FeishuAppID) == "" {
 		return nil, errors.New("feishu_app_id is required when feishu login is enabled")
 	}
+	if in.GitHubOAuthEnabled && strings.TrimSpace(in.GitHubOAuthClientID) == "" {
+		return nil, errors.New("github_oauth_client_id is required")
+	}
+	if in.GitHubOAuthEnabled && !in.GitHubOAuthConfigured && strings.TrimSpace(in.GitHubOAuthClientSecret) == "" {
+		return nil, errors.New("github_oauth_client_secret is required")
+	}
+	if in.GoogleOAuthEnabled && strings.TrimSpace(in.GoogleOAuthClientID) == "" {
+		return nil, errors.New("google_oauth_client_id is required")
+	}
+	if in.GoogleOAuthEnabled && !in.GoogleOAuthConfigured && strings.TrimSpace(in.GoogleOAuthClientSecret) == "" {
+		return nil, errors.New("google_oauth_client_secret is required")
+	}
+	if in.DingTalkEnabled && strings.TrimSpace(in.DingTalkClientID) == "" {
+		return nil, errors.New("dingtalk_client_id is required")
+	}
 	if in.DefaultBalanceCents < 0 || in.DefaultConcurrency < 0 || in.DefaultRPM < 0 {
 		return nil, errors.New("default user limits cannot be negative")
+	}
+	if err := validateAuthSourceDefaults(in.AuthSourceDefaults); err != nil {
+		return nil, err
 	}
 	if in.SMTPPort < 1 || in.SMTPPort > 65535 {
 		return nil, errors.New("smtp_port must be between 1 and 65535")
@@ -376,6 +460,30 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 	if err := validateLegalDocuments(in.LegalDocuments, in.LoginAgreementEnabled); err != nil {
 		return nil, err
 	}
+	if err := validateSiteLogo(in.SiteLogo); err != nil {
+		return nil, err
+	}
+	if err := validateCustomNavigation(in.CustomEndpoints, in.CustomMenuItems); err != nil {
+		return nil, err
+	}
+	if in.ChannelMonitorIntervalSeconds < 30 || in.ChannelMonitorIntervalSeconds > 86400 {
+		return nil, errors.New("channel_monitor_interval_seconds must be between 30 and 86400")
+	}
+	if in.CyberSessionBlockTTLSeconds < 60 || in.CyberSessionBlockTTLSeconds > 2592000 {
+		return nil, errors.New("cyber_session_block_ttl_seconds must be between 60 and 2592000")
+	}
+	if in.BackupS3Enabled && (strings.TrimSpace(in.BackupS3Bucket) == "" || strings.TrimSpace(in.BackupS3AccessKey) == "" || (!in.BackupS3Configured && strings.TrimSpace(in.BackupS3SecretKey) == "")) {
+		return nil, errors.New("S3 bucket, access key, and secret key are required when S3 backup is enabled")
+	}
+	if err := validateOptionalHTTPURL("backup_s3_endpoint", in.BackupS3Endpoint); err != nil {
+		return nil, err
+	}
+	if in.BackupRetentionDays < 1 || in.BackupRetentionDays > 3650 || in.BackupMaxRetained < 1 || in.BackupMaxRetained > 1000 {
+		return nil, errors.New("backup retention settings are out of range")
+	}
+	if in.BackupIntervalHours < 1 || in.BackupIntervalHours > 24*30 {
+		return nil, errors.New("backup interval must be between 1 and 720 hours")
+	}
 	for _, domain := range in.AllowedEmailDomains {
 		if strings.TrimSpace(domain) == "" || strings.Contains(domain, "@") {
 			return nil, errors.New("allowed_email_domains must contain domain names")
@@ -387,26 +495,42 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 	invitationCodes, _ := json.Marshal(in.InvitationCodes)
 	pageSizes, _ := json.Marshal(in.PageSizeOptions)
 	legalDocuments, _ := json.Marshal(in.LegalDocuments)
+	customEndpoints, _ := json.Marshal(in.CustomEndpoints)
+	customMenuItems, _ := json.Marshal(in.CustomMenuItems)
+	emailTemplates, err := validateAndMarshalEmailTemplates(in.EmailTemplates)
+	if err != nil {
+		return nil, err
+	}
+	authSourceDefaults, _ := json.Marshal(in.AuthSourceDefaults)
 	return map[string]string{
-		KeySiteName:            strings.TrimSpace(in.SiteName),
-		KeySiteSubtitle:        strings.TrimSpace(in.SiteSubtitle),
-		KeyPublicBaseURL:       strings.TrimSpace(in.PublicBaseURL),
-		KeyDefaultLocale:       in.DefaultLocale,
-		KeyEnabledLocales:      string(locales),
-		KeyDefaultProfile:      defaultProfile,
-		KeyEnabledProfiles:     string(profiles),
-		KeySetupCompleted:      strconv.FormatBool(in.SetupCompleted),
-		KeyGatewayBasePath:     in.GatewayBasePath,
-		KeyOIDCEnabled:         strconv.FormatBool(in.OIDCEnabled),
-		KeyOIDCProviderName:    strings.TrimSpace(in.OIDCProviderName),
-		KeyOIDCIssuerURL:       strings.TrimSpace(in.OIDCIssuerURL),
-		KeyOIDCClientID:        strings.TrimSpace(in.OIDCClientID),
-		KeyFeishuEnabled:       strconv.FormatBool(in.FeishuEnabled),
-		KeyFeishuRegion:        strings.TrimSpace(in.FeishuRegion),
-		KeyFeishuAppID:         strings.TrimSpace(in.FeishuAppID),
-		KeyFeishuAppSecret:     strings.TrimSpace(in.FeishuAppSecret),
+		KeySiteName:                 strings.TrimSpace(in.SiteName),
+		KeySiteSubtitle:             strings.TrimSpace(in.SiteSubtitle),
+		KeySiteLogo:                 strings.TrimSpace(in.SiteLogo),
+		KeyPublicBaseURL:            strings.TrimSpace(in.PublicBaseURL),
+		KeyDefaultLocale:            in.DefaultLocale,
+		KeyEnabledLocales:           string(locales),
+		KeyDefaultProfile:           defaultProfile,
+		KeyEnabledProfiles:          string(profiles),
+		KeySetupCompleted:           strconv.FormatBool(in.SetupCompleted),
+		KeyGatewayBasePath:          in.GatewayBasePath,
+		KeyOIDCEnabled:              strconv.FormatBool(in.OIDCEnabled),
+		KeyOIDCProviderName:         strings.TrimSpace(in.OIDCProviderName),
+		KeyOIDCIssuerURL:            strings.TrimSpace(in.OIDCIssuerURL),
+		KeyOIDCClientID:             strings.TrimSpace(in.OIDCClientID),
+		KeyOIDCRequireVerifiedEmail: strconv.FormatBool(in.OIDCRequireVerifiedEmail),
+		KeyFeishuEnabled:            strconv.FormatBool(in.FeishuEnabled),
+		KeyFeishuRegion:             strings.TrimSpace(in.FeishuRegion),
+		KeyFeishuAppID:              strings.TrimSpace(in.FeishuAppID),
+		KeyFeishuAppSecret:          strings.TrimSpace(in.FeishuAppSecret),
+		KeyGitHubOAuthEnabled:       strconv.FormatBool(in.GitHubOAuthEnabled), KeyGitHubOAuthClientID: strings.TrimSpace(in.GitHubOAuthClientID), KeyGitHubOAuthSecret: strings.TrimSpace(in.GitHubOAuthClientSecret), KeyGoogleOAuthEnabled: strconv.FormatBool(in.GoogleOAuthEnabled), KeyGoogleOAuthClientID: strings.TrimSpace(in.GoogleOAuthClientID), KeyGoogleOAuthSecret: strings.TrimSpace(in.GoogleOAuthClientSecret),
+		KeyDingTalkEnabled: strconv.FormatBool(in.DingTalkEnabled), KeyDingTalkClientID: strings.TrimSpace(in.DingTalkClientID), KeyDingTalkClientSecret: strings.TrimSpace(in.DingTalkClientSecret),
 		KeyRegistrationEnabled: strconv.FormatBool(in.RegistrationEnabled), KeyEmailVerifyEnabled: strconv.FormatBool(in.EmailVerifyEnabled), KeyAllowedEmailDomains: string(domains), KeyInvitationRequired: strconv.FormatBool(in.InvitationRequired), KeyInvitationCodes: string(invitationCodes), KeyTOTPEnabled: strconv.FormatBool(in.TOTPEnabled), KeyTrustedProxyHeaders: strconv.FormatBool(in.TrustedProxyHeaders), KeyTurnstileEnabled: strconv.FormatBool(in.TurnstileEnabled), KeyTurnstileSiteKey: strings.TrimSpace(in.TurnstileSiteKey), KeyTurnstileSecretKey: strings.TrimSpace(in.TurnstileSecretKey), KeyDefaultBalanceCents: strconv.Itoa(in.DefaultBalanceCents), KeyDefaultConcurrency: strconv.Itoa(in.DefaultConcurrency), KeyDefaultRPM: strconv.Itoa(in.DefaultRPM), KeySMTPHost: strings.TrimSpace(in.SMTPHost), KeySMTPPort: strconv.Itoa(in.SMTPPort), KeySMTPUsername: strings.TrimSpace(in.SMTPUsername), KeySMTPPassword: strings.TrimSpace(in.SMTPPassword), KeySMTPFrom: strings.TrimSpace(in.SMTPFrom), KeyLoginAgreementEnabled: strconv.FormatBool(in.LoginAgreementEnabled), KeyLoginAgreementTitle: strings.TrimSpace(in.LoginAgreementTitle), KeyLoginAgreementContent: strings.TrimSpace(in.LoginAgreementContent),
-		KeyBackendMode: strconv.FormatBool(in.BackendMode), KeyDefaultPageSize: strconv.Itoa(in.DefaultPageSize), KeyPageSizeOptions: string(pageSizes), KeySupportContact: strings.TrimSpace(in.SupportContact), KeyDocumentationURL: strings.TrimSpace(in.DocumentationURL), KeyHomeContent: in.HomeContent, KeyHideImportButton: strconv.FormatBool(in.HideImportButton), KeyLoginAgreementMode: strings.TrimSpace(in.LoginAgreementMode), KeyLoginAgreementUpdatedAt: strings.TrimSpace(in.LoginAgreementUpdatedAt), KeyLegalDocuments: string(legalDocuments),
+		KeyEmailTemplates:     string(emailTemplates),
+		KeyAuthSourceDefaults: string(authSourceDefaults),
+		KeyBackendMode:        strconv.FormatBool(in.BackendMode), KeyDefaultPageSize: strconv.Itoa(in.DefaultPageSize), KeyPageSizeOptions: string(pageSizes), KeySupportContact: strings.TrimSpace(in.SupportContact), KeyDocumentationURL: strings.TrimSpace(in.DocumentationURL), KeyHomeContent: in.HomeContent, KeyHideImportButton: strconv.FormatBool(in.HideImportButton), KeyLoginAgreementMode: strings.TrimSpace(in.LoginAgreementMode), KeyLoginAgreementUpdatedAt: strings.TrimSpace(in.LoginAgreementUpdatedAt), KeyLegalDocuments: string(legalDocuments),
+		KeyCustomEndpoints: string(customEndpoints), KeyCustomMenuItems: string(customMenuItems),
+		KeyChannelMonitorEnabled: strconv.FormatBool(in.ChannelMonitorEnabled), KeyChannelMonitorInterval: strconv.Itoa(in.ChannelMonitorIntervalSeconds), KeyAvailableChannels: strconv.FormatBool(in.AvailableChannelsEnabled), KeyRiskControlEnabled: strconv.FormatBool(in.RiskControlEnabled), KeyCyberSessionBlock: strconv.FormatBool(in.CyberSessionBlockEnabled), KeyCyberSessionBlockTTL: strconv.Itoa(in.CyberSessionBlockTTLSeconds),
+		KeyBackupS3Enabled: strconv.FormatBool(in.BackupS3Enabled), KeyBackupS3Endpoint: strings.TrimSpace(in.BackupS3Endpoint), KeyBackupS3Region: strings.TrimSpace(in.BackupS3Region), KeyBackupS3Bucket: strings.TrimSpace(in.BackupS3Bucket), KeyBackupS3Prefix: strings.Trim(strings.TrimSpace(in.BackupS3Prefix), "/"), KeyBackupS3AccessKey: strings.TrimSpace(in.BackupS3AccessKey), KeyBackupS3SecretKey: strings.TrimSpace(in.BackupS3SecretKey), KeyBackupS3PathStyle: strconv.FormatBool(in.BackupS3PathStyle), KeyBackupRetentionDays: strconv.Itoa(in.BackupRetentionDays), KeyBackupMaxRetained: strconv.Itoa(in.BackupMaxRetained), KeyBackupScheduleEnabled: strconv.FormatBool(in.BackupScheduleEnabled), KeyBackupIntervalHours: strconv.Itoa(in.BackupIntervalHours),
 		KeyDataRetentionDays: strconv.Itoa(in.DataRetentionDays),
 		KeyPromptLoggingMode: in.PromptLoggingMode,
 		KeyUpdateChannel:     in.UpdateChannel,
@@ -448,6 +572,111 @@ func parseLegalDocuments(value string) []LegalDocument {
 		return []LegalDocument{}
 	}
 	return out
+}
+
+func parseEmailTemplates(value string) []EmailTemplate {
+	var templates []EmailTemplate
+	if json.Unmarshal([]byte(value), &templates) != nil || templates == nil {
+		return []EmailTemplate{}
+	}
+	return templates
+}
+
+func parseCustomEndpoints(value string) []CustomEndpoint {
+	var out []CustomEndpoint
+	if json.Unmarshal([]byte(value), &out) != nil || out == nil {
+		return []CustomEndpoint{}
+	}
+	return out
+}
+func parseCustomMenuItems(value string) []CustomMenuItem {
+	var out []CustomMenuItem
+	if json.Unmarshal([]byte(value), &out) != nil || out == nil {
+		return []CustomMenuItem{}
+	}
+	return out
+}
+
+func parseAuthSourceDefaults(value string) map[string]AuthSourceDefault {
+	out := map[string]AuthSourceDefault{}
+	if json.Unmarshal([]byte(value), &out) != nil {
+		return map[string]AuthSourceDefault{}
+	}
+	return out
+}
+
+func validateAuthSourceDefaults(values map[string]AuthSourceDefault) error {
+	allowed := map[string]bool{"local": true, "oidc": true, "feishu": true, "dingtalk": true, "github": true, "google": true}
+	for source, value := range values {
+		if !allowed[source] {
+			return fmt.Errorf("unsupported auth source default %q", source)
+		}
+		if value.BalanceCents < 0 || value.Concurrency < 0 || value.RPM < 0 {
+			return fmt.Errorf("auth source default %q cannot be negative", source)
+		}
+	}
+	return nil
+}
+
+func validateSiteLogo(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.SplitN(value, ",", 2)
+	if len(parts) != 2 || (!strings.HasPrefix(parts[0], "data:image/png;base64") && !strings.HasPrefix(parts[0], "data:image/jpeg;base64") && !strings.HasPrefix(parts[0], "data:image/webp;base64")) {
+		return errors.New("site_logo must be a PNG, JPEG, or WebP data URL")
+	}
+	raw, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil || len(raw) > 1024*1024 {
+		return errors.New("site_logo must be valid and no larger than 1 MiB")
+	}
+	return nil
+}
+
+func validateCustomNavigation(endpoints []CustomEndpoint, items []CustomMenuItem) error {
+	names := map[string]bool{}
+	for _, endpoint := range endpoints {
+		name := strings.TrimSpace(endpoint.Name)
+		if name == "" || strings.TrimSpace(endpoint.Endpoint) == "" {
+			return errors.New("custom endpoints require name and endpoint")
+		}
+		if names[name] {
+			return errors.New("custom endpoint names must be unique")
+		}
+		names[name] = true
+	}
+	ids := map[string]bool{}
+	for _, item := range items {
+		if item.ID == "" || strings.TrimSpace(item.Label) == "" || strings.TrimSpace(item.URL) == "" {
+			return errors.New("custom menu items require id, label, and URL")
+		}
+		if ids[item.ID] {
+			return errors.New("custom menu item ids must be unique")
+		}
+		ids[item.ID] = true
+		if !strings.HasPrefix(item.URL, "/") {
+			if err := validateOptionalHTTPURL("custom menu URL", item.URL); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateAndMarshalEmailTemplates(templates []EmailTemplate) ([]byte, error) {
+	allowedEvents := map[string]bool{"email_verification": true, "password_reset": true, "balance_low": true, "quota_limit": true, "subscription_expiry": true}
+	seen := map[string]bool{}
+	for _, item := range templates {
+		key := item.Event + ":" + item.Locale
+		if !allowedEvents[item.Event] || !isLocale(item.Locale) || strings.TrimSpace(item.Subject) == "" || strings.TrimSpace(item.HTML) == "" {
+			return nil, fmt.Errorf("invalid email template %q", key)
+		}
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate email template %q", key)
+		}
+		seen[key] = true
+	}
+	return json.Marshal(templates)
 }
 
 var legalSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)

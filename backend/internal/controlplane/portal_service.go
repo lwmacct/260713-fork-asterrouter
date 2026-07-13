@@ -7,9 +7,11 @@ import (
 )
 
 type portalScope struct {
-	Actor         string
-	CanView       bool
-	CanManageKeys bool
+	Actor          string
+	UserID         string
+	CanView        bool
+	CanManageKeys  bool
+	CanViewAllKeys bool
 }
 
 func (s *Service) PortalWorkspace(ctx context.Context, actor string) (PortalWorkspace, error) {
@@ -20,21 +22,34 @@ func (s *Service) PortalWorkspace(ctx context.Context, actor string) (PortalWork
 	if !scope.CanView {
 		return PortalWorkspace{}, errors.New("portal principal is not an active workspace user")
 	}
-	keys, err := s.repo.ListAPIKeys(ctx)
+	allKeys, err := s.repo.ListAPIKeys(ctx)
 	if err != nil {
 		return PortalWorkspace{}, err
 	}
-	usage, err := s.UsageReportQuery(ctx, UsageQuery{Limit: 20})
-	if err != nil {
-		return PortalWorkspace{}, err
+	keys := make([]APIKeyRecord, 0)
+	keyIDs := make([]string, 0)
+	for _, key := range allKeys {
+		if scope.CanViewAllKeys || (key.KeyType == APIKeyTypeUser && key.OwnerUserID == scope.UserID) {
+			keys = append(keys, key)
+			keyIDs = append(keyIDs, key.ID)
+		}
 	}
-	traces, err := s.ListGatewayTracesQuery(ctx, GatewayTraceQuery{Limit: 12})
-	if err != nil {
-		return PortalWorkspace{}, err
-	}
-	alerts, err := s.ListAlertEventsQuery(ctx, AlertQuery{Limit: 12, Status: AlertStatusActive})
-	if err != nil {
-		return PortalWorkspace{}, err
+	usage := UsageReport{Recent: []UsageRecord{}, ByModel: []UsageModelSummary{}}
+	traces := []GatewayTrace{}
+	alerts := []AlertEvent{}
+	if len(keyIDs) > 0 {
+		usage, err = s.UsageReportQuery(ctx, UsageQuery{Limit: 20, APIKeyIDs: keyIDs})
+		if err != nil {
+			return PortalWorkspace{}, err
+		}
+		traces, err = s.ListGatewayTracesQuery(ctx, GatewayTraceQuery{Limit: 12, APIKeyIDs: keyIDs})
+		if err != nil {
+			return PortalWorkspace{}, err
+		}
+		alerts, err = s.ListAlertEventsQuery(ctx, AlertQuery{Limit: 12, Status: AlertStatusActive, ResourceType: "api_key", ResourceIDs: keyIDs})
+		if err != nil {
+			return PortalWorkspace{}, err
+		}
 	}
 	models, err := s.GatewayModels(ctx)
 	if err != nil {
@@ -60,6 +75,9 @@ func (s *Service) CreatePortalAPIKey(ctx context.Context, actor string, req APIK
 	if !scope.CanManageKeys {
 		return APIKeyCreateResponse{}, errors.New("portal principal cannot manage workspace keys")
 	}
+	req.KeyType = APIKeyTypeUser
+	req.CustomerID = ""
+	req.OwnerUserID = scope.UserID
 	return s.CreateAPIKey(ctx, portalActor(scope.Actor), req)
 }
 
@@ -97,6 +115,9 @@ func (s *Service) portalAPIKeyAccess(ctx context.Context, actor string, id strin
 	if err != nil {
 		return portalScope{}, APIKeyRecord{}, err
 	}
+	if !scope.CanViewAllKeys && (key.KeyType != APIKeyTypeUser || key.OwnerUserID != scope.UserID) {
+		return portalScope{}, APIKeyRecord{}, errors.New("portal api key not found")
+	}
 	return scope, key, nil
 }
 
@@ -106,7 +127,7 @@ func (s *Service) portalScopeForActor(ctx context.Context, actor string) (portal
 		actor = "local-admin"
 	}
 	if isLocalAdminActor(actor) {
-		return portalScope{Actor: actor, CanView: true, CanManageKeys: true}, nil
+		return portalScope{Actor: actor, UserID: actor, CanView: true, CanManageKeys: true, CanViewAllKeys: true}, nil
 	}
 	users, err := s.repo.ListWorkspaceUsers(ctx)
 	if err != nil {
@@ -116,7 +137,7 @@ func (s *Service) portalScopeForActor(ctx context.Context, actor string) (portal
 	if !ok || user.Status != WorkspaceUserStatusActive {
 		return portalScope{Actor: actor}, nil
 	}
-	scope := portalScope{Actor: actor, CanView: true, CanManageKeys: roleCanManageKeys(user.Role)}
+	scope := portalScope{Actor: actor, UserID: user.ID, CanView: true, CanManageKeys: roleCanManageKeys(user.Role)}
 	bindings, err := s.repo.ListRoleBindings(ctx)
 	if err != nil {
 		return portalScope{}, err
@@ -141,7 +162,7 @@ func workspaceUserByActor(users []WorkspaceUser, actor string) (WorkspaceUser, b
 
 func roleCanManageKeys(role string) bool {
 	switch role {
-	case RoleSuperAdmin, RolePlatformAdmin, RoleKeyManager:
+	case RoleSuperAdmin, RolePlatformAdmin, RoleKeyManager, RoleDeveloper:
 		return true
 	default:
 		return false

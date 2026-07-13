@@ -11,11 +11,11 @@ func TestCSVExportJobStoreLifecycle(t *testing.T) {
 	store := newCSVExportJobStore()
 	defer store.Close()
 
-	job, err := store.create(ctx, "audit_logs", "audit-logs.csv", map[string]string{"limit": "100", "q": "marker"})
+	job, err := store.create(ctx, "tester", "audit_logs", "audit-logs.csv", map[string]string{"limit": "100", "q": "marker"})
 	if err != nil {
 		t.Fatalf("create(): %v", err)
 	}
-	if job.ID == "" || job.Status != exportJobStatusQueued || job.Parameters["q"] != "marker" {
+	if job.ID == "" || job.Owner != "tester" || job.Status != exportJobStatusQueued || job.Parameters["q"] != "marker" {
 		t.Fatalf("unexpected job after create: %+v", job)
 	}
 
@@ -62,7 +62,7 @@ func TestPostgresCSVExportJobStorePersistsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCSVExportJobStore(): %v", err)
 	}
-	job, err := store.create(ctx, "usage", "usage-records.csv", map[string]string{"limit": "7"})
+	job, err := store.create(ctx, "tester", "usage", "usage-records.csv", map[string]string{"limit": "7"})
 	if err != nil {
 		t.Fatalf("create(): %v", err)
 	}

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { completeTOTPLogin, getCurrentUser, login as loginRequest } from '@/api/auth'
-import type { AuthUser } from '@/types'
+import type { AccountProfile, AuthUser } from '@/types'
 
 const TOKEN_KEY = 'asterrouter_admin_token'
 const USER_KEY = 'asterrouter_admin_user'
@@ -14,11 +14,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => Boolean(token.value))
 
-  async function login(username: string, password: string) {
+  async function login(username: string, password: string, agreementAccepted = false, turnstileToken = '') {
     loading.value = true
     error.value = ''
     try {
-      const result = await loginRequest(username, password)
+      const result = await loginRequest(username, password, agreementAccepted, turnstileToken)
       token.value = result.access_token
       user.value = result.user
       localStorage.setItem(TOKEN_KEY, result.access_token)
@@ -53,11 +53,23 @@ export const useAuthStore = defineStore('auth', () => {
 		}
 	}
 
-	async function completeMFA(challenge: string, code: string) {
-		loading.value = true; error.value = ''
-		try { const result = await completeTOTPLogin(challenge, code); token.value = result.access_token; user.value = result.user; localStorage.setItem(TOKEN_KEY, result.access_token); localStorage.setItem(USER_KEY, JSON.stringify(result.user)) }
-		catch (err) { error.value = err instanceof Error ? err.message : 'MFA failed'; throw err }
-		finally { loading.value = false }
+		async function completeMFA(challenge: string, code: string) {
+			loading.value = true; error.value = ''
+			try { const result = await completeTOTPLogin(challenge, code); token.value = result.access_token; user.value = result.user; localStorage.setItem(TOKEN_KEY, result.access_token); localStorage.setItem(USER_KEY, JSON.stringify(result.user)) }
+			catch (err) { error.value = err instanceof Error ? err.message : 'MFA failed'; throw err }
+			finally { loading.value = false }
+		}
+
+	function applyAccountProfile(profile: AccountProfile) {
+		if (!user.value) return
+		user.value = {
+			...user.value,
+			username: profile.email || profile.display_name,
+			display_name: profile.display_name,
+			email: profile.email,
+			avatar_data_url: profile.avatar_data_url
+		}
+		localStorage.setItem(USER_KEY, JSON.stringify(user.value))
 	}
 
   function logout() {
@@ -77,7 +89,8 @@ export const useAuthStore = defineStore('auth', () => {
     loadCurrentUser,
 		completeOIDCLogin,
 		completeMFA,
-    logout
+		applyAccountProfile,
+		logout
   }
 })
 

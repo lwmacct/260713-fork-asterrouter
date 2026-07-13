@@ -31,13 +31,14 @@ type csvExportJob struct {
 	SizeBytes   int               `json:"size_bytes"`
 	Error       string            `json:"error"`
 	Parameters  map[string]string `json:"parameters"`
+	Owner       string            `json:"owner"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 	ExpiresAt   time.Time         `json:"expires_at"`
 }
 
 type CSVExportJobStore interface {
-	create(ctx context.Context, kind string, filename string, parameters map[string]string) (csvExportJob, error)
+	create(ctx context.Context, owner string, kind string, filename string, parameters map[string]string) (csvExportJob, error)
 	markRunning(ctx context.Context, id string) error
 	markSucceeded(ctx context.Context, id string, rowCount int, body []byte) error
 	markFailed(ctx context.Context, id string, err error) error
@@ -69,7 +70,7 @@ func newCSVExportJobStore() *memoryCSVExportJobStore {
 	return &memoryCSVExportJobStore{jobs: map[string]csvExportJobRecord{}}
 }
 
-func (s *memoryCSVExportJobStore) create(_ context.Context, kind string, filename string, parameters map[string]string) (csvExportJob, error) {
+func (s *memoryCSVExportJobStore) create(_ context.Context, owner string, kind string, filename string, parameters map[string]string) (csvExportJob, error) {
 	now := time.Now().UTC()
 	job := csvExportJob{
 		ID:          "export_" + randomExportID(),
@@ -78,6 +79,7 @@ func (s *memoryCSVExportJobStore) create(_ context.Context, kind string, filenam
 		Filename:    filename,
 		ContentType: "text/csv; charset=utf-8",
 		Parameters:  cloneStringMap(parameters),
+		Owner:       strings.TrimSpace(owner),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		ExpiresAt:   now.Add(24 * time.Hour),
@@ -234,16 +236,21 @@ CREATE TABLE IF NOT EXISTS csv_export_jobs (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+ALTER TABLE csv_export_jobs ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS csv_export_jobs_created_idx
   ON csv_export_jobs(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS csv_export_jobs_expires_idx
   ON csv_export_jobs(expires_at);
+
+CREATE INDEX IF NOT EXISTS csv_export_jobs_owner_created_idx
+  ON csv_export_jobs(owner, created_at DESC);
 `)
 	return err
 }
 
-func (s *postgresCSVExportJobStore) create(ctx context.Context, kind string, filename string, parameters map[string]string) (csvExportJob, error) {
+func (s *postgresCSVExportJobStore) create(ctx context.Context, owner string, kind string, filename string, parameters map[string]string) (csvExportJob, error) {
 	now := time.Now().UTC()
 	job := csvExportJob{
 		ID:          "export_" + randomExportID(),
@@ -252,6 +259,7 @@ func (s *postgresCSVExportJobStore) create(ctx context.Context, kind string, fil
 		Filename:    filename,
 		ContentType: "text/csv; charset=utf-8",
 		Parameters:  cloneStringMap(parameters),
+		Owner:       strings.TrimSpace(owner),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		ExpiresAt:   now.Add(24 * time.Hour),
@@ -260,9 +268,9 @@ func (s *postgresCSVExportJobStore) create(ctx context.Context, kind string, fil
 		return csvExportJob{}, err
 	}
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO csv_export_jobs(id, kind, status, filename, content_type, row_count, size_bytes, error, parameters, body, created_at, updated_at, expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-`, job.ID, job.Kind, job.Status, job.Filename, job.ContentType, job.RowCount, job.SizeBytes, job.Error, marshalStringMap(job.Parameters), []byte(nil), job.CreatedAt, job.UpdatedAt, job.ExpiresAt)
+INSERT INTO csv_export_jobs(id, owner, kind, status, filename, content_type, row_count, size_bytes, error, parameters, body, created_at, updated_at, expires_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+`, job.ID, job.Owner, job.Kind, job.Status, job.Filename, job.ContentType, job.RowCount, job.SizeBytes, job.Error, marshalStringMap(job.Parameters), []byte(nil), job.CreatedAt, job.UpdatedAt, job.ExpiresAt)
 	return job, err
 }
 
@@ -303,7 +311,7 @@ func (s *postgresCSVExportJobStore) get(ctx context.Context, id string) (csvExpo
 		return csvExportJob{}, false, err
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at
+SELECT id, owner, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at
 FROM csv_export_jobs
 WHERE id = $1
 `, id)
@@ -315,7 +323,7 @@ func (s *postgresCSVExportJobStore) getDownload(ctx context.Context, id string) 
 		return csvExportJob{}, nil, false, err
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at, body
+SELECT id, owner, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at, body
 FROM csv_export_jobs
 WHERE id = $1 AND status = $2
 `, id, exportJobStatusSucceeded)
@@ -337,7 +345,7 @@ func (s *postgresCSVExportJobStore) list(ctx context.Context, limit int) ([]csvE
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at
+SELECT id, owner, kind, status, filename, content_type, row_count, size_bytes, error, parameters, created_at, updated_at, expires_at
 FROM csv_export_jobs
 ORDER BY created_at DESC
 LIMIT $1
@@ -389,7 +397,7 @@ func scanCSVExportJobWithBody(row csvExportJobScanner) (csvExportJob, []byte, bo
 	var job csvExportJob
 	var parameters string
 	var body []byte
-	if err := row.Scan(&job.ID, &job.Kind, &job.Status, &job.Filename, &job.ContentType, &job.RowCount, &job.SizeBytes, &job.Error, &parameters, &job.CreatedAt, &job.UpdatedAt, &job.ExpiresAt, &body); err != nil {
+	if err := row.Scan(&job.ID, &job.Owner, &job.Kind, &job.Status, &job.Filename, &job.ContentType, &job.RowCount, &job.SizeBytes, &job.Error, &parameters, &job.CreatedAt, &job.UpdatedAt, &job.ExpiresAt, &body); err != nil {
 		if err == sql.ErrNoRows {
 			return csvExportJob{}, nil, false, nil
 		}
@@ -402,7 +410,7 @@ func scanCSVExportJobWithBody(row csvExportJobScanner) (csvExportJob, []byte, bo
 func scanCSVExportJobColumns(row csvExportJobScanner) (csvExportJob, error) {
 	var job csvExportJob
 	var parameters string
-	if err := row.Scan(&job.ID, &job.Kind, &job.Status, &job.Filename, &job.ContentType, &job.RowCount, &job.SizeBytes, &job.Error, &parameters, &job.CreatedAt, &job.UpdatedAt, &job.ExpiresAt); err != nil {
+	if err := row.Scan(&job.ID, &job.Owner, &job.Kind, &job.Status, &job.Filename, &job.ContentType, &job.RowCount, &job.SizeBytes, &job.Error, &parameters, &job.CreatedAt, &job.UpdatedAt, &job.ExpiresAt); err != nil {
 		return csvExportJob{}, err
 	}
 	job.Parameters = parseStringMap(parameters)

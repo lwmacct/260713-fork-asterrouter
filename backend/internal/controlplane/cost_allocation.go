@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	CostAllocationByAPIKey = "api_key"
-	CostAllocationByModel  = "model"
+	CostAllocationByAPIKey     = "api_key"
+	CostAllocationByModel      = "model"
+	CostAllocationByUser       = "user"
+	CostAllocationByDepartment = "department"
+	CostAllocationByGroup      = "group"
 )
 
 var ErrInvalidCostAllocationDimension = errors.New("invalid cost allocation dimension")
@@ -36,10 +39,34 @@ func (s *Service) CostAllocationReportQuery(ctx context.Context, dimension strin
 	for _, key := range keys {
 		keyByID[key.ID] = key
 	}
+	users, err := s.repo.ListWorkspaceUsers(ctx)
+	if err != nil {
+		return CostAllocationReport{}, err
+	}
+	userNames := map[string]string{}
+	for _, user := range users {
+		userNames[user.ID] = firstNonEmpty(user.DisplayName, user.Email, user.ID)
+	}
+	departments, err := s.repo.ListDepartments(ctx)
+	if err != nil {
+		return CostAllocationReport{}, err
+	}
+	departmentNames := map[string]string{}
+	for _, department := range departments {
+		departmentNames[department.ID] = department.Name
+	}
+	groups, err := s.repo.ListOrganizationGroups(ctx)
+	if err != nil {
+		return CostAllocationReport{}, err
+	}
+	groupNames := map[string]string{}
+	for _, group := range groups {
+		groupNames[group.ID] = group.Name
+	}
 
 	rows := make([]CostAllocationRow, 0, len(rollups))
 	for _, rollup := range rollups {
-		rows = append(rows, costAllocationRow(dimension, rollup, aggregate.TotalCostCents, keyByID))
+		rows = append(rows, costAllocationRow(dimension, rollup, aggregate.TotalCostCents, keyByID, userNames, departmentNames, groupNames))
 	}
 	return CostAllocationReport{
 		Dimension:      dimension,
@@ -57,13 +84,13 @@ func normalizeCostAllocationDimension(value string) (string, error) {
 	if value == "" {
 		return CostAllocationByAPIKey, nil
 	}
-	if value != CostAllocationByAPIKey && value != CostAllocationByModel {
+	if !oneOf(value, CostAllocationByAPIKey, CostAllocationByModel, CostAllocationByUser, CostAllocationByDepartment, CostAllocationByGroup) {
 		return "", ErrInvalidCostAllocationDimension
 	}
 	return value, nil
 }
 
-func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostCents int, apiKeys map[string]APIKeyRecord) CostAllocationRow {
+func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostCents int, apiKeys map[string]APIKeyRecord, userNames, departmentNames, groupNames map[string]string) CostAllocationRow {
 	row := CostAllocationRow{
 		Dimension:      dimension,
 		APIKeyID:       rollup.APIKeyID,
@@ -75,6 +102,14 @@ func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostC
 		TotalCostCents: rollup.TotalCostCents,
 		AvgLatencyMS:   rollup.AvgLatencyMS,
 	}
+	row.ResourceID = firstNonEmpty(rollup.ResourceID, "unassigned")
+	if dimension == CostAllocationByUser {
+		row.ResourceName = firstNonEmpty(userNames[rollup.ResourceID], rollup.ResourceID, "Unassigned user")
+	} else if dimension == CostAllocationByDepartment {
+		row.ResourceName = firstNonEmpty(departmentNames[rollup.ResourceID], rollup.ResourceID, "Unassigned department")
+	} else if dimension == CostAllocationByGroup {
+		row.ResourceName = firstNonEmpty(groupNames[rollup.ResourceID], rollup.ResourceID, "Unassigned group")
+	}
 	if key, ok := apiKeys[row.APIKeyID]; ok {
 		row.APIKeyName = key.Name
 		if row.APIFingerprint == "" {
@@ -84,7 +119,9 @@ func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostC
 	if totalCostCents > 0 {
 		row.CostSharePercent = percent(row.TotalCostCents, totalCostCents)
 	}
-	row.ResourceID, row.ResourceName = costAllocationResource(dimension, row)
+	if row.ResourceName == "" {
+		row.ResourceID, row.ResourceName = costAllocationResource(dimension, row)
+	}
 	return row
 }
 
@@ -117,8 +154,27 @@ func (r *MemoryRepository) SummarizeCostAllocation(_ context.Context, dimension 
 			continue
 		}
 		key := record.APIKeyID
+		resourceID := ""
 		if dimension == CostAllocationByModel {
 			key = record.Model
+		} else if dimension == CostAllocationByUser || dimension == CostAllocationByDepartment || dimension == CostAllocationByGroup {
+			if apiKey, ok := r.apiKeys[record.APIKeyID]; ok {
+				resourceID = apiKey.OwnerUserID
+				if dimension == CostAllocationByDepartment {
+					if user, ok := r.workspaceUsers[apiKey.OwnerUserID]; ok {
+						resourceID = user.DepartmentID
+					}
+				} else if dimension == CostAllocationByGroup {
+					resourceID = ""
+					for groupID, group := range r.organizationGroups {
+						if contains(group.MemberIDs, apiKey.OwnerUserID) {
+							resourceID = groupID
+							break
+						}
+					}
+				}
+			}
+			key = firstNonEmpty(resourceID, "unassigned")
 		}
 		rollup := values[key]
 		if rollup == nil {
@@ -126,10 +182,15 @@ func (r *MemoryRepository) SummarizeCostAllocation(_ context.Context, dimension 
 				APIKeyID:       record.APIKeyID,
 				APIFingerprint: record.APIFingerprint,
 				Model:          record.Model,
+				ResourceID:     resourceID,
 			}
 			if dimension == CostAllocationByModel {
 				rollup.APIKeyID = ""
 				rollup.APIFingerprint = ""
+			} else if dimension == CostAllocationByUser || dimension == CostAllocationByDepartment || dimension == CostAllocationByGroup {
+				rollup.APIKeyID = ""
+				rollup.APIFingerprint = ""
+				rollup.Model = ""
 			}
 			values[key] = rollup
 		}
@@ -166,7 +227,7 @@ func (r *MemoryRepository) SummarizeCostAllocation(_ context.Context, dimension 
 }
 
 func (r *PostgresRepository) SummarizeCostAllocation(ctx context.Context, dimension string, query UsageQuery) ([]CostAllocationRollup, error) {
-	selectFields, groupBy, err := costAllocationSQLGrouping(dimension)
+	selectFields, joins, groupBy, err := costAllocationSQLGrouping(dimension)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +242,7 @@ SELECT %s,
        COALESCE(SUM(input_tokens + output_tokens), 0),
        COALESCE(SUM(cost_cents), 0),
        COALESCE(SUM(latency_ms), 0)
-FROM usage_records`, selectFields)
+FROM usage_records ur %s`, selectFields, joins)
 	if len(clauses) > 0 {
 		sqlText += " WHERE " + strings.Join(clauses, " AND ")
 	}
@@ -198,7 +259,7 @@ FROM usage_records`, selectFields)
 	for rows.Next() {
 		var rollup CostAllocationRollup
 		var requests, errorsCount, tokens, costCents, latencyTotal int64
-		if err := rows.Scan(&rollup.APIKeyID, &rollup.APIFingerprint, &rollup.Model, &requests, &errorsCount, &tokens, &costCents, &latencyTotal); err != nil {
+		if err := rows.Scan(&rollup.APIKeyID, &rollup.APIFingerprint, &rollup.Model, &rollup.ResourceID, &requests, &errorsCount, &tokens, &costCents, &latencyTotal); err != nil {
 			return nil, err
 		}
 		rollup.Requests = int(requests)
@@ -214,13 +275,19 @@ FROM usage_records`, selectFields)
 	return out, rows.Err()
 }
 
-func costAllocationSQLGrouping(dimension string) (string, string, error) {
+func costAllocationSQLGrouping(dimension string) (string, string, string, error) {
 	switch dimension {
 	case CostAllocationByAPIKey:
-		return "api_key_id, MAX(api_fingerprint) AS api_fingerprint, '' AS model", "api_key_id", nil
+		return "ur.api_key_id, MAX(ur.api_fingerprint) AS api_fingerprint, '' AS model, '' AS resource_id", "", "ur.api_key_id", nil
 	case CostAllocationByModel:
-		return "'' AS api_key_id, '' AS api_fingerprint, model", "model", nil
+		return "'' AS api_key_id, '' AS api_fingerprint, ur.model, '' AS resource_id", "", "ur.model", nil
+	case CostAllocationByUser:
+		return "'' AS api_key_id, '' AS api_fingerprint, '' AS model, COALESCE(k.owner_user_id, '') AS resource_id", "LEFT JOIN (SELECT id, owner_user_id FROM api_keys) k ON k.id = ur.api_key_id", "COALESCE(k.owner_user_id, '')", nil
+	case CostAllocationByDepartment:
+		return "'' AS api_key_id, '' AS api_fingerprint, '' AS model, COALESCE(u.department_id, '') AS resource_id", "LEFT JOIN (SELECT id, owner_user_id FROM api_keys) k ON k.id = ur.api_key_id LEFT JOIN (SELECT id, department_id FROM workspace_users) u ON u.id = k.owner_user_id", "COALESCE(u.department_id, '')", nil
+	case CostAllocationByGroup:
+		return "'' AS api_key_id, '' AS api_fingerprint, '' AS model, COALESCE(gm.group_id, '') AS resource_id", "LEFT JOIN (SELECT id, owner_user_id FROM api_keys) k ON k.id = ur.api_key_id LEFT JOIN organization_group_members gm ON gm.user_id = k.owner_user_id", "COALESCE(gm.group_id, '')", nil
 	default:
-		return "", "", ErrInvalidCostAllocationDimension
+		return "", "", "", ErrInvalidCostAllocationDimension
 	}
 }

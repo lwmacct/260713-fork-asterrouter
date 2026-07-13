@@ -22,6 +22,8 @@ func writeGatewayError(c *gin.Context, err error) {
 		openAIError(c, http.StatusTooManyRequests, "insufficient_quota", "gateway api key monthly token quota exceeded")
 	case errors.Is(err, controlplane.ErrGatewayBudgetExceeded):
 		openAIError(c, http.StatusTooManyRequests, "insufficient_quota", "workspace key monthly budget exceeded")
+	case errors.Is(err, controlplane.ErrGatewayRiskBlocked):
+		openAIError(c, http.StatusTooManyRequests, "risk_control_blocked", "gateway api key is temporarily blocked by risk control")
 	default:
 		openAIError(c, http.StatusInternalServerError, "server_error", err.Error())
 	}

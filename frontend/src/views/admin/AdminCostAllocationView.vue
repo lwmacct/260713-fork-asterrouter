@@ -19,7 +19,7 @@ const toTime = ref('')
 const pageSize = ref(50)
 const offset = ref(0)
 
-const dimensions: CostAllocationDimension[] = ['api_key', 'model']
+const dimensions: CostAllocationDimension[] = ['api_key', 'user', 'department', 'group', 'model']
 const statusOptions = ['forwarded', 'accepted', 'upstream_error', 'error']
 
 const rows = computed(() => {

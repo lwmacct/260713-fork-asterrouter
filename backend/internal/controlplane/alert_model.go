@@ -4,9 +4,11 @@ import "time"
 
 const (
 	AlertTypeAPIKeyQuota           = "api_key_quota"
+	AlertTypeAPIKeyBudget          = "api_key_budget"
 	AlertTypeGatewayErrorRate      = "gateway_error_rate"
 	AlertTypeProviderHealth        = "provider_health"
 	AlertTypeProviderAccountHealth = "provider_account_health"
+	AlertTypeRiskRule              = "risk_rule"
 
 	AlertSeverityInfo     = "info"
 	AlertSeverityWarning  = "warning"
@@ -44,6 +46,7 @@ type AlertQuery struct {
 	Severity     string
 	Status       string
 	ResourceType string
+	ResourceIDs  []string
 	CreatedFrom  time.Time
 	CreatedTo    time.Time
 }

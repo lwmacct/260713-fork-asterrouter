@@ -5,10 +5,11 @@ import (
 
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/httpx"
+	"github.com/astercloud/asterrouter/backend/internal/settings"
 	"github.com/gin-gonic/gin"
 )
 
-func registerPortalRoutes(portal *gin.RouterGroup, control *controlplane.Service) {
+func registerPortalRoutes(portal *gin.RouterGroup, control *controlplane.Service, settingsService *settings.Service) {
 	if control == nil {
 		return
 	}
@@ -18,6 +19,12 @@ func registerPortalRoutes(portal *gin.RouterGroup, control *controlplane.Service
 			httpx.Error(c, http.StatusInternalServerError, 1200, err.Error())
 			return
 		}
+		public, err := settingsService.Public(c.Request.Context())
+		if err != nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1205, "portal settings are unavailable")
+			return
+		}
+		applyPortalChannelVisibility(&data, public.AvailableChannelsEnabled)
 		httpx.OK(c, data)
 	})
 	portal.POST("/api-keys", func(c *gin.Context) {
@@ -48,4 +55,10 @@ func registerPortalRoutes(portal *gin.RouterGroup, control *controlplane.Service
 		}
 		httpx.OK(c, gin.H{"status": "disabled"})
 	})
+}
+
+func applyPortalChannelVisibility(workspace *controlplane.PortalWorkspace, enabled bool) {
+	if !enabled {
+		workspace.Models = nil
+	}
 }

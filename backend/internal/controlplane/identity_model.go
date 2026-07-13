@@ -12,15 +12,43 @@ const (
 	RoleReadOnlyAuditor = "read_only_auditor"
 	RoleDeveloper       = "developer"
 
-	RoleScopeGlobal = "global"
+	RoleScopeGlobal     = "global"
+	RoleScopeResource   = "resource"
+	RoleScopeSurface    = "surface"
+	RoleScopeDepartment = "department"
+
+	RBACResourceDashboard = "dashboard"
+	RBACResourceRouting   = "routing"
+	RBACResourceProviders = "providers"
+	RBACResourceAPIKeys   = "api_keys"
+	RBACResourceUsage     = "usage"
+	RBACResourceTraces    = "traces"
+	RBACResourceAlerts    = "alerts"
+	RBACResourceIdentity  = "identity"
+	RBACResourcePolicies  = "policies"
+	RBACResourceAudit     = "audit"
+	RBACResourceExports   = "exports"
+	RBACResourcePlugins   = "plugins"
+	RBACResourceSettings  = "settings"
+	RBACResourceSystem    = "system"
+
+	SurfacePersonal      = "personal"
+	SurfaceRelayOperator = "relay_operator"
+	SurfaceEnterprise    = "enterprise"
+	SurfacePortal        = "portal"
+	SurfaceCustomer      = "customer"
 )
 
 type WorkspaceUser struct {
 	ID                     string     `json:"id"`
 	Email                  string     `json:"email"`
 	DisplayName            string     `json:"display_name"`
+	AvatarDataURL          string     `json:"avatar_data_url,omitempty"`
 	Status                 string     `json:"status"`
 	Role                   string     `json:"role"`
+	BalanceCents           int        `json:"balance_cents"`
+	ConcurrencyLimit       int        `json:"concurrency_limit"`
+	RPMLimit               int        `json:"rpm_limit"`
 	ExternalIssuer         string     `json:"external_issuer,omitempty"`
 	ExternalSubject        string     `json:"external_subject,omitempty"`
 	DepartmentID           string     `json:"department_id,omitempty"`
@@ -33,8 +61,55 @@ type WorkspaceUser struct {
 	EmailVerifyExpiresAt   *time.Time `json:"-"`
 	PasswordResetHash      string     `json:"-"`
 	PasswordResetExpiresAt *time.Time `json:"-"`
+	SessionVersion         int64      `json:"-"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
+type AuthIdentity struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Issuer    string    `json:"issuer"`
+	Subject   string    `json:"subject"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AccountProfile struct {
+	ID               string         `json:"id"`
+	Email            string         `json:"email"`
+	DisplayName      string         `json:"display_name"`
+	AvatarDataURL    string         `json:"avatar_data_url,omitempty"`
+	Status           string         `json:"status"`
+	Role             string         `json:"role"`
+	BalanceCents     int            `json:"balance_cents"`
+	ConcurrencyLimit int            `json:"concurrency_limit"`
+	RPMLimit         int            `json:"rpm_limit"`
+	ExternalIssuer   string         `json:"external_issuer,omitempty"`
+	AuthIdentities   []AuthIdentity `json:"auth_identities"`
+	EmailVerified    bool           `json:"email_verified"`
+	PasswordEnabled  bool           `json:"password_enabled"`
+	TOTPEnabled      bool           `json:"totp_enabled"`
+	ManagedByConfig  bool           `json:"managed_by_config"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+type AccountProfileUpdateRequest struct {
+	DisplayName   string `json:"display_name"`
+	AvatarDataURL string `json:"avatar_data_url"`
+}
+
+type AccountPasswordUpdateRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type WorkspaceUserDefaults struct {
+	BalanceCents     int
+	ConcurrencyLimit int
+	RPMLimit         int
 }
 
 type WorkspaceUserRequest struct {

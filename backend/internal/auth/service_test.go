@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestDemoLoginRequiresDemoMode(t *testing.T) {
@@ -10,6 +12,20 @@ func TestDemoLoginRequiresDemoMode(t *testing.T) {
 
 	if _, err := svc.Login(context.Background(), "demo", "demo"); err == nil {
 		t.Fatal("Login() error = nil, want invalid credentials")
+	}
+}
+
+func TestLocalLoginUsesPersistedPasswordHash(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("persisted-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword(): %v", err)
+	}
+	svc := NewService(Config{Username: "admin", Password: "bootstrap-password", PasswordHash: string(hash), SecretKey: "test-secret"})
+	if _, err := svc.Login(context.Background(), "admin", "bootstrap-password"); err == nil {
+		t.Fatal("bootstrap password remained valid after persisted hash was loaded")
+	}
+	if _, err := svc.Login(context.Background(), "admin", "persisted-password"); err != nil {
+		t.Fatalf("Login(persisted password): %v", err)
 	}
 }
 

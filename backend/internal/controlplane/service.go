@@ -667,8 +667,11 @@ func (s *Service) CreateAPIKey(ctx context.Context, actor string, req APIKeyCrea
 	if err != nil {
 		return APIKeyCreateResponse{}, err
 	}
-	keyType, customerID, err := normalizeAPIKeyOwnership(req.KeyType, req.CustomerID)
+	keyType, customerID, ownerUserID, err := normalizeAPIKeyOwnership(req.KeyType, req.CustomerID, req.OwnerUserID)
 	if err != nil {
+		return APIKeyCreateResponse{}, err
+	}
+	if err := s.validateAPIKeyOwner(ctx, keyType, ownerUserID); err != nil {
 		return APIKeyCreateResponse{}, err
 	}
 
@@ -684,6 +687,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, actor string, req APIKeyCrea
 		Status:            APIKeyStatusActive,
 		KeyType:           keyType,
 		CustomerID:        customerID,
+		OwnerUserID:       ownerUserID,
 		PolicyID:          strings.TrimSpace(req.PolicyID),
 		ModelAllowlist:    models,
 		QPSLimit:          req.QPSLimit,
@@ -739,8 +743,15 @@ func (s *Service) UpdateAPIKey(ctx context.Context, actor string, id string, req
 	if strings.TrimSpace(customerID) == "" && keyType == APIKeyTypeCustomer {
 		customerID = key.CustomerID
 	}
-	keyType, customerID, err = normalizeAPIKeyOwnership(keyType, customerID)
+	ownerUserID := req.OwnerUserID
+	if strings.TrimSpace(ownerUserID) == "" && keyType == APIKeyTypeUser {
+		ownerUserID = key.OwnerUserID
+	}
+	keyType, customerID, ownerUserID, err = normalizeAPIKeyOwnership(keyType, customerID, ownerUserID)
 	if err != nil {
+		return APIKeyRecord{}, err
+	}
+	if err := s.validateAPIKeyOwner(ctx, keyType, ownerUserID); err != nil {
 		return APIKeyRecord{}, err
 	}
 	key.Name = name
@@ -752,6 +763,7 @@ func (s *Service) UpdateAPIKey(ctx context.Context, actor string, id string, req
 	key.Status = status
 	key.KeyType = keyType
 	key.CustomerID = customerID
+	key.OwnerUserID = ownerUserID
 	key.UpdatedAt = time.Now().UTC()
 	if err := s.repo.SaveAPIKey(ctx, key); err != nil {
 		return APIKeyRecord{}, err
@@ -762,22 +774,43 @@ func (s *Service) UpdateAPIKey(ctx context.Context, actor string, id string, req
 	return key, nil
 }
 
-func normalizeAPIKeyOwnership(keyType string, customerID string) (string, string, error) {
+func normalizeAPIKeyOwnership(keyType string, customerID string, ownerUserID string) (string, string, string, error) {
 	keyType = strings.TrimSpace(keyType)
 	if keyType == "" {
 		keyType = APIKeyTypeWorkspace
 	}
 	if !oneOf(keyType, APIKeyTypeWorkspace, APIKeyTypeUser, APIKeyTypeCustomer, APIKeyTypeService) {
-		return "", "", errors.New("key_type must be workspace, user, customer, or service")
+		return "", "", "", errors.New("key_type must be workspace, user, customer, or service")
 	}
 	customerID = strings.TrimSpace(customerID)
 	if keyType == APIKeyTypeCustomer && customerID == "" {
-		return "", "", errors.New("customer_id is required for customer keys")
+		return "", "", "", errors.New("customer_id is required for customer keys")
 	}
 	if keyType != APIKeyTypeCustomer {
 		customerID = ""
 	}
-	return keyType, customerID, nil
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if keyType == APIKeyTypeUser && ownerUserID == "" {
+		return "", "", "", errors.New("owner_user_id is required for user keys")
+	}
+	if keyType != APIKeyTypeUser {
+		ownerUserID = ""
+	}
+	return keyType, customerID, ownerUserID, nil
+}
+
+func (s *Service) validateAPIKeyOwner(ctx context.Context, keyType string, ownerUserID string) error {
+	if keyType != APIKeyTypeUser || isLocalAdminActor(ownerUserID) {
+		return nil
+	}
+	user, err := s.workspaceUserByID(ctx, ownerUserID)
+	if err != nil {
+		return err
+	}
+	if user.Status != WorkspaceUserStatusActive {
+		return errors.New("owner workspace user must be active")
+	}
+	return nil
 }
 
 func (s *Service) RotateAPIKey(ctx context.Context, actor string, id string) (APIKeyCreateResponse, error) {
@@ -867,6 +900,11 @@ func (s *Service) AuthorizeGatewayModel(ctx context.Context, rawKey string, mode
 }
 
 func (s *Service) EnforceGatewayPolicy(ctx context.Context, auth GatewayAuthContext) error {
+	if _, blocked, err := s.repo.FindActiveGatewayRiskBlock(ctx, auth.APIKey.ID, time.Now().UTC()); err != nil {
+		return err
+	} else if blocked {
+		return ErrGatewayRiskBlocked
+	}
 	currentMonth := monthStart(time.Now().UTC())
 	monthlyTokenLimit := auth.effectiveMonthlyTokenLimit()
 	if monthlyTokenLimit > 0 {
@@ -888,6 +926,7 @@ func (s *Service) EnforceGatewayPolicy(ctx context.Context, auth GatewayAuthCont
 			return err
 		}
 		if used >= monthlyBudgetCents {
+			_ = s.syncAPIKeyBudgetAlert(ctx, auth, used)
 			if auth.shouldBlockOverage() {
 				return ErrGatewayBudgetExceeded
 			}
@@ -1029,8 +1068,11 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 			_ = s.audit(ctx, systemActor, "usage_observer_error", "usage_record", record.ID, err.Error())
 		}
 	}
-	if auth.APIKey.MonthlyTokenLimit > 0 && (in.InputTokens > 0 || in.OutputTokens > 0) {
+	if auth.effectiveMonthlyTokenLimit() > 0 && (in.InputTokens > 0 || in.OutputTokens > 0) {
 		_ = s.syncAPIKeyQuotaAlertForAuth(ctx, auth)
+	}
+	if auth.effectiveMonthlyBudgetCents() > 0 && costCents > 0 {
+		_ = s.syncAPIKeyBudgetAlertForAuth(ctx, auth)
 	}
 	_ = s.syncGatewayErrorRateAlert(ctx, auth)
 	return nil

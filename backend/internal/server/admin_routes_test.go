@@ -328,7 +328,7 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 		t.Fatalf("cost allocation row mismatch: %+v", costResp.Data.Rows)
 	}
 
-	costBadReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/cost-allocation?dimension=department", nil)
+	costBadReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/cost-allocation?dimension=project", nil)
 	costBadRec := httptest.NewRecorder()
 	handler.ServeHTTP(costBadRec, costBadReq)
 	if costBadRec.Code != http.StatusBadRequest {

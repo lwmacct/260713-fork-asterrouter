@@ -22,6 +22,14 @@ type SMTPMailer struct {
 }
 
 func (m SMTPMailer) Send(ctx context.Context, to, subject, text string) error {
+	return m.send(ctx, to, subject, "text/plain", text)
+}
+
+func (m SMTPMailer) SendHTML(ctx context.Context, to, subject, html string) error {
+	return m.send(ctx, to, subject, "text/html", html)
+}
+
+func (m SMTPMailer) send(ctx context.Context, to, subject, contentType, body string) error {
 	cfg := m.Config
 	if strings.TrimSpace(cfg.Host) == "" || cfg.Port < 1 || strings.TrimSpace(cfg.From) == "" {
 		return errors.New("SMTP is not configured")
@@ -62,7 +70,7 @@ func (m SMTPMailer) Send(ctx context.Context, to, subject, text string) error {
 	if err != nil {
 		return err
 	}
-	message := "From: " + cfg.From + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + text
+	message := "From: " + cfg.From + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: " + contentType + "; charset=UTF-8\r\n\r\n" + body
 	if _, err := writer.Write([]byte(message)); err != nil {
 		_ = writer.Close()
 		return err

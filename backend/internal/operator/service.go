@@ -14,12 +14,23 @@ import (
 )
 
 type Service struct {
-	repo    Repository
-	control *controlplane.Service
+	repo               Repository
+	control            *controlplane.Service
+	riskConfigProvider func(context.Context) (RiskRuntimeConfig, error)
+}
+
+type RiskRuntimeConfig struct {
+	Enabled      bool
+	AutoBlock    bool
+	BlockTimeout time.Duration
 }
 
 func NewService(repo Repository, control *controlplane.Service) *Service {
 	return &Service{repo: repo, control: control}
+}
+
+func (s *Service) SetRiskConfigProvider(provider func(context.Context) (RiskRuntimeConfig, error)) {
+	s.riskConfigProvider = provider
 }
 func (s *Service) Health(ctx context.Context) error { return s.repo.Health(ctx) }
 
@@ -247,6 +258,9 @@ func (s *Service) Usage(ctx context.Context, query controlplane.UsageQuery) (con
 // balance debit. The gateway remains unaware of operator pricing; it only
 // publishes the durable usage record to this observer.
 func (s *Service) OnGatewayUsage(ctx context.Context, record controlplane.UsageRecord) error {
+	if err := s.evaluateRiskRules(ctx, record); err != nil {
+		return err
+	}
 	if record.CustomerID == "" || record.Status != "forwarded" {
 		return nil
 	}
@@ -300,6 +314,68 @@ func (s *Service) OnGatewayUsage(ctx context.Context, record controlplane.UsageR
 	return err
 }
 
+func (s *Service) evaluateRiskRules(ctx context.Context, record controlplane.UsageRecord) error {
+	if s.riskConfigProvider == nil || s.control == nil || record.APIKeyID == "" {
+		return nil
+	}
+	config, err := s.riskConfigProvider(ctx)
+	if err != nil || !config.Enabled {
+		return err
+	}
+	rules, err := s.repo.ListRiskRules(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		if rule.Status != StatusActive || rule.Threshold <= 0 || rule.WindowMins <= 0 {
+			continue
+		}
+		report, err := s.control.UsageReportQuery(ctx, controlplane.UsageQuery{APIKeyID: record.APIKeyID, CreatedFrom: time.Now().UTC().Add(-time.Duration(rule.WindowMins) * time.Minute)})
+		if err != nil {
+			return err
+		}
+		value, supported := riskRuleValue(rule.RuleType, rule.WindowMins, report)
+		if rule.RuleType == "error_rate" && report.TotalRequests < 10 {
+			continue
+		}
+		if supported && value >= rule.Threshold {
+			reason := fmt.Sprintf("%s reached %.2f (threshold %.2f)", rule.RuleType, value, rule.Threshold)
+			if rule.Action == "review" {
+				if err := s.control.RecordRiskRuleAlert(ctx, record.APIKeyID, rule.ID, rule.Name, reason, value, rule.Threshold); err != nil {
+					return err
+				}
+				continue
+			}
+			if rule.Action == "block" && config.AutoBlock && config.BlockTimeout > 0 {
+				if err := s.control.BlockAPIKey(ctx, record.APIKeyID, rule.ID, reason, time.Now().UTC().Add(config.BlockTimeout)); err != nil {
+					return err
+				}
+				s.audit(ctx, "risk_block", record.APIKeyID, reason)
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func riskRuleValue(ruleType string, windowMins int, report controlplane.UsageReport) (float64, bool) {
+	switch strings.TrimSpace(ruleType) {
+	case "rpm":
+		return float64(report.TotalRequests) / float64(windowMins), true
+	case "tokens":
+		return float64(report.TotalTokens), true
+	case "spend":
+		return float64(report.TotalCostCents), true
+	case "error_rate":
+		if report.TotalRequests == 0 {
+			return 0, true
+		}
+		return float64(report.ErrorRequests) * 100 / float64(report.TotalRequests), true
+	default:
+		return 0, false
+	}
+}
+
 func selectPricingRule(rules []PricingRule, planID, model string) (PricingRule, bool) {
 	var selected PricingRule
 	bestScore := -1
@@ -351,6 +427,9 @@ func (s *Service) SavePlan(ctx context.Context, id string, req PlanRequest) (Pla
 	}
 	if req.MonthlyFeeCents < 0 || req.IncludedTokens < 0 || req.MonthlyLimitCents < 0 {
 		return Plan{}, errors.New("plan limits must be greater than or equal to 0")
+	}
+	if req.MonthlyFeeCents != 0 {
+		return Plan{}, errors.New("recurring fees are not supported; use enterprise budget limits instead")
 	}
 	mult := req.RateMultiplier
 	if mult == 0 {
@@ -473,7 +552,20 @@ func (s *Service) ApplyBalanceEntry(ctx context.Context, actor string, req Balan
 	}
 	kind := strings.TrimSpace(req.Kind)
 	if kind == "" {
-		kind = "adjustment"
+		kind = "cost_correction"
+	}
+	switch kind {
+	case "allocation_increase":
+		if req.AmountCents < 0 {
+			return BalanceEntry{}, errors.New("allocation_increase amount must be positive")
+		}
+	case "allocation_decrease":
+		if req.AmountCents > 0 {
+			return BalanceEntry{}, errors.New("allocation_decrease amount must be negative")
+		}
+	case "cost_correction":
+	default:
+		return BalanceEntry{}, errors.New("kind must be allocation_increase, allocation_decrease, or cost_correction")
 	}
 	v := BalanceEntry{ID: "bal_" + randomID(), CustomerID: req.CustomerID, Kind: kind, AmountCents: req.AmountCents, Reference: strings.TrimSpace(req.Reference), Note: strings.TrimSpace(req.Note), Actor: actor, CreatedAt: time.Now().UTC()}
 	result, err := s.repo.ApplyBalanceEntry(ctx, v)
@@ -490,6 +582,12 @@ func (s *Service) ListRiskRules(ctx context.Context) ([]RiskRule, error) {
 func (s *Service) SaveRiskRule(ctx context.Context, id string, req RiskRuleRequest) (RiskRule, error) {
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.RuleType) == "" || strings.TrimSpace(req.Action) == "" {
 		return RiskRule{}, errors.New("name, rule_type, and action are required")
+	}
+	if !allowedValue(strings.TrimSpace(req.RuleType), "rpm", "tokens", "spend", "error_rate") {
+		return RiskRule{}, errors.New("rule_type must be rpm, tokens, spend, or error_rate")
+	}
+	if !allowedValue(strings.TrimSpace(req.Action), "review", "block") {
+		return RiskRule{}, errors.New("action must be review or block")
 	}
 	if req.Threshold < 0 || req.WindowMins < 1 {
 		return RiskRule{}, errors.New("threshold must be non-negative and window_minutes must be positive")
@@ -520,6 +618,14 @@ func (s *Service) SaveRiskRule(ctx context.Context, id string, req RiskRuleReque
 }
 func (s *Service) DeleteRiskRule(ctx context.Context, id string) error {
 	return s.repo.DeleteRiskRule(ctx, id)
+}
+
+func (s *Service) ListRiskBlocks(ctx context.Context) ([]controlplane.GatewayRiskBlock, error) {
+	return s.control.ListActiveGatewayRiskBlocks(ctx)
+}
+
+func (s *Service) ClearRiskBlock(ctx context.Context, actor, apiKeyID string) error {
+	return s.control.ClearGatewayRiskBlock(ctx, actor, apiKeyID)
 }
 
 func (s *Service) ListNotices(ctx context.Context) ([]Notice, error) { return s.repo.ListNotices(ctx) }
@@ -578,6 +684,15 @@ func normalizeStatus(value string) (string, error) {
 		return "", errors.New("status must be active or disabled")
 	}
 	return value, nil
+}
+
+func allowedValue(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 func findByID[T interface {
 	CustomerGroup | Customer | Plan | PricingRule | RiskRule | Notice

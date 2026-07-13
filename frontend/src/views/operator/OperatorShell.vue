@@ -8,7 +8,7 @@ const navGroups = [
     items: [{ to: '/operator/overview', label: 'operator.overview', icon: Gauge }]
   },
   {
-    label: 'nav.billing',
+    label: 'operatorDomain.resourceGovernance',
     items: [
       { to: '/operator/customers', label: 'operatorDomain.customers', icon: UsersRound },
       { to: '/operator/customer-keys', label: 'operatorDomain.keyList', icon: KeyRound },

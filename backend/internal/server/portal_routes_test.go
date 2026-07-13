@@ -79,6 +79,21 @@ func TestPortalWorkspaceAndAPIKeyRoutes(t *testing.T) {
 	}
 }
 
+func TestPortalChannelVisibilityOnlyHidesModelCatalog(t *testing.T) {
+	workspace := controlplane.PortalWorkspace{
+		Models:  []string{"enterprise-chat"},
+		APIKeys: []controlplane.APIKeyRecord{{ID: "key_1"}},
+		Alerts:  []controlplane.AlertEvent{{ID: "alert_1"}},
+	}
+	applyPortalChannelVisibility(&workspace, false)
+	if workspace.Models != nil {
+		t.Fatalf("models must be hidden: %+v", workspace.Models)
+	}
+	if len(workspace.APIKeys) != 1 || len(workspace.Alerts) != 1 {
+		t.Fatalf("non-channel portal data must be preserved: %+v", workspace)
+	}
+}
+
 func loginForTest(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"secret"}`))

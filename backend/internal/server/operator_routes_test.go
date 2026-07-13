@@ -15,10 +15,10 @@ import (
 func TestOperatorBusinessLifecycle(t *testing.T) {
 	handler := newTestHandler(t, config.Config{})
 	group := operatorPost[operatorcore.CustomerGroup](t, handler, "/api/v1/operator/customer-groups", `{"name":"Standard","status":"active"}`)
-	plan := operatorPost[operatorcore.Plan](t, handler, "/api/v1/operator/plans", `{"name":"Starter","monthly_fee_cents":1000,"included_tokens":1000000,"rate_multiplier":1,"status":"active"}`)
+	plan := operatorPost[operatorcore.Plan](t, handler, "/api/v1/operator/plans", `{"name":"Starter","included_tokens":1000000,"monthly_limit_cents":1000,"rate_multiplier":1,"status":"active"}`)
 	customerBody := `{"name":"Customer A","email":"a@example.com","group_id":"` + group.ID + `","plan_id":"` + plan.ID + `","credit_cents":500,"status":"active"}`
 	customer := operatorPost[operatorcore.Customer](t, handler, "/api/v1/operator/customers", customerBody)
-	entry := operatorPost[operatorcore.BalanceEntry](t, handler, "/api/v1/operator/balance-entries", `{"customer_id":"`+customer.ID+`","kind":"recharge","amount_cents":2500,"note":"manual recharge"}`)
+	entry := operatorPost[operatorcore.BalanceEntry](t, handler, "/api/v1/operator/balance-entries", `{"customer_id":"`+customer.ID+`","kind":"allocation_increase","amount_cents":2500,"note":"initial allocation"}`)
 	if entry.BalanceAfter != 2500 {
 		t.Fatalf("balance = %+v", entry)
 	}

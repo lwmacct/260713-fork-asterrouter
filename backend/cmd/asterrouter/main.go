@@ -72,10 +72,11 @@ func main() {
 		log.Fatalf("load settings: %v", err)
 	}
 	oidcService, err := auth.NewOIDCService(auth.OIDCConfig{
-		Enabled:     adminSettings.OIDCEnabled,
-		IssuerURL:   adminSettings.OIDCIssuerURL,
-		ClientID:    adminSettings.OIDCClientID,
-		RedirectURL: strings.TrimRight(adminSettings.PublicBaseURL, "/") + "/api/v1/auth/oidc/callback",
+		Enabled:              adminSettings.OIDCEnabled,
+		RequireVerifiedEmail: adminSettings.OIDCRequireVerifiedEmail,
+		IssuerURL:            adminSettings.OIDCIssuerURL,
+		ClientID:             adminSettings.OIDCClientID,
+		RedirectURL:          strings.TrimRight(adminSettings.PublicBaseURL, "/") + "/api/v1/auth/oidc/callback",
 	})
 	if err != nil {
 		log.Fatalf("initialize oidc: %v", err)
@@ -93,6 +94,30 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize feishu login: %v", err)
 	}
+	githubSecret, googleSecret, err := settingsService.SocialOAuthSecrets(context.Background())
+	if err != nil {
+		log.Fatalf("load social OAuth secrets: %v", err)
+	}
+	githubOAuthService, err := auth.NewSocialOAuthService(auth.SocialOAuthConfig{Provider: "github", Enabled: adminSettings.GitHubOAuthEnabled, ClientID: adminSettings.GitHubOAuthClientID, ClientSecret: githubSecret, RedirectURL: strings.TrimRight(adminSettings.PublicBaseURL, "/") + "/api/v1/auth/oauth/github/callback"})
+	if err != nil {
+		log.Fatalf("initialize GitHub OAuth: %v", err)
+	}
+	googleOAuthService, err := auth.NewSocialOAuthService(auth.SocialOAuthConfig{Provider: "google", Enabled: adminSettings.GoogleOAuthEnabled, ClientID: adminSettings.GoogleOAuthClientID, ClientSecret: googleSecret, RedirectURL: strings.TrimRight(adminSettings.PublicBaseURL, "/") + "/api/v1/auth/oauth/google/callback"})
+	if err != nil {
+		log.Fatalf("initialize Google OAuth: %v", err)
+	}
+	dingTalkSecret, err := settingsService.DingTalkSecret(context.Background())
+	if err != nil {
+		log.Fatalf("load DingTalk secret: %v", err)
+	}
+	dingTalkService, err := auth.NewDingTalkService(auth.DingTalkConfig{Enabled: adminSettings.DingTalkEnabled, ClientID: adminSettings.DingTalkClientID, ClientSecret: dingTalkSecret, RedirectURL: strings.TrimRight(adminSettings.PublicBaseURL, "/") + "/api/v1/auth/dingtalk/callback"})
+	if err != nil {
+		log.Fatalf("initialize DingTalk login: %v", err)
+	}
+	controlService := controlplane.NewService(controlRepo, "/v1", cfg.SecretKey)
+	if err := controlService.EnsureSeedData(context.Background()); err != nil {
+		log.Fatalf("seed control plane repository: %v", err)
+	}
 	authService := auth.NewService(auth.Config{
 		Username:         cfg.AdminUsername,
 		Password:         cfg.AdminPassword,
@@ -100,12 +125,40 @@ func main() {
 		SecretKey:        cfg.SecretKey,
 		DemoMode:         cfg.DemoMode,
 	})
-	controlService := controlplane.NewService(controlRepo, "/v1", cfg.SecretKey)
-	operatorService := operatorcore.NewService(operatorRepo, controlService)
-	controlService.SetUsageObserver(operatorService)
-	if err := controlService.EnsureSeedData(context.Background()); err != nil {
-		log.Fatalf("seed control plane repository: %v", err)
+	localAdminUsername, localAdminPassword := authService.BootstrapIdentity()
+	localAdminDefaults := controlplane.WorkspaceUserDefaults{BalanceCents: adminSettings.DefaultBalanceCents, ConcurrencyLimit: adminSettings.DefaultConcurrency, RPMLimit: adminSettings.DefaultRPM}
+	localAdmin, err := controlService.EnsureLocalAdmin(context.Background(), localAdminUsername, localAdminPassword, localAdminDefaults)
+	if err != nil {
+		log.Fatalf("initialize local administrator account: %v", err)
 	}
+	authService.SetPasswordHash(localAdmin.PasswordHash)
+	operatorService := operatorcore.NewService(operatorRepo, controlService)
+	operatorService.SetRiskConfigProvider(func(ctx context.Context) (operatorcore.RiskRuntimeConfig, error) {
+		current, err := settingsService.Admin(ctx)
+		if err != nil {
+			return operatorcore.RiskRuntimeConfig{}, err
+		}
+		return operatorcore.RiskRuntimeConfig{
+			Enabled:      current.RiskControlEnabled,
+			AutoBlock:    current.CyberSessionBlockEnabled,
+			BlockTimeout: time.Duration(current.CyberSessionBlockTTLSeconds) * time.Second,
+		}, nil
+	})
+	controlService.SetUsageObserver(operatorService)
+	monitorCtx, stopChannelMonitor := context.WithCancel(context.Background())
+	defer stopChannelMonitor()
+	go controlService.RunChannelMonitor(monitorCtx, func(ctx context.Context) (controlplane.ChannelMonitorConfig, error) {
+		current, err := settingsService.Admin(ctx)
+		if err != nil {
+			return controlplane.ChannelMonitorConfig{}, err
+		}
+		return controlplane.ChannelMonitorConfig{
+			Enabled:  current.ChannelMonitorEnabled,
+			Interval: time.Duration(current.ChannelMonitorIntervalSeconds) * time.Second,
+		}, nil
+	}, func(operation string, err error) {
+		log.Printf("channel monitor: %s: %v", operation, err)
+	})
 	pluginService := plugins.NewServiceWithOptions(pluginRepo, plugins.ServiceOptions{
 		SecretKey: cfg.SecretKey,
 		OfficialCatalog: plugins.OfficialCatalogConfig{
@@ -164,18 +217,24 @@ func main() {
 		DiagnosticDir:      cfg.DiagnosticDir,
 		MaxArchiveBytes:    cfg.MaxArchiveBytes,
 	})
+	go server.RunBackupScheduler(monitorCtx, systemService, settingsService, controlService, func(err error) {
+		log.Printf("backup scheduler: %v", err)
+	})
 
 	router := server.New(server.Options{
-		Config:          cfg,
-		AuthService:     authService,
-		OIDCService:     oidcService,
-		FeishuService:   feishuService,
-		SettingsService: settingsService,
-		ControlService:  controlService,
-		OperatorService: operatorService,
-		PluginService:   pluginService,
-		SystemService:   systemService,
-		ExportJobStore:  exportJobStore,
+		Config:             cfg,
+		AuthService:        authService,
+		OIDCService:        oidcService,
+		FeishuService:      feishuService,
+		GitHubOAuthService: githubOAuthService,
+		GoogleOAuthService: googleOAuthService,
+		DingTalkService:    dingTalkService,
+		SettingsService:    settingsService,
+		ControlService:     controlService,
+		OperatorService:    operatorService,
+		PluginService:      pluginService,
+		SystemService:      systemService,
+		ExportJobStore:     exportJobStore,
 	})
 
 	httpServer := &http.Server{
@@ -194,6 +253,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	stopChannelMonitor()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { SystemApplyResult, SystemArchiveInfo, SystemRestoreResult, SystemUpdateInfo } from '@/types'
+import type { S3BackupObject, SystemApplyResult, SystemArchiveInfo, SystemRestoreResult, SystemUpdateInfo } from '@/types'
 
 export async function checkSystemUpdates(force = false): Promise<SystemUpdateInfo> {
   const response = await apiClient.get<SystemUpdateInfo>('/admin/system/check-updates', {
@@ -31,6 +31,23 @@ export async function listSystemBackups(): Promise<SystemArchiveInfo[]> {
 export async function createSystemBackup(): Promise<SystemArchiveInfo> {
   const response = await apiClient.post<SystemArchiveInfo>('/admin/system/backups')
   return response.data
+}
+
+export async function testBackupS3(): Promise<void> {
+  await apiClient.post('/admin/system/backups/s3/test')
+}
+
+export async function listS3Backups(): Promise<S3BackupObject[]> {
+  return (await apiClient.get<S3BackupObject[]>('/admin/system/backups/s3')).data || []
+}
+
+export async function restoreS3Backup(key: string): Promise<SystemRestoreResult> {
+  return (await apiClient.post<SystemRestoreResult>('/admin/system/backups/s3/restore', { key, confirm: true })).data
+}
+
+export async function downloadS3Backup(backup: S3BackupObject): Promise<void> {
+  const path = `/admin/system/backups/s3/download?key=${encodeURIComponent(backup.key)}`
+  await downloadArchive(path, `${backup.id}.tar.gz`)
 }
 
 export async function restoreSystemBackup(backupID: string): Promise<SystemRestoreResult> {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronDown, Globe2, KeyRound, Laptop, LogOut, Menu, PanelsTopLeft, RadioTower, UserRound } from '@lucide/vue'
+import { ChevronDown, Globe2, KeyRound, Laptop, LogOut, Menu, PanelsTopLeft, RadioTower, UserCog, UserRound } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -30,13 +30,15 @@ const pageDescription = computed(() => {
   return typeof key === 'string' ? t(key) : app.siteSubtitle
 })
 
-const userInitials = computed(() => auth.user?.username.slice(0, 2).toUpperCase() || 'AR')
+const userInitials = computed(() => (auth.user?.display_name || auth.user?.email || auth.user?.username || 'AR').slice(0, 2).toUpperCase())
 const enabledProfiles = computed(() => app.publicSettings?.enabled_profiles || [])
 const demoMode = computed(() => Boolean(app.publicSettings?.demo_mode))
 const isConsoleSurface = computed(() => route.path.startsWith('/console'))
 const isOperatorSurface = computed(() => route.path.startsWith('/operator'))
+const isCustomerSurface = computed(() => route.path.startsWith('/customer'))
 const isAdminSurface = computed(() => route.path.startsWith('/admin'))
 const isPortalSurface = computed(() => route.path.startsWith('/portal'))
+const canOperateRelay = computed(() => ['super_admin', 'platform_admin', 'demo_admin'].includes(auth.user?.role || ''))
 
 function changeLocale(event: Event) {
   setLocale((event.target as HTMLSelectElement).value as LocaleCode)
@@ -45,6 +47,12 @@ function changeLocale(event: Event) {
 async function openSurface(path: string) {
   accountOpen.value = false
   await router.push(path)
+}
+
+async function openAccount() {
+	const surface = route.path.split('/')[1]
+	accountOpen.value = false
+	await router.push(`/${['console', 'operator', 'admin', 'portal', 'customer'].includes(surface) ? surface : 'admin'}/account`)
 }
 
 async function logout() {
@@ -61,7 +69,7 @@ function closeOnOutsideClick(event: MouseEvent) {
 
 onMounted(() => {
   document.addEventListener('click', closeOnOutsideClick)
-  if (auth.isAuthenticated && !auth.user) {
+	if (auth.isAuthenticated) {
     auth.loadCurrentUser()
   }
 })
@@ -109,9 +117,12 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutsideClick)
           :aria-label="t('nav.accountMenu')"
           @click="accountOpen = !accountOpen"
         >
-          <span class="account-avatar">{{ userInitials }}</span>
+		  <span class="account-avatar">
+			<img v-if="auth.user.avatar_data_url" :src="auth.user.avatar_data_url" alt="" />
+			<template v-else>{{ userInitials }}</template>
+		  </span>
           <span class="account-copy">
-            <strong>{{ auth.user.username }}</strong>
+			<strong>{{ auth.user.display_name || auth.user.username }}</strong>
             <small>{{ auth.user.role }}</small>
           </span>
           <ChevronDown :size="15" />
@@ -119,16 +130,24 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutsideClick)
 
         <div v-if="accountOpen" class="account-dropdown">
           <div class="account-dropdown-header">
-            <strong>{{ auth.user.username }}</strong>
+			<strong>{{ auth.user.display_name || auth.user.username }}</strong>
             <span>{{ auth.user.role }}</span>
           </div>
+		  <button type="button" @click="openAccount">
+			<UserCog :size="16" />
+			{{ t('account.title') }}
+		  </button>
           <button v-if="enabledProfiles.includes('personal') && !isConsoleSurface" type="button" @click="openSurface('/console/overview')">
             <Laptop :size="16" />
             {{ t('nav.console') }}
           </button>
-          <button v-if="enabledProfiles.includes('relay_operator') && !isOperatorSurface" type="button" @click="openSurface('/operator/overview')">
+          <button v-if="enabledProfiles.includes('relay_operator') && canOperateRelay && !isOperatorSurface" type="button" @click="openSurface('/operator/overview')">
             <RadioTower :size="16" />
             {{ t('nav.operator') }}
+          </button>
+          <button v-if="enabledProfiles.includes('relay_operator') && !isCustomerSurface" type="button" @click="openSurface('/customer/overview')">
+            <UserRound :size="16" />
+            {{ t('nav.customer') }}
           </button>
           <button v-if="enabledProfiles.includes('enterprise') && !isAdminSurface" type="button" @click="openSurface('/admin/dashboard')">
             <PanelsTopLeft :size="16" />

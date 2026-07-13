@@ -291,9 +291,18 @@ func registerAPIKeyAdminRoutes(admin *gin.RouterGroup, control *controlplane.Ser
 			httpx.Error(c, http.StatusInternalServerError, 1105, err.Error())
 			return
 		}
-		httpx.OK(c, data)
+		users, err := control.ListWorkspaceUsers(c.Request.Context())
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1105, err.Error())
+			return
+		}
+		httpx.OK(c, filterAPIKeysForAccess(data, users, principalAccess(c)))
 	})
 	admin.GET("/api-keys/:id/policy-explanation", func(c *gin.Context) {
+		if err := requireAPIKeyInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		data, err := control.ExplainGatewayPolicyForAPIKey(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1507, err.Error())
@@ -307,6 +316,16 @@ func registerAPIKeyAdminRoutes(admin *gin.RouterGroup, control *controlplane.Ser
 			httpx.Error(c, http.StatusBadRequest, 1506, "invalid api key payload")
 			return
 		}
+		if access := principalAccess(c); !access.Global && len(access.DepartmentIDs) > 0 {
+			if req.KeyType != controlplane.APIKeyTypeUser || req.OwnerUserID == "" {
+				httpx.Error(c, http.StatusForbidden, 1451, "department-scoped administrators can only create owned user keys")
+				return
+			}
+			if err := requireUserInAccess(c.Request.Context(), control, req.OwnerUserID, access); err != nil {
+				httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+				return
+			}
+		}
 		data, err := control.CreateAPIKey(c.Request.Context(), actor(c), req)
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1507, err.Error())
@@ -315,6 +334,10 @@ func registerAPIKeyAdminRoutes(admin *gin.RouterGroup, control *controlplane.Ser
 		httpx.OK(c, data)
 	})
 	admin.PUT("/api-keys/:id", func(c *gin.Context) {
+		if err := requireAPIKeyInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		var req controlplane.APIKeyUpdateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1506, "invalid api key payload")
@@ -328,6 +351,10 @@ func registerAPIKeyAdminRoutes(admin *gin.RouterGroup, control *controlplane.Ser
 		httpx.OK(c, data)
 	})
 	admin.POST("/api-keys/:id/rotate", func(c *gin.Context) {
+		if err := requireAPIKeyInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		data, err := control.RotateAPIKey(c.Request.Context(), actor(c), c.Param("id"))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1507, err.Error())
@@ -336,6 +363,10 @@ func registerAPIKeyAdminRoutes(admin *gin.RouterGroup, control *controlplane.Ser
 		httpx.OK(c, data)
 	})
 	admin.POST("/api-keys/:id/disable", func(c *gin.Context) {
+		if err := requireAPIKeyInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		if err := control.DisableAPIKey(c.Request.Context(), actor(c), c.Param("id")); err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1508, err.Error())
 			return
@@ -370,7 +401,12 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		writeCSV(c, "audit-logs.csv", auditLogCSVRows(data))
 	})
 	admin.GET("/usage", func(c *gin.Context) {
-		data, err := control.UsageReportQuery(c.Request.Context(), usageQuery(c))
+		query, err := scopeUsageQuery(c.Request.Context(), control, principalAccess(c), usageQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1107, err.Error())
+			return
+		}
+		data, err := control.UsageReportQuery(c.Request.Context(), query)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1107, err.Error())
 			return
@@ -378,7 +414,13 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		httpx.OK(c, data)
 	})
 	admin.GET("/usage/export", func(c *gin.Context) {
-		data, err := collectUsageRecordsForExport(c, control)
+		query, err := scopeUsageQuery(c.Request.Context(), control, principalAccess(c), usageQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1107, err.Error())
+			return
+		}
+		totalLimit, baseOffset := exportWindow(c)
+		data, err := collectUsageRecordsForExportQuery(c.Request.Context(), control, query, totalLimit, baseOffset)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1107, err.Error())
 			return
@@ -386,7 +428,12 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		writeCSV(c, "usage-records.csv", usageCSVRows(data))
 	})
 	admin.GET("/cost-allocation", func(c *gin.Context) {
-		data, err := control.CostAllocationReportQuery(c.Request.Context(), c.Query("dimension"), usageQuery(c))
+		query, err := scopeUsageQuery(c.Request.Context(), control, principalAccess(c), usageQuery(c))
+		if err != nil {
+			writeCostAllocationError(c, err)
+			return
+		}
+		data, err := control.CostAllocationReportQuery(c.Request.Context(), c.Query("dimension"), query)
 		if err != nil {
 			writeCostAllocationError(c, err)
 			return
@@ -394,7 +441,11 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		httpx.OK(c, data)
 	})
 	admin.GET("/cost-allocation/export", func(c *gin.Context) {
-		query := usageQuery(c)
+		query, err := scopeUsageQuery(c.Request.Context(), control, principalAccess(c), usageQuery(c))
+		if err != nil {
+			writeCostAllocationError(c, err)
+			return
+		}
 		query.Limit, query.Offset = exportWindow(c)
 		data, err := control.CostAllocationReportQuery(c.Request.Context(), c.Query("dimension"), query)
 		if err != nil {
@@ -404,7 +455,12 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		writeCSV(c, "cost-allocation.csv", costAllocationCSVRows(data))
 	})
 	admin.GET("/gateway-traces", func(c *gin.Context) {
-		data, err := control.ListGatewayTracesQuery(c.Request.Context(), gatewayTraceQuery(c))
+		query, err := scopeGatewayTraceQuery(c.Request.Context(), control, principalAccess(c), gatewayTraceQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
+			return
+		}
+		data, err := control.ListGatewayTracesQuery(c.Request.Context(), query)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
 			return
@@ -412,7 +468,12 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		httpx.OK(c, data)
 	})
 	admin.GET("/gateway-traces/summary", func(c *gin.Context) {
-		data, err := control.GatewayTraceSummaryQuery(c.Request.Context(), gatewayTraceQuery(c))
+		query, err := scopeGatewayTraceQuery(c.Request.Context(), control, principalAccess(c), gatewayTraceQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
+			return
+		}
+		data, err := control.GatewayTraceSummaryQuery(c.Request.Context(), query)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
 			return
@@ -420,7 +481,13 @@ func registerObservabilityAdminRoutes(admin *gin.RouterGroup, control *controlpl
 		httpx.OK(c, data)
 	})
 	admin.GET("/gateway-traces/export", func(c *gin.Context) {
-		data, err := collectGatewayTracesForExport(c, control)
+		query, err := scopeGatewayTraceQuery(c.Request.Context(), control, principalAccess(c), gatewayTraceQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
+			return
+		}
+		totalLimit, baseOffset := exportWindow(c)
+		data, err := collectGatewayTracesForExportQuery(c.Request.Context(), control, query, totalLimit, baseOffset)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1109, err.Error())
 			return

@@ -485,6 +485,38 @@ func TestCostAllocationReportAggregatesByWorkspaceKeyAndModel(t *testing.T) {
 	}
 }
 
+func TestCostAllocationReportAggregatesByUserAndDepartment(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryRepository(), "/v1", "secret")
+	department, err := svc.CreateDepartment(ctx, "tester", DepartmentRequest{Name: "Engineering", Code: "eng", Status: DepartmentStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := svc.ProvisionOIDCUser(ctx, "https://id.example.test", "subject", "engineer@example.test", "Engineer", "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.CreateAPIKey(ctx, "tester", APIKeyCreateRequest{Name: "Engineer key", KeyType: APIKeyTypeUser, OwnerUserID: user.ID, ModelAllowlist: []string{"model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := svc.AuthorizeGatewayModel(ctx, created.Key, "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", InputTokens: 10, CostCents: 25}); err != nil {
+		t.Fatal(err)
+	}
+	userReport, err := svc.CostAllocationReportQuery(ctx, CostAllocationByUser, UsageQuery{})
+	if err != nil || len(userReport.Rows) != 1 || userReport.Rows[0].ResourceID != user.ID || userReport.Rows[0].ResourceName != "Engineer" {
+		t.Fatalf("user report=%+v err=%v", userReport, err)
+	}
+	departmentReport, err := svc.CostAllocationReportQuery(ctx, CostAllocationByDepartment, UsageQuery{})
+	if err != nil || len(departmentReport.Rows) != 1 || departmentReport.Rows[0].ResourceID != department.ID || departmentReport.Rows[0].ResourceName != department.Name {
+		t.Fatalf("department report=%+v err=%v", departmentReport, err)
+	}
+}
+
 func TestCreateProviderRequiresAbsoluteURL(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), "/v1")
 	_, err := svc.CreateProvider(context.Background(), "tester", ProviderRequest{

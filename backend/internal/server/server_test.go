@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,6 +53,10 @@ func newAuthTestRuntime(t *testing.T) (http.Handler, *controlplane.Service) {
 	if err := controlService.EnsureSeedData(context.Background()); err != nil {
 		t.Fatalf("EnsureSeedData(): %v", err)
 	}
+	localAdmin, err := controlService.EnsureLocalAdmin(context.Background(), "admin", "secret", controlplane.WorkspaceUserDefaults{ConcurrencyLimit: 5})
+	if err != nil {
+		t.Fatalf("EnsureLocalAdmin(): %v", err)
+	}
 	pluginService := plugins.NewService(plugins.NewMemoryRepository())
 	operatorService := operatorcore.NewService(operatorcore.NewMemoryRepository(), controlService)
 	if err := pluginService.EnsureSeedData(context.Background()); err != nil {
@@ -59,7 +64,7 @@ func newAuthTestRuntime(t *testing.T) (http.Handler, *controlplane.Service) {
 	}
 	return New(Options{
 		Config:          config.Config{},
-		AuthService:     auth.NewService(auth.Config{Username: "admin", Password: "secret", SecretKey: "test-secret"}),
+		AuthService:     auth.NewService(auth.Config{Username: "admin", Password: "secret", PasswordHash: localAdmin.PasswordHash, SecretKey: "test-secret"}),
 		SettingsService: settingsService,
 		ControlService:  controlService,
 		OperatorService: operatorService,
@@ -142,6 +147,45 @@ func TestLoginAllowsAdminSettingsAccess(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginAgreementIsEnforcedAfterPayloadBinding(t *testing.T) {
+	settingsService := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{Version: "test", StorageMode: "memory"})
+	current, err := settingsService.Admin(context.Background())
+	if err != nil {
+		t.Fatalf("Admin(): %v", err)
+	}
+	current.LoginAgreementEnabled = true
+	current.LegalDocuments = []settings.LegalDocument{{ID: "terms", Name: "Terms", Slug: "terms", Content: "Terms"}}
+	if _, err := settingsService.Update(context.Background(), current); err != nil {
+		t.Fatalf("Update(): %v", err)
+	}
+	handler := New(Options{
+		AuthService:     auth.NewService(auth.Config{Username: "admin", Password: "secret", SecretKey: "test-secret"}),
+		SettingsService: settingsService,
+		ControlService:  controlplane.NewService(controlplane.NewMemoryRepository(), "/v1"),
+		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
+	})
+
+	for _, test := range []struct {
+		name     string
+		accepted bool
+		status   int
+	}{
+		{name: "missing acceptance is rejected", accepted: false, status: http.StatusForbidden},
+		{name: "explicit acceptance allows login", accepted: true, status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"username":"admin","password":"secret","agreement_accepted":%t}`, test.accepted)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != test.status {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, test.status, rec.Body.String())
+			}
+		})
 	}
 }
 

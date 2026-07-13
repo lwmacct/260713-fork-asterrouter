@@ -11,7 +11,12 @@ import (
 
 func registerAlertAdminRoutes(admin *gin.RouterGroup, control *controlplane.Service) {
 	admin.GET("/alerts", func(c *gin.Context) {
-		data, err := control.ListAlertEventsQuery(c.Request.Context(), alertQuery(c))
+		query, err := scopeAlertQuery(c.Request.Context(), control, principalAccess(c), alertQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1112, err.Error())
+			return
+		}
+		data, err := control.ListAlertEventsQuery(c.Request.Context(), query)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1112, err.Error())
 			return
@@ -19,7 +24,12 @@ func registerAlertAdminRoutes(admin *gin.RouterGroup, control *controlplane.Serv
 		httpx.OK(c, data)
 	})
 	admin.GET("/alerts/summary", func(c *gin.Context) {
-		data, err := control.AlertSummaryQuery(c.Request.Context(), alertQuery(c))
+		query, err := scopeAlertQuery(c.Request.Context(), control, principalAccess(c), alertQuery(c))
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, 1112, err.Error())
+			return
+		}
+		data, err := control.AlertSummaryQuery(c.Request.Context(), query)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, 1112, err.Error())
 			return
@@ -27,6 +37,10 @@ func registerAlertAdminRoutes(admin *gin.RouterGroup, control *controlplane.Serv
 		httpx.OK(c, data)
 	})
 	admin.POST("/alerts/:id/acknowledge", func(c *gin.Context) {
+		if err := requireAlertInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		data, err := control.AcknowledgeAlert(c.Request.Context(), actor(c), c.Param("id"))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1520, err.Error())
@@ -35,6 +49,10 @@ func registerAlertAdminRoutes(admin *gin.RouterGroup, control *controlplane.Serv
 		httpx.OK(c, data)
 	})
 	admin.POST("/alerts/:id/resolve", func(c *gin.Context) {
+		if err := requireAlertInAccess(c.Request.Context(), control, c.Param("id"), principalAccess(c)); err != nil {
+			httpx.Error(c, http.StatusForbidden, 1451, err.Error())
+			return
+		}
 		data, err := control.ResolveAlert(c.Request.Context(), actor(c), c.Param("id"))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1521, err.Error())

@@ -9,12 +9,10 @@ import {
   getPortalWorkspace,
   rotatePortalAPIKey
 } from '@/api/control'
-import { useAppStore } from '@/stores/app'
 import type { APIKeyCreateRequest, APIKeyRecord, PortalWorkspace } from '@/types'
 
 const { t } = useI18n()
 const route = useRoute()
-const app = useAppStore()
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -28,13 +26,6 @@ const form = reactive<APIKeyCreateRequest>({
   qps_limit: 0,
   monthly_token_limit: 0,
   expires_at: ''
-})
-
-const baseUrl = computed(() => {
-  const settings = app.publicSettings
-  const base = settings?.public_base_url || window.location.origin
-  const path = workspace.value?.gateway_path || settings?.gateway_base_path || '/v1'
-  return `${base.replace(/\/$/, '')}${path}`
 })
 
 const apiKeys = computed(() => workspace.value?.api_keys || [])
@@ -204,26 +195,6 @@ onMounted(load)
             <small>{{ workspace?.principal || '-' }}</small>
           </div>
         </article>
-      </section>
-
-      <section v-if="activePanel === 'overview' || activePanel === 'integration'" class="panel section-gap">
-        <div class="panel-header split-header">
-          <div>
-            <h2>{{ t('portal.integrationGuide') }}</h2>
-            <p>{{ t('portal.gatewayHelp') }}</p>
-          </div>
-          <Code2 :size="18" />
-        </div>
-        <div class="panel-body">
-          <input :value="baseUrl" readonly />
-          <pre class="code-block">curl {{ baseUrl }}/chat/completions \
-  -H "Authorization: Bearer $ASTERROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"{{ modelOptions[0] || 'gpt-4o-mini' }}","messages":[{"role":"user","content":"ping"}]}'</pre>
-          <div class="chip-list">
-            <span v-for="model in modelOptions" :key="model" class="pill">{{ model }}</span>
-          </div>
-        </div>
       </section>
 
       <section v-if="activePanel === 'overview'" class="grid section-gap">

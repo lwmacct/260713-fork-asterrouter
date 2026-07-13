@@ -20,10 +20,22 @@ type Repository interface {
 	SaveProviderHealthCheck(ctx context.Context, check ProviderHealthCheck) error
 	ListDepartments(ctx context.Context) ([]Department, error)
 	SaveDepartment(ctx context.Context, department Department) error
+	ListOrganizationGroups(ctx context.Context) ([]OrganizationGroup, error)
+	SaveOrganizationGroup(ctx context.Context, group OrganizationGroup) error
+	DeleteOrganizationGroup(ctx context.Context, id string) error
 	ListGovernancePolicies(ctx context.Context) ([]GovernancePolicy, error)
 	SaveGovernancePolicy(ctx context.Context, policy GovernancePolicy) error
 	ListWorkspaceUsers(ctx context.Context) ([]WorkspaceUser, error)
 	SaveWorkspaceUser(ctx context.Context, user WorkspaceUser) error
+	GetCustomerWallet(ctx context.Context, userID string) (CustomerWallet, error)
+	ListCustomerBillingEntries(ctx context.Context, query CustomerBillingQuery) ([]CustomerBillingEntry, int, error)
+	ListAvailableCustomerVouchers(ctx context.Context, userID string, now time.Time) ([]CustomerVoucher, error)
+	RedeemCustomerCode(ctx context.Context, request CustomerCodeRedemption) (CustomerBillingEntry, error)
+	SaveCustomerRedemptionCode(ctx context.Context, code CustomerRedemptionCode) error
+	ListAuthIdentities(ctx context.Context, userID string) ([]AuthIdentity, error)
+	FindAuthIdentity(ctx context.Context, issuer, subject string) (AuthIdentity, bool, error)
+	SaveAuthIdentity(ctx context.Context, identity AuthIdentity) error
+	DeleteAuthIdentity(ctx context.Context, id string) error
 	ListRoleBindings(ctx context.Context) ([]RoleBinding, error)
 	SaveRoleBinding(ctx context.Context, binding RoleBinding) error
 	DeleteRoleBinding(ctx context.Context, id string) error
@@ -44,6 +56,10 @@ type Repository interface {
 	ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error)
 	FindAPIKeyByHash(ctx context.Context, hash string) (APIKeyRecord, bool, error)
 	SaveAPIKey(ctx context.Context, key APIKeyRecord) error
+	FindActiveGatewayRiskBlock(ctx context.Context, apiKeyID string, now time.Time) (GatewayRiskBlock, bool, error)
+	ListActiveGatewayRiskBlocks(ctx context.Context, now time.Time) ([]GatewayRiskBlock, error)
+	SaveGatewayRiskBlock(ctx context.Context, block GatewayRiskBlock) error
+	DeleteGatewayRiskBlock(ctx context.Context, apiKeyID string) error
 	DisableAPIKey(ctx context.Context, id string, updatedAt time.Time) error
 	UpdateAPIKeyLastUsed(ctx context.Context, id string, lastUsedAt time.Time) error
 	SaveUsageRecord(ctx context.Context, record UsageRecord) error
@@ -66,6 +82,7 @@ type Repository interface {
 	FindAlertEvent(ctx context.Context, id string) (AlertEvent, bool, error)
 	FindAlertByDedupeKey(ctx context.Context, dedupeKey string) (AlertEvent, bool, error)
 	SaveAlertEvent(ctx context.Context, event AlertEvent) error
+	CleanupRetainedData(ctx context.Context, before time.Time) (RetentionCleanupResult, error)
 	Health(ctx context.Context) error
 	Close() error
 }
@@ -86,8 +103,15 @@ type MemoryRepository struct {
 	providers           map[string]ProviderConnection
 	healthChecks        map[string]ProviderHealthCheck
 	departments         map[string]Department
+	organizationGroups  map[string]OrganizationGroup
 	governancePolicies  map[string]GovernancePolicy
 	workspaceUsers      map[string]WorkspaceUser
+	customerWallets     map[string]CustomerWallet
+	customerEntries     map[string]CustomerBillingEntry
+	customerCodes       map[string]CustomerRedemptionCode
+	customerRedemptions map[string]CustomerRedemption
+	customerVouchers    map[string]CustomerVoucher
+	authIdentities      map[string]AuthIdentity
 	roleBindings        map[string]RoleBinding
 	groups              map[string]RoutingGroup
 	accounts            map[string]ProviderAccount
@@ -96,6 +120,7 @@ type MemoryRepository struct {
 	accountHealthChecks map[string]ProviderAccountHealthCheck
 	modelPricings       map[string]ModelPricing
 	apiKeys             map[string]APIKeyRecord
+	riskBlocks          map[string]GatewayRiskBlock
 	usageRecords        map[string]UsageRecord
 	gatewayTraces       map[string]GatewayTrace
 	auditLogs           map[string]AuditLog
@@ -107,8 +132,15 @@ func NewMemoryRepository() *MemoryRepository {
 		providers:           map[string]ProviderConnection{},
 		healthChecks:        map[string]ProviderHealthCheck{},
 		departments:         map[string]Department{},
+		organizationGroups:  map[string]OrganizationGroup{},
 		governancePolicies:  map[string]GovernancePolicy{},
 		workspaceUsers:      map[string]WorkspaceUser{},
+		customerWallets:     map[string]CustomerWallet{},
+		customerEntries:     map[string]CustomerBillingEntry{},
+		customerCodes:       map[string]CustomerRedemptionCode{},
+		customerRedemptions: map[string]CustomerRedemption{},
+		customerVouchers:    map[string]CustomerVoucher{},
+		authIdentities:      map[string]AuthIdentity{},
 		roleBindings:        map[string]RoleBinding{},
 		groups:              map[string]RoutingGroup{},
 		accounts:            map[string]ProviderAccount{},
@@ -117,6 +149,7 @@ func NewMemoryRepository() *MemoryRepository {
 		accountHealthChecks: map[string]ProviderAccountHealthCheck{},
 		modelPricings:       map[string]ModelPricing{},
 		apiKeys:             map[string]APIKeyRecord{},
+		riskBlocks:          map[string]GatewayRiskBlock{},
 		usageRecords:        map[string]UsageRecord{},
 		gatewayTraces:       map[string]GatewayTrace{},
 		auditLogs:           map[string]AuditLog{},
@@ -287,6 +320,42 @@ func (r *MemoryRepository) SaveAPIKey(_ context.Context, key APIKeyRecord) error
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.apiKeys[key.ID] = key
+	return nil
+}
+
+func (r *MemoryRepository) FindActiveGatewayRiskBlock(_ context.Context, apiKeyID string, now time.Time) (GatewayRiskBlock, bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	block, ok := r.riskBlocks[apiKeyID]
+	return block, ok && block.ExpiresAt.After(now), nil
+}
+
+func (r *MemoryRepository) SaveGatewayRiskBlock(_ context.Context, block GatewayRiskBlock) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if current, ok := r.riskBlocks[block.APIKeyID]; !ok || block.ExpiresAt.After(current.ExpiresAt) {
+		r.riskBlocks[block.APIKeyID] = block
+	}
+	return nil
+}
+
+func (r *MemoryRepository) ListActiveGatewayRiskBlocks(_ context.Context, now time.Time) ([]GatewayRiskBlock, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]GatewayRiskBlock, 0, len(r.riskBlocks))
+	for _, block := range r.riskBlocks {
+		if block.ExpiresAt.After(now) {
+			out = append(out, block)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ExpiresAt.After(out[j].ExpiresAt) })
+	return out, nil
+}
+
+func (r *MemoryRepository) DeleteGatewayRiskBlock(_ context.Context, apiKeyID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.riskBlocks, apiKeyID)
 	return nil
 }
 
@@ -513,6 +582,9 @@ func memoryUsageRecordMatches(record UsageRecord, query UsageQuery) bool {
 	if query.APIKeyID != "" && record.APIKeyID != query.APIKeyID {
 		return false
 	}
+	if len(query.APIKeyIDs) > 0 && !contains(query.APIKeyIDs, record.APIKeyID) {
+		return false
+	}
 	if query.CustomerID != "" && record.CustomerID != query.CustomerID {
 		return false
 	}
@@ -543,6 +615,9 @@ func memoryUsageRecordMatches(record UsageRecord, query UsageQuery) bool {
 
 func memoryGatewayTraceMatches(trace GatewayTrace, query GatewayTraceQuery) bool {
 	if query.APIKeyID != "" && trace.APIKeyID != query.APIKeyID {
+		return false
+	}
+	if len(query.APIKeyIDs) > 0 && !contains(query.APIKeyIDs, trace.APIKeyID) {
 		return false
 	}
 	if query.Model != "" && trace.Model != query.Model {
@@ -615,6 +690,19 @@ func appendExactFilter(clauses *[]string, args *[]any, column string, value stri
 	*clauses = append(*clauses, fmt.Sprintf("%s = $%d", column, len(*args)))
 }
 
+func appendAnyExactFilter(clauses *[]string, args *[]any, column string, values []string) {
+	values = cleanStringList(values)
+	if len(values) == 0 {
+		return
+	}
+	placeholders := make([]string, 0, len(values))
+	for _, value := range values {
+		*args = append(*args, value)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(*args)))
+	}
+	*clauses = append(*clauses, column+" IN ("+strings.Join(placeholders, ",")+")")
+}
+
 func appendTimeFilter(clauses *[]string, args *[]any, column string, operator string, value time.Time) {
 	if value.IsZero() {
 		return
@@ -625,6 +713,7 @@ func appendTimeFilter(clauses *[]string, args *[]any, column string, operator st
 
 func appendUsageRecordFilters(clauses *[]string, args *[]any, query UsageQuery) {
 	appendExactFilter(clauses, args, "api_key_id", query.APIKeyID)
+	appendAnyExactFilter(clauses, args, "api_key_id", query.APIKeyIDs)
 	appendExactFilter(clauses, args, "customer_id", query.CustomerID)
 	appendExactFilter(clauses, args, "model", query.Model)
 	appendExactFilter(clauses, args, "provider_id", query.ProviderID)
@@ -637,6 +726,7 @@ func appendUsageRecordFilters(clauses *[]string, args *[]any, query UsageQuery) 
 
 func appendGatewayTraceFilters(clauses *[]string, args *[]any, query GatewayTraceQuery) {
 	appendExactFilter(clauses, args, "api_key_id", query.APIKeyID)
+	appendAnyExactFilter(clauses, args, "api_key_id", query.APIKeyIDs)
 	appendExactFilter(clauses, args, "model", query.Model)
 	appendExactFilter(clauses, args, "status", query.Status)
 	appendTimeFilter(clauses, args, "created_at", ">=", query.CreatedFrom)
@@ -759,10 +849,59 @@ ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS email_verify_hash TEXT NOT 
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS email_verify_expires_at TIMESTAMPTZ;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS password_reset_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS balance_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS rpm_limit INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT NOT NULL DEFAULT '';
+
+DO $$ BEGIN
+  ALTER TABLE workspace_users ADD CONSTRAINT workspace_users_avatar_size CHECK (octet_length(avatar_data_url) <= 262144);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_users_external_identity_unique
   ON workspace_users(external_issuer, external_subject)
   WHERE external_issuer <> '' AND external_subject <> '';
+
+CREATE TABLE IF NOT EXISTS organization_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS organization_groups_name_idx ON organization_groups(lower(name));
+
+CREATE TABLE IF NOT EXISTS organization_group_members (
+  group_id TEXT NOT NULL REFERENCES organization_groups(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(group_id,user_id),
+  UNIQUE(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS organization_group_members_group_idx ON organization_group_members(group_id,created_at);
+
+CREATE TABLE IF NOT EXISTS auth_identities (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(issuer, subject),
+  UNIQUE(user_id, issuer)
+);
+
+INSERT INTO auth_identities(id,user_id,issuer,subject,email,created_at,updated_at)
+SELECT 'aid_' || md5(id || ':' || external_issuer || ':' || external_subject), id, external_issuer, external_subject, email, created_at, updated_at
+FROM workspace_users
+WHERE external_issuer <> '' AND external_subject <> ''
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS role_bindings (
   id TEXT PRIMARY KEY,
@@ -779,6 +918,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS role_bindings_unique_scope_idx
 
 CREATE INDEX IF NOT EXISTS role_bindings_scope_idx
   ON role_bindings(scope_type, scope_id);
+
+CREATE TABLE IF NOT EXISTS customer_wallets (
+  user_id TEXT PRIMARY KEY REFERENCES workspace_users(id) ON DELETE CASCADE,
+  gift_balance_cents INTEGER NOT NULL DEFAULT 0,
+  profit_balance_cents INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS customer_billing_entries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  balance_after_cents INTEGER NOT NULL,
+  reference TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS customer_billing_entries_user_created_idx
+  ON customer_billing_entries(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS customer_redemption_codes (
+  id TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  max_redemptions INTEGER NOT NULL DEFAULT 1,
+  redeemed_count INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS customer_redemptions (
+  code_id TEXT NOT NULL REFERENCES customer_redemption_codes(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  entry_id TEXT NOT NULL REFERENCES customer_billing_entries(id) ON DELETE CASCADE,
+  redeemed_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(code_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS customer_vouchers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  minimum_recharge_cents INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS customer_vouchers_user_status_idx
+  ON customer_vouchers(user_id, status, expires_at);
 
 CREATE TABLE IF NOT EXISTS routing_groups (
   id TEXT PRIMARY KEY,
@@ -995,6 +1189,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   status TEXT NOT NULL,
   key_type TEXT NOT NULL DEFAULT 'workspace',
   customer_id TEXT NOT NULL DEFAULT '',
+  owner_user_id TEXT NOT NULL DEFAULT '',
   policy_id TEXT NOT NULL DEFAULT '',
   model_allowlist TEXT NOT NULL DEFAULT '[]',
   qps_limit INTEGER NOT NULL DEFAULT 0,
@@ -1008,6 +1203,21 @@ CREATE TABLE IF NOT EXISTS api_keys (
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS policy_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_type TEXT NOT NULL DEFAULT 'workspace';
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS customer_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS api_keys_owner_user_idx
+  ON api_keys(owner_user_id, status)
+  WHERE owner_user_id <> '';
+
+CREATE TABLE IF NOT EXISTS gateway_risk_blocks (
+  api_key_id TEXT PRIMARY KEY,
+  rule_id TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS gateway_risk_blocks_expiry_idx ON gateway_risk_blocks(expires_at);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,
@@ -1541,7 +1751,7 @@ FROM provider_accounts
 
 func (r *PostgresRepository) ListAPIKeys(ctx context.Context) ([]APIKeyRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at
+SELECT id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, owner_user_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at
 FROM api_keys
 ORDER BY created_at DESC
 `)
@@ -1554,7 +1764,7 @@ ORDER BY created_at DESC
 		var key APIKeyRecord
 		var allowlist string
 		var expiresAt, lastUsedAt sql.NullTime
-		if err := rows.Scan(&key.ID, &key.Name, &key.KeyHash, &key.Fingerprint, &key.Prefix, &key.Status, &key.KeyType, &key.CustomerID, &key.PolicyID, &allowlist, &key.QPSLimit, &key.MonthlyTokenLimit, &expiresAt, &lastUsedAt, &key.CreatedAt, &key.UpdatedAt); err != nil {
+		if err := rows.Scan(&key.ID, &key.Name, &key.KeyHash, &key.Fingerprint, &key.Prefix, &key.Status, &key.KeyType, &key.CustomerID, &key.OwnerUserID, &key.PolicyID, &allowlist, &key.QPSLimit, &key.MonthlyTokenLimit, &expiresAt, &lastUsedAt, &key.CreatedAt, &key.UpdatedAt); err != nil {
 			return nil, err
 		}
 		key.ModelAllowlist = parseStringList(allowlist)
@@ -1571,14 +1781,14 @@ ORDER BY created_at DESC
 
 func (r *PostgresRepository) FindAPIKeyByHash(ctx context.Context, hash string) (APIKeyRecord, bool, error) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at
+SELECT id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, owner_user_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at
 FROM api_keys
 WHERE key_hash = $1
 `, hash)
 	var key APIKeyRecord
 	var allowlist string
 	var expiresAt, lastUsedAt sql.NullTime
-	if err := row.Scan(&key.ID, &key.Name, &key.KeyHash, &key.Fingerprint, &key.Prefix, &key.Status, &key.KeyType, &key.CustomerID, &key.PolicyID, &allowlist, &key.QPSLimit, &key.MonthlyTokenLimit, &expiresAt, &lastUsedAt, &key.CreatedAt, &key.UpdatedAt); err != nil {
+	if err := row.Scan(&key.ID, &key.Name, &key.KeyHash, &key.Fingerprint, &key.Prefix, &key.Status, &key.KeyType, &key.CustomerID, &key.OwnerUserID, &key.PolicyID, &allowlist, &key.QPSLimit, &key.MonthlyTokenLimit, &expiresAt, &lastUsedAt, &key.CreatedAt, &key.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return APIKeyRecord{}, false, nil
 		}
@@ -1597,8 +1807,8 @@ WHERE key_hash = $1
 func (r *PostgresRepository) SaveAPIKey(ctx context.Context, key APIKeyRecord) error {
 	allowlist := marshalStringList(key.ModelAllowlist)
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO api_keys(id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+INSERT INTO api_keys(id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, owner_user_id, policy_id, model_allowlist, qps_limit, monthly_token_limit, expires_at, last_used_at, created_at, updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 ON CONFLICT(id) DO UPDATE SET
   name = EXCLUDED.name,
   key_hash = EXCLUDED.key_hash,
@@ -1607,6 +1817,7 @@ ON CONFLICT(id) DO UPDATE SET
   status = EXCLUDED.status,
   key_type = EXCLUDED.key_type,
   customer_id = EXCLUDED.customer_id,
+  owner_user_id = EXCLUDED.owner_user_id,
   policy_id = EXCLUDED.policy_id,
   model_allowlist = EXCLUDED.model_allowlist,
   qps_limit = EXCLUDED.qps_limit,
@@ -1614,7 +1825,7 @@ ON CONFLICT(id) DO UPDATE SET
   expires_at = EXCLUDED.expires_at,
   last_used_at = EXCLUDED.last_used_at,
   updated_at = EXCLUDED.updated_at
-`, key.ID, key.Name, key.KeyHash, key.Fingerprint, key.Prefix, key.Status, key.KeyType, key.CustomerID, key.PolicyID, allowlist, key.QPSLimit, key.MonthlyTokenLimit, key.ExpiresAt, key.LastUsedAt, key.CreatedAt, key.UpdatedAt)
+`, key.ID, key.Name, key.KeyHash, key.Fingerprint, key.Prefix, key.Status, key.KeyType, key.CustomerID, key.OwnerUserID, key.PolicyID, allowlist, key.QPSLimit, key.MonthlyTokenLimit, key.ExpiresAt, key.LastUsedAt, key.CreatedAt, key.UpdatedAt)
 	return err
 }
 

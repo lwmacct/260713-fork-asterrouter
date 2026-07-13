@@ -261,6 +261,7 @@ type APIKeyRecord struct {
 	Status            string     `json:"status"`
 	KeyType           string     `json:"key_type"`
 	CustomerID        string     `json:"customer_id"`
+	OwnerUserID       string     `json:"owner_user_id"`
 	PolicyID          string     `json:"policy_id"`
 	ModelAllowlist    []string   `json:"model_allowlist"`
 	QPSLimit          int        `json:"qps_limit"`
@@ -280,6 +281,7 @@ type APIKeyCreateRequest struct {
 	ExpiresAt         string   `json:"expires_at"`
 	KeyType           string   `json:"key_type"`
 	CustomerID        string   `json:"customer_id"`
+	OwnerUserID       string   `json:"owner_user_id"`
 }
 
 type APIKeyUpdateRequest struct {
@@ -292,6 +294,7 @@ type APIKeyUpdateRequest struct {
 	Status            string   `json:"status"`
 	KeyType           string   `json:"key_type"`
 	CustomerID        string   `json:"customer_id"`
+	OwnerUserID       string   `json:"owner_user_id"`
 }
 
 type APIKeyCreateResponse struct {
@@ -365,6 +368,7 @@ type UsageAggregate struct {
 }
 
 type CostAllocationRollup struct {
+	ResourceID     string
 	APIKeyID       string
 	APIFingerprint string
 	Model          string
@@ -409,6 +413,7 @@ type UsageQuery struct {
 	Offset      int
 	Search      string
 	APIKeyID    string
+	APIKeyIDs   []string
 	CustomerID  string
 	Model       string
 	ProviderID  string
@@ -455,6 +460,7 @@ type GatewayTraceQuery struct {
 	Offset      int
 	Search      string
 	APIKeyID    string
+	APIKeyIDs   []string
 	Model       string
 	Status      string
 	CreatedFrom time.Time

@@ -24,6 +24,8 @@ import type {
   GovernancePolicyRequest,
   ModelPricing,
   ModelPricingRequest,
+	OrganizationGroup,
+	OrganizationGroupRequest,
 	ModelRoute,
 	ModelRouteRequest,
   PortalWorkspace,
@@ -124,6 +126,22 @@ export async function checkProvider(id: string): Promise<ProviderHealthCheck> {
 export async function getDepartments(): Promise<Department[]> {
   const response = await apiClient.get<Department[]>('/admin/departments')
   return response.data
+}
+
+export async function getOrganizationGroups(): Promise<OrganizationGroup[]> {
+	return (await apiClient.get<OrganizationGroup[]>('/admin/organization-groups')).data
+}
+
+export async function createOrganizationGroup(payload: OrganizationGroupRequest): Promise<OrganizationGroup> {
+	return (await apiClient.post<OrganizationGroup>('/admin/organization-groups', payload)).data
+}
+
+export async function updateOrganizationGroup(id: string, payload: OrganizationGroupRequest): Promise<OrganizationGroup> {
+	return (await apiClient.put<OrganizationGroup>(`/admin/organization-groups/${id}`, payload)).data
+}
+
+export async function deleteOrganizationGroup(id: string): Promise<void> {
+	await apiClient.delete(`/admin/organization-groups/${id}`)
 }
 
 export async function createDepartment(payload: DepartmentRequest): Promise<Department> {
@@ -401,22 +419,26 @@ export async function downloadExportJob(job: ExportJob): Promise<void> {
 }
 
 export async function getPortalWorkspace(): Promise<PortalWorkspace> {
-  const response = await apiClient.get<PortalWorkspace>('/portal/workspace')
-  return response.data
+	const response = await apiClient.get<PortalWorkspace>(`${selfServiceAPIBase()}/workspace`)
+	return response.data
 }
 
 export async function createPortalAPIKey(payload: APIKeyCreateRequest): Promise<APIKeyCreateResponse> {
-  const response = await apiClient.post<APIKeyCreateResponse>('/portal/api-keys', payload)
-  return response.data
+	const response = await apiClient.post<APIKeyCreateResponse>(`${selfServiceAPIBase()}/api-keys`, payload)
+	return response.data
 }
 
 export async function rotatePortalAPIKey(id: string): Promise<APIKeyCreateResponse> {
-  const response = await apiClient.post<APIKeyCreateResponse>(`/portal/api-keys/${id}/rotate`)
-  return response.data
+	const response = await apiClient.post<APIKeyCreateResponse>(`${selfServiceAPIBase()}/api-keys/${id}/rotate`)
+	return response.data
 }
 
 export async function disablePortalAPIKey(id: string): Promise<void> {
-  await apiClient.post(`/portal/api-keys/${id}/disable`)
+	await apiClient.post(`${selfServiceAPIBase()}/api-keys/${id}/disable`)
+}
+
+function selfServiceAPIBase(): '/portal' | '/customer' {
+	return window.location.pathname.startsWith('/customer') ? '/customer' : '/portal'
 }
 
 async function downloadCSV(path: string, filename: string, params?: RecordListQuery): Promise<void> {

@@ -4,6 +4,8 @@ import type { PublicSettings } from '@/types'
 
 const EntryRedirectView = () => import('@/views/EntryRedirectView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
+const LegalDocumentView = () => import('@/views/LegalDocumentView.vue')
+const AccountProfileView = () => import('@/views/AccountProfileView.vue')
 const SetupView = () => import('@/views/SetupView.vue')
 const AdminShell = () => import('@/views/admin/AdminShell.vue')
 const AdminApiKeysView = () => import('@/views/admin/AdminApiKeysView.vue')
@@ -12,6 +14,7 @@ const AdminAuditView = () => import('@/views/admin/AdminAuditView.vue')
 const AdminCostAllocationView = () => import('@/views/admin/AdminCostAllocationView.vue')
 const AdminDashboardView = () => import('@/views/admin/AdminDashboardView.vue')
 const AdminDepartmentsView = () => import('@/views/admin/AdminDepartmentsView.vue')
+const AdminOrganizationGroupsView = () => import('@/views/admin/AdminOrganizationGroupsView.vue')
 const AdminExportJobsView = () => import('@/views/admin/AdminExportJobsView.vue')
 const AdminGatewayTracesView = () => import('@/views/admin/AdminGatewayTracesView.vue')
 const AdminGatewayModelsView = () => import('@/views/admin/AdminGatewayModelsView.vue')
@@ -28,6 +31,9 @@ const AdminUsageView = () => import('@/views/admin/AdminUsageView.vue')
 const AdminUsersView = () => import('@/views/admin/AdminUsersView.vue')
 const ConsoleHomeView = () => import('@/views/console/ConsoleHomeView.vue')
 const ConsoleShell = () => import('@/views/console/ConsoleShell.vue')
+const CustomerBillingView = () => import('@/views/customer/CustomerBillingView.vue')
+const CustomerHomeView = () => import('@/views/customer/CustomerHomeView.vue')
+const CustomerShell = () => import('@/views/customer/CustomerShell.vue')
 const OperatorHomeView = () => import('@/views/operator/OperatorHomeView.vue')
 const OperatorShell = () => import('@/views/operator/OperatorShell.vue')
 const OperatorCustomersView = () => import('@/views/operator/OperatorCustomersView.vue')
@@ -40,6 +46,8 @@ const OperatorNoticesView = () => import('@/views/operator/OperatorNoticesView.v
 const OperatorUsageView = () => import('@/views/operator/OperatorUsageView.vue')
 const OperatorKeysView = () => import('@/views/operator/OperatorKeysView.vue')
 const PortalHomeView = () => import('@/views/portal/PortalHomeView.vue')
+const PortalIntegrationView = () => import('@/views/portal/PortalIntegrationView.vue')
+const PortalKeysView = () => import('@/views/portal/PortalKeysView.vue')
 const PortalShell = () => import('@/views/portal/PortalShell.vue')
 
 let publicSettingsCache: PublicSettings | null = null
@@ -63,10 +71,22 @@ async function loadPublicSettings(): Promise<PublicSettings | null> {
   }
 }
 
-function profileRoute(profile: string): string {
+function profileRoute(profile: string, role = storedRole()): string {
   if (profile === 'personal') return '/console/overview'
-  if (profile === 'relay_operator') return '/operator/overview'
+  if (profile === 'relay_operator') return canOperateRelay(role) ? '/operator/overview' : '/customer/overview'
   return '/admin/dashboard'
+}
+
+function storedRole(): string {
+  try {
+    return JSON.parse(localStorage.getItem('asterrouter_admin_user') || '{}').role || ''
+  } catch {
+    return ''
+  }
+}
+
+function canOperateRelay(role: string): boolean {
+  return ['super_admin', 'platform_admin', 'demo_admin'].includes(role)
 }
 
 function defaultEntry(settings: PublicSettings | null): string {
@@ -81,6 +101,7 @@ function surfaceAllowed(path: string, settings: PublicSettings | null): boolean 
   if (!settings?.setup_completed) return path === '/setup'
   if (path.startsWith('/console')) return settings.enabled_profiles.includes('personal')
   if (path.startsWith('/operator')) return settings.enabled_profiles.includes('relay_operator')
+  if (path.startsWith('/customer')) return settings.enabled_profiles.includes('relay_operator')
   if (path.startsWith('/portal')) return settings.enabled_profiles.includes('enterprise')
   if (path.startsWith('/admin')) return settings.enabled_profiles.includes('enterprise')
   return true
@@ -108,6 +129,7 @@ const router = createRouter({
         { path: 'keys', component: AdminApiKeysView, meta: { titleKey: 'console.keys', descriptionKey: 'console.keySummary' } },
         { path: 'usage', component: AdminUsageView, meta: { titleKey: 'console.usage', descriptionKey: 'console.usageHelp' } },
         { path: 'settings', component: AdminSettingsView, meta: { titleKey: 'admin.settings', descriptionKey: 'admin.subtitle' } },
+		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/console/overview' }
       ]
     },
@@ -134,6 +156,7 @@ const router = createRouter({
         { path: 'usage', component: OperatorUsageView, meta: { titleKey: 'operator.traffic', descriptionKey: 'operator.trafficHelp' } },
         { path: 'plugins', component: AdminPluginsView, meta: { titleKey: 'admin.plugins', descriptionKey: 'plugins.subtitle' } },
         { path: 'settings', component: AdminSettingsView, meta: { titleKey: 'admin.settings', descriptionKey: 'admin.subtitle' } },
+		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/operator/overview' }
       ]
     },
@@ -152,6 +175,7 @@ const router = createRouter({
         { path: 'model-pricings', component: AdminModelPricingsView, meta: { titleKey: 'admin.modelPricings', descriptionKey: 'modelPricings.subtitle' } },
         { path: 'users', component: AdminUsersView, meta: { titleKey: 'admin.users', descriptionKey: 'users.subtitle' } },
         { path: 'departments', component: AdminDepartmentsView, meta: { titleKey: 'admin.departments', descriptionKey: 'departments.subtitle' } },
+				{ path: 'organization-groups', component: AdminOrganizationGroupsView, meta: { titleKey: 'organizationGroups.title', descriptionKey: 'organizationGroups.subtitle' } },
         { path: 'policies', component: AdminPoliciesView, meta: { titleKey: 'admin.policies', descriptionKey: 'policies.subtitle' } },
         { path: 'api-keys', component: AdminApiKeysView, meta: { titleKey: 'admin.apiKeys', descriptionKey: 'apiKeys.subtitle' } },
         { path: 'usage', component: AdminUsageView, meta: { titleKey: 'admin.usage', descriptionKey: 'usage.subtitle' } },
@@ -162,7 +186,22 @@ const router = createRouter({
         { path: 'plugins', component: AdminPluginsView, meta: { titleKey: 'admin.plugins', descriptionKey: 'plugins.subtitle' } },
         { path: 'audit', component: AdminAuditView, meta: { titleKey: 'admin.audit', descriptionKey: 'audit.subtitle' } },
         { path: 'settings', component: AdminSettingsView, meta: { titleKey: 'admin.settings', descriptionKey: 'admin.subtitle' } },
+		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/admin/dashboard' }
+      ]
+    },
+    {
+      path: '/customer',
+      component: CustomerShell,
+      children: [
+        { path: '', redirect: '/customer/overview' },
+        { path: 'overview', component: CustomerHomeView, meta: { titleKey: 'customer.overview', descriptionKey: 'customer.subtitle', customerPanel: 'overview' } },
+        { path: 'keys', component: PortalKeysView, meta: { titleKey: 'customer.keys', descriptionKey: 'customer.keySummary' } },
+        { path: 'integration', component: PortalIntegrationView, meta: { titleKey: 'customer.integration', descriptionKey: 'customer.integrationHelp' } },
+        { path: 'usage', component: CustomerHomeView, meta: { titleKey: 'customer.usage', descriptionKey: 'customer.usageHelp', customerPanel: 'usage' } },
+        { path: 'billing', component: CustomerBillingView, meta: { titleKey: 'customer.billing', descriptionKey: 'customer.billingHelp' } },
+		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
+        { path: ':pathMatch(.*)*', redirect: '/customer/overview' }
       ]
     },
     {
@@ -171,14 +210,16 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/portal/overview' },
         { path: 'overview', component: PortalHomeView, meta: { titleKey: 'portal.overview', descriptionKey: 'portal.subtitle', portalPanel: 'overview' } },
-        { path: 'integration', component: PortalHomeView, meta: { titleKey: 'portal.integrationGuide', descriptionKey: 'portal.gatewayHelp', portalPanel: 'integration' } },
-        { path: 'keys', component: PortalHomeView, meta: { titleKey: 'portal.myKeys', descriptionKey: 'portal.keySummary', portalPanel: 'keys' } },
+        { path: 'integration', component: PortalIntegrationView, meta: { titleKey: 'portal.integrationGuide', descriptionKey: 'portal.gatewayHelp', portalPanel: 'integration' } },
+        { path: 'keys', component: PortalKeysView, meta: { titleKey: 'portal.myKeys', descriptionKey: 'portal.keySummary', portalPanel: 'keys' } },
         { path: 'usage', component: PortalHomeView, meta: { titleKey: 'portal.usage', descriptionKey: 'portal.usageHelp', portalPanel: 'usage' } },
         { path: 'alerts', component: PortalHomeView, meta: { titleKey: 'portal.alerts', descriptionKey: 'portal.alertsHelp', portalPanel: 'alerts' } },
         { path: 'traces', component: PortalHomeView, meta: { titleKey: 'portal.recentTraces', descriptionKey: 'portal.traceHelp', portalPanel: 'traces' } },
+		{ path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/portal/overview' }
       ]
     },
+    { path: '/legal/:slug', component: LegalDocumentView },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
 })
@@ -202,13 +243,14 @@ router.beforeEach(async (to) => {
   if (to.path === '/login') {
     return true
   }
+	if (to.path.startsWith('/legal/')) return true
   if (!settings?.setup_completed) {
     return '/setup'
   }
   if (!surfaceAllowed(to.path, settings)) {
     return entry
   }
-  if ((to.path.startsWith('/admin') || to.path.startsWith('/portal') || to.path.startsWith('/console') || to.path.startsWith('/operator')) && !token) {
+  if ((to.path.startsWith('/admin') || to.path.startsWith('/portal') || to.path.startsWith('/console') || to.path.startsWith('/operator') || to.path.startsWith('/customer')) && !token) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   return true

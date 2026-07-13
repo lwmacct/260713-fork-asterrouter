@@ -44,6 +44,7 @@ const navGroups = [
     items: [
       { to: '/admin/users', label: 'admin.users', icon: UsersRound },
       { to: '/admin/departments', label: 'admin.departments', icon: Building2 },
+			{ to: '/admin/organization-groups', label: 'organizationGroups.title', icon: UsersRound },
       { to: '/admin/policies', label: 'admin.policies', icon: ShieldCheck },
       { to: '/admin/api-keys', label: 'admin.apiKeys', icon: KeyRound }
     ]

@@ -6,11 +6,12 @@ import {
   createRoleBinding,
   createWorkspaceUser,
   deleteRoleBinding,
+	getDepartments,
   getRoleBindings,
   getWorkspaceUsers,
   updateWorkspaceUser
 } from '@/api/control'
-import type { RoleBinding, RoleBindingRequest, WorkspaceUser, WorkspaceUserRequest } from '@/types'
+import type { Department, RoleBinding, RoleBindingRequest, WorkspaceUser, WorkspaceUserRequest } from '@/types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -21,11 +22,14 @@ const query = ref('')
 const statusFilter = ref('')
 const users = ref<WorkspaceUser[]>([])
 const roleBindings = ref<RoleBinding[]>([])
+const departments = ref<Department[]>([])
 const userModalOpen = ref(false)
 const bindingModalOpen = ref(false)
 const editingUser = ref<WorkspaceUser | null>(null)
 
 const roleOptions = ['super_admin', 'platform_admin', 'key_manager', 'read_only_auditor', 'developer']
+const resourceScopeOptions = ['dashboard', 'routing', 'providers', 'api_keys', 'usage', 'traces', 'alerts', 'identity', 'policies', 'audit', 'exports', 'plugins', 'settings', 'system']
+const surfaceScopeOptions = ['personal', 'relay_operator', 'enterprise', 'portal']
 
 const userForm = reactive<WorkspaceUserRequest>({
   email: '',
@@ -121,9 +125,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [userData, bindingData] = await Promise.all([getWorkspaceUsers(), getRoleBindings()])
+    const [userData, bindingData, departmentData] = await Promise.all([getWorkspaceUsers(), getRoleBindings(), getDepartments()])
     users.value = userData
     roleBindings.value = bindingData
+		departments.value = departmentData
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -391,7 +396,19 @@ onMounted(load)
           </div>
           <div class="field">
             <label>{{ t('users.scope') }}</label>
-            <input :value="t('users.globalScope')" disabled />
+            <select v-model="bindingForm.scope_type" @change="bindingForm.scope_id = ''">
+              <option value="global">{{ t('users.globalScope') }}</option>
+              <option value="resource">{{ t('users.resourceScope') }}</option>
+              <option value="surface">{{ t('users.surfaceScope') }}</option>
+							<option value="department">{{ t('users.departmentScope') }}</option>
+            </select>
+          </div>
+          <div v-if="bindingForm.scope_type !== 'global'" class="field form-span-2">
+            <label>{{ t('users.scopeTarget') }}</label>
+            <select v-model="bindingForm.scope_id" required>
+              <option value="" disabled>{{ t('users.selectScopeTarget') }}</option>
+							<template v-if="bindingForm.scope_type === 'department'"><option v-for="department in departments" :key="department.id" :value="department.id">{{ department.name }}</option></template><template v-else><option v-for="scope in bindingForm.scope_type === 'resource' ? resourceScopeOptions : surfaceScopeOptions" :key="scope" :value="scope">{{ scope }}</option></template>
+            </select>
           </div>
         </div>
         <footer class="modal-footer">

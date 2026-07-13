@@ -4,17 +4,20 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
   ChevronLeft,
   ChevronRight,
+	ExternalLink,
   KeyRound,
   Laptop,
   Moon,
   PanelsTopLeft,
   RadioTower,
   Sun,
+	UserRound,
   X
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import TopBar from '@/components/TopBar.vue'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 interface SurfaceNavItem {
   to: string
@@ -32,7 +35,7 @@ const props = withDefaults(
     homeTo: string
     navLabel: string
     navGroups: SurfaceNavGroup[]
-    surface: 'personal' | 'relay_operator' | 'enterprise' | 'portal'
+    surface: 'personal' | 'relay_operator' | 'enterprise' | 'portal' | 'customer'
     brandMark?: string
     storageKey?: string
   }>(),
@@ -44,6 +47,7 @@ const props = withDefaults(
 
 const { t } = useI18n()
 const app = useAppStore()
+const auth = useAuthStore()
 const route = useRoute()
 const collapsed = ref(localStorage.getItem(props.storageKey) === 'true')
 const mobileOpen = ref(false)
@@ -51,13 +55,17 @@ const darkMode = ref(document.documentElement.dataset.theme === 'dark')
 
 const version = computed(() => app.publicSettings?.version || 'Dev')
 const enabledProfiles = computed(() => app.publicSettings?.enabled_profiles || [])
+const canOperateRelay = computed(() => ['super_admin', 'platform_admin', 'demo_admin'].includes(auth.user?.role || ''))
 const surfaceLinks = computed(() => {
   const links: SurfaceNavItem[] = []
   if (props.surface !== 'personal' && enabledProfiles.value.includes('personal')) {
     links.push({ to: '/console/overview', label: 'nav.console', icon: Laptop })
   }
-  if (props.surface !== 'relay_operator' && enabledProfiles.value.includes('relay_operator')) {
+  if (props.surface !== 'relay_operator' && enabledProfiles.value.includes('relay_operator') && canOperateRelay.value) {
     links.push({ to: '/operator/overview', label: 'nav.operator', icon: RadioTower })
+  }
+  if (props.surface !== 'customer' && enabledProfiles.value.includes('relay_operator')) {
+    links.push({ to: '/customer/overview', label: 'nav.customer', icon: UserRound })
   }
   if (enabledProfiles.value.includes('enterprise')) {
     if (props.surface !== 'enterprise') {
@@ -69,6 +77,7 @@ const surfaceLinks = computed(() => {
   }
   return links
 })
+const customMenuItems = computed(() => app.publicSettings?.custom_menu_items || [])
 
 function toggleCollapsed() {
   collapsed.value = !collapsed.value
@@ -90,11 +99,12 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell admin-layout" :class="{ 'sidebar-is-collapsed': collapsed }">
+  <div class="app-shell admin-layout" :class="[{ 'sidebar-is-collapsed': collapsed }, `surface-${surface}`]">
     <aside class="sidebar admin-sidebar" :class="{ collapsed, 'mobile-open': mobileOpen }">
       <div class="sidebar-header sidebar-brand-row">
         <RouterLink class="sidebar-brand-link" :to="homeTo">
-          <span class="brand-mark">{{ brandMark }}</span>
+		  <img v-if="app.publicSettings?.site_logo" :src="app.publicSettings.site_logo" class="shell-brand-logo" alt=""/>
+		  <span v-else class="brand-mark">{{ brandMark }}</span>
           <span class="sidebar-brand-copy">
             <strong>{{ app.siteName }}</strong>
             <small>v{{ version }}</small>
@@ -132,6 +142,7 @@ watch(
             <span>{{ t(link.label) }}</span>
           </RouterLink>
         </section>
+		<section v-if="customMenuItems.length" class="sidebar-section"><p class="sidebar-section-title">企业链接</p><template v-for="item in customMenuItems" :key="item.id"><RouterLink v-if="item.url.startsWith('/') && !item.open_in_new_tab" class="sidebar-link nav-item" :to="item.url"><ExternalLink :size="19"/><span>{{ item.label }}</span></RouterLink><a v-else class="sidebar-link nav-item" :href="item.url" :target="item.open_in_new_tab?'_blank':undefined" :rel="item.open_in_new_tab?'noopener noreferrer':undefined"><ExternalLink :size="19"/><span>{{ item.label }}</span></a></template></section>
       </nav>
 
       <div class="app-sidebar-footer sidebar-footer">

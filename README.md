@@ -38,7 +38,15 @@ Run backend and frontend together for local UI development:
 bash scripts/dev.sh
 ```
 
-The development frontend listens on `http://localhost:5173` and proxies `/api/*` and `/v1/*` to the backend on `http://localhost:8080`.
+The development frontend listens on `http://localhost:5173` and proxies `/api/*` and `/v1/*` to the backend on `http://localhost:8080`. If either development port is occupied, the script shows the listener, sends `SIGTERM`, and waits up to five seconds for the port to be released.
+
+To keep occupied processes running and fail instead:
+
+```bash
+./scripts/dev.sh --no-kill-occupied
+```
+
+For IDE tasks or persistent shell configuration, set `ASTER_DEV_KILL_OCCUPIED=0`. Automatic cleanup never escalates to `SIGKILL`.
 
 Backend:
 

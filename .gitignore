@@ -30,3 +30,4 @@ docs/roadmap/v3/*
 .env.*
 !.env.example
 .playwright-mcp
+.gstack/

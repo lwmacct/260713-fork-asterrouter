@@ -169,6 +169,32 @@ func (s *Service) ListBackups(_ context.Context) ([]BackupInfo, error) {
 	return out, nil
 }
 
+func (s *Service) CleanupBackups(ctx context.Context, retentionDays, maxRetained int, now time.Time) (int, error) {
+	if retentionDays < 1 || maxRetained < 1 {
+		return 0, errors.New("backup retention settings must be positive")
+	}
+	backups, err := s.ListBackups(ctx)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := now.UTC().AddDate(0, 0, -retentionDays)
+	deleted := 0
+	for index, backup := range backups {
+		if index < maxRetained && !backup.CreatedAt.Before(cutoff) {
+			continue
+		}
+		path, err := s.findArchive("backup", backup.ID)
+		if err != nil {
+			return deleted, err
+		}
+		if err := os.Remove(path); err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
 func (s *Service) RestoreBackup(ctx context.Context, operationID string, request RestoreRequest) (RestoreResult, error) {
 	if !request.Confirm {
 		return RestoreResult{}, ErrBackupConfirmation
@@ -256,6 +282,38 @@ func (s *Service) CreateDiagnosticBundle(_ context.Context, operationID string, 
 
 func (s *Service) BackupArchivePath(id string) (string, error) {
 	return s.findArchive("backup", id)
+}
+
+func (s *Service) StoreBackupArchive(id string, source io.Reader) (BackupInfo, error) {
+	if id == "" || !strings.HasPrefix(id, backupPrefix) || strings.ContainsAny(id, `/\\`) {
+		return BackupInfo{}, ErrBackupInvalid
+	}
+	dir := s.archiveDirectory("backup")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return BackupInfo{}, err
+	}
+	temp, err := os.CreateTemp(dir, ".s3-import-*.tar.gz")
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	written, copyErr := io.Copy(temp, io.LimitReader(source, s.maxArchiveBytes+1))
+	closeErr := temp.Close()
+	if copyErr != nil {
+		return BackupInfo{}, copyErr
+	}
+	if closeErr != nil {
+		return BackupInfo{}, closeErr
+	}
+	if written > s.maxArchiveBytes {
+		return BackupInfo{}, ErrBackupInvalid
+	}
+	target := filepath.Join(dir, id+".tar.gz")
+	if err := os.Rename(tempPath, target); err != nil {
+		return BackupInfo{}, err
+	}
+	return fileArchiveInfo(id, target)
 }
 
 func (s *Service) DiagnosticArchivePath(id string) (string, error) {

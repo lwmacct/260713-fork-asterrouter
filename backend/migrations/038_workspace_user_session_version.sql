@@ -1,0 +1,2 @@
+ALTER TABLE workspace_users
+  ADD COLUMN IF NOT EXISTS session_version BIGINT NOT NULL DEFAULT 1;

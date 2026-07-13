@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -40,6 +41,37 @@ func TestAPIKeyQuotaAlertEscalatesAndDeduplicates(t *testing.T) {
 	}
 	if len(alerts) != 1 || alerts[0].Severity != AlertSeverityCritical {
 		t.Fatalf("quota alert was not escalated in place: %+v", alerts)
+	}
+}
+
+func TestAPIKeyBudgetAlertEscalatesAndDeduplicatesForEffectivePolicy(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryRepository(), "/v1", "secret")
+	created, err := svc.CreateAPIKey(ctx, "tester", APIKeyCreateRequest{Name: "Budget Key", ModelAllowlist: []string{"model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := svc.AuthenticateGatewayKey(ctx, created.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.Policy = &GovernancePolicy{ID: "policy", MonthlyBudgetCents: 100, OverageAction: GovernancePolicyOverageBlock, Status: GovernancePolicyStatusActive}
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", CostCents: 80}); err != nil {
+		t.Fatal(err)
+	}
+	alerts, err := svc.ListAlertEventsQuery(ctx, AlertQuery{Type: AlertTypeAPIKeyBudget, Status: AlertStatusActive})
+	if err != nil || len(alerts) != 1 || alerts[0].Severity != AlertSeverityWarning {
+		t.Fatalf("budget warning=%+v err=%v", alerts, err)
+	}
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", CostCents: 20}); err != nil {
+		t.Fatal(err)
+	}
+	alerts, err = svc.ListAlertEventsQuery(ctx, AlertQuery{Type: AlertTypeAPIKeyBudget, Status: AlertStatusActive})
+	if err != nil || len(alerts) != 1 || alerts[0].Severity != AlertSeverityCritical {
+		t.Fatalf("budget critical=%+v err=%v", alerts, err)
+	}
+	if err := svc.EnforceGatewayPolicy(ctx, auth); !errors.Is(err, ErrGatewayBudgetExceeded) {
+		t.Fatalf("budget enforcement err=%v", err)
 	}
 }
 

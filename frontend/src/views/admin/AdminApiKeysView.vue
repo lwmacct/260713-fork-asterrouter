@@ -10,10 +10,11 @@ import {
   getGatewayTraces,
   getGovernancePolicies,
   getUsageReport,
+	getWorkspaceUsers,
   rotateAPIKey,
   updateAPIKey
 } from '@/api/control'
-import type { APIKeyCreateRequest, APIKeyRecord, GatewayPolicyExplanation, GatewayTrace, GovernancePolicy, UsageReport } from '@/types'
+import type { APIKeyCreateRequest, APIKeyRecord, GatewayPolicyExplanation, GatewayTrace, GovernancePolicy, UsageReport, WorkspaceUser } from '@/types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -31,6 +32,7 @@ const detailPolicyExplanation = ref<GatewayPolicyExplanation | null>(null)
 const oneTimeKey = ref('')
 const apiKeys = ref<APIKeyRecord[]>([])
 const policies = ref<GovernancePolicy[]>([])
+const users = ref<WorkspaceUser[]>([])
 const query = ref('')
 const statusFilter = ref('')
 const modelsText = ref('gpt-4o-mini')
@@ -41,7 +43,10 @@ const form = reactive<APIKeyCreateRequest>({
   model_allowlist: [],
   qps_limit: 10,
   monthly_token_limit: 1000000,
-  expires_at: ''
+  expires_at: '',
+  key_type: 'workspace',
+  customer_id: '',
+  owner_user_id: ''
 })
 
 const policyByID = computed(() => new Map(policies.value.map((item) => [item.id, item])))
@@ -53,7 +58,7 @@ const filteredKeys = computed(() => {
     if (statusFilter.value && key.status !== statusFilter.value) return false
     if (!keyword) return true
     const policy = key.policy_id ? policyByID.value.get(key.policy_id)?.name || key.policy_id : ''
-    return [key.name, key.fingerprint, key.prefix, policy, key.model_allowlist.join(' ')].some((value) =>
+    return [key.name, key.fingerprint, key.prefix, key.key_type, key.owner_user_id, key.customer_id, policy, key.model_allowlist.join(' ')].some((value) =>
       value.toLowerCase().includes(keyword)
     )
   })
@@ -82,7 +87,10 @@ function openCreate() {
     model_allowlist: [],
     qps_limit: 10,
     monthly_token_limit: 1000000,
-    expires_at: ''
+    expires_at: '',
+    key_type: 'workspace',
+    customer_id: '',
+    owner_user_id: ''
   })
   keyStatus.value = 'active'
   modelsText.value = 'gpt-4o-mini'
@@ -97,7 +105,10 @@ function openEdit(key: APIKeyRecord) {
     model_allowlist: [...key.model_allowlist],
     qps_limit: key.qps_limit,
     monthly_token_limit: key.monthly_token_limit,
-    expires_at: dateInputValue(key.expires_at)
+    expires_at: dateInputValue(key.expires_at),
+    key_type: key.key_type,
+    customer_id: key.customer_id,
+    owner_user_id: key.owner_user_id
   })
   keyStatus.value = key.status
   modelsText.value = key.model_allowlist.join('\n')
@@ -128,12 +139,15 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [keyData, policyData] = await Promise.all([
+    const [keyResult, policyResult, userResult] = await Promise.allSettled([
       getAPIKeys(),
-      getGovernancePolicies()
+      getGovernancePolicies(),
+      getWorkspaceUsers()
     ])
-    apiKeys.value = keyData
-    policies.value = policyData
+    if (keyResult.status === 'rejected') throw keyResult.reason
+    apiKeys.value = keyResult.value
+    policies.value = policyResult.status === 'fulfilled' ? policyResult.value : []
+    users.value = userResult.status === 'fulfilled' ? userResult.value : []
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -155,7 +169,10 @@ async function save() {
         qps_limit: form.qps_limit,
         monthly_token_limit: form.monthly_token_limit,
         expires_at: form.expires_at,
-        status: keyStatus.value
+        status: keyStatus.value,
+        key_type: form.key_type,
+        customer_id: form.customer_id,
+        owner_user_id: form.owner_user_id
       })
       message.value = t('apiKeys.updated')
     } else {
@@ -290,7 +307,7 @@ onMounted(load)
             <tr v-for="key in filteredKeys" :key="key.id">
               <td>
                 <strong>{{ key.name }}</strong>
-                <span>{{ key.prefix }}</span>
+                <span>{{ key.key_type }} · {{ key.owner_user_id || key.customer_id || key.prefix }}</span>
               </td>
               <td>{{ key.fingerprint }}</td>
               <td><span class="pill" :class="key.status === 'active' ? 'status-success' : 'status-danger'">{{ key.status }}</span></td>
@@ -357,6 +374,26 @@ onMounted(load)
               <option v-for="policy in activePolicies" :key="policy.id" :value="policy.id">{{ policy.name }}</option>
             </select>
           </div>
+          <div class="field">
+            <label>{{ t('apiKeys.keyType') }}</label>
+            <select v-model="form.key_type">
+              <option value="workspace">workspace</option>
+              <option value="user">user</option>
+              <option value="customer">customer</option>
+              <option value="service">service</option>
+            </select>
+          </div>
+          <div v-if="form.key_type === 'user'" class="field">
+            <label>{{ t('apiKeys.owner') }}</label>
+            <select v-model="form.owner_user_id" required>
+              <option value="" disabled>{{ t('apiKeys.selectOwner') }}</option>
+              <option v-for="user in users.filter((item) => item.status === 'active')" :key="user.id" :value="user.id">{{ user.display_name || user.email }} · {{ user.email }}</option>
+            </select>
+          </div>
+          <div v-else-if="form.key_type === 'customer'" class="field">
+            <label>{{ t('apiKeys.customerId') }}</label>
+            <input v-model="form.customer_id" required />
+          </div>
           <div class="field form-span-2">
             <label>{{ t('apiKeys.models') }}</label>
             <textarea v-model="modelsText" rows="3" />
@@ -407,7 +444,7 @@ onMounted(load)
           <div class="detail-grid">
             <div>
               <label>{{ t('apiKeys.scope') }}</label>
-              <p>{{ t('apiKeys.defaultScope') }}</p>
+              <p>{{ selectedKey.key_type }} · {{ selectedKey.owner_user_id || selectedKey.customer_id || t('apiKeys.defaultScope') }}</p>
             </div>
             <div>
               <label>{{ t('providers.status') }}</label>

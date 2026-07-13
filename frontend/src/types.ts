@@ -7,6 +7,7 @@ export interface ApiResponse<T> {
 export interface PublicSettings {
   site_name: string
   site_subtitle: string
+	site_logo: string
   public_base_url: string
   api_base_url: string
   gateway_base_path: string
@@ -16,9 +17,13 @@ export interface PublicSettings {
   default_locale: string
   enabled_locales: string[]
   oidc_enabled: boolean
-  oidc_provider_name: string
+	oidc_provider_name: string
+	oidc_require_verified_email: boolean
 	feishu_enabled: boolean
 	feishu_region: 'cn' | 'global'
+	github_oauth_enabled: boolean
+	google_oauth_enabled: boolean
+	dingtalk_enabled: boolean
 	registration_enabled: boolean
 	email_verify_enabled: boolean
 	totp_enabled: boolean
@@ -32,6 +37,13 @@ export interface PublicSettings {
 	backend_mode: boolean
 	support_contact: string
 	documentation_url: string
+	custom_endpoints: CustomEndpoint[]
+	custom_menu_items: CustomMenuItem[]
+	channel_monitor_enabled: boolean
+	available_channels_enabled: boolean
+	risk_control_enabled: boolean
+	cyber_session_block_enabled: boolean
+	backup_s3_enabled: boolean
   service_center_mode: string
   version: string
   server_timezone: string
@@ -43,6 +55,44 @@ export interface PublicSettings {
 export interface AuthUser {
   username: string
   role: string
+	display_name?: string
+	email?: string
+	avatar_data_url?: string
+}
+
+export interface AccountLoginMethod {
+	id: 'email' | 'local' | 'oidc' | 'feishu' | 'github' | 'google' | 'dingtalk'
+	label: string
+	available: boolean
+	bound: boolean
+	detail?: string
+}
+
+export interface AccountProfile {
+	id: string
+	email: string
+	display_name: string
+	avatar_data_url?: string
+	status: string
+	role: string
+	balance_cents: number
+	concurrency_limit: number
+	rpm_limit: number
+	external_issuer?: string
+	auth_identities: Array<{id:string;user_id:string;issuer:string;subject:string;email:string;created_at:string;updated_at:string}>
+	email_verified: boolean
+	password_enabled: boolean
+	totp_enabled: boolean
+	totp_available: boolean
+	managed_by_config: boolean
+	created_at: string
+	updated_at: string
+	login_methods: AccountLoginMethod[]
+}
+
+export interface TOTPSetup {
+	secret: string
+	provisioning_uri: string
 }
 
 export interface LoginResult {
@@ -53,11 +103,22 @@ export interface LoginResult {
 }
 
 export interface AdminSettings extends PublicSettings {
-  oidc_issuer_url: string
+	runtime_restart_required: boolean
+	runtime_restart_reasons: string[]
+	oidc_issuer_url: string
   oidc_client_id: string
 	feishu_app_id: string
 	feishu_app_secret?: string
 	feishu_configured: boolean
+	github_oauth_client_id: string
+	github_oauth_client_secret?: string
+	github_oauth_configured: boolean
+	google_oauth_client_id: string
+	google_oauth_client_secret?: string
+	google_oauth_configured: boolean
+	dingtalk_client_id: string
+	dingtalk_client_secret?: string
+	dingtalk_configured: boolean
 	allowed_email_domains: string[]
 	invitation_codes: string[]
 	trusted_proxy_headers: boolean
@@ -66,21 +127,45 @@ export interface AdminSettings extends PublicSettings {
 	default_balance_cents: number
 	default_concurrency: number
 	default_rpm: number
+	auth_source_defaults: Record<string, AuthSourceDefault>
 	smtp_host: string
 	smtp_port: number
 	smtp_username: string
 	smtp_password?: string
 	smtp_from: string
 	smtp_configured: boolean
+	email_templates: EmailTemplate[]
 	login_agreement_title: string
 	login_agreement_content: string
 	default_page_size: number
 	page_size_options: number[]
 	home_content: string
 	hide_import_button: boolean
+	channel_monitor_interval_seconds: number
+	cyber_session_block_ttl_seconds: number
+	backup_s3_endpoint: string
+	backup_s3_region: string
+	backup_s3_bucket: string
+	backup_s3_prefix: string
+	backup_s3_access_key: string
+	backup_s3_secret_key?: string
+	backup_s3_configured: boolean
+	backup_s3_path_style: boolean
+	backup_retention_days: number
+	backup_max_retained: number
+	backup_schedule_enabled: boolean
+	backup_interval_hours: number
   data_retention_days: number
   prompt_logging_mode: string
   update_channel: string
+}
+
+export interface RetentionCleanupResult {
+	before: string
+	usage_records: number
+	gateway_traces: number
+	alert_events: number
+	audit_logs: number
 }
 
 export interface LegalDocument {
@@ -89,6 +174,17 @@ export interface LegalDocument {
 	slug: string
 	content: string
 }
+
+export interface EmailTemplate {
+	event: string
+	locale: 'en-US' | 'zh-CN'
+	subject: string
+	html: string
+}
+
+export interface CustomEndpoint { name: string; endpoint: string; description: string }
+export interface CustomMenuItem { id: string; label: string; url: string; open_in_new_tab: boolean }
+export interface AuthSourceDefault { enabled: boolean; balance_cents: number; concurrency: number; rpm: number }
 
 export interface LocaleInfo {
   code: string
@@ -149,6 +245,23 @@ export interface DepartmentRequest {
   cost_center: string
   monthly_budget_cents: number
   status: string
+}
+
+export interface OrganizationGroup {
+	id: string
+	name: string
+	description: string
+	status: string
+	member_ids: string[]
+	created_at: string
+	updated_at: string
+}
+
+export interface OrganizationGroupRequest {
+	name: string
+	description: string
+	status: string
+	member_ids: string[]
 }
 
 export interface GovernancePolicy {
@@ -493,6 +606,7 @@ export interface APIKeyRecord {
   status: string
   key_type: string
   customer_id: string
+  owner_user_id: string
   policy_id: string
   model_allowlist: string[]
   qps_limit: number
@@ -512,6 +626,7 @@ export interface APIKeyCreateRequest {
   expires_at: string
   key_type?: string
   customer_id?: string
+  owner_user_id?: string
 }
 
 export interface APIKeyUpdateRequest {
@@ -522,6 +637,9 @@ export interface APIKeyUpdateRequest {
   monthly_token_limit: number
   expires_at: string
   status: string
+  key_type?: string
+  customer_id?: string
+  owner_user_id?: string
 }
 
 export interface APIKeyCreateResponse {
@@ -639,6 +757,8 @@ export interface SystemArchiveInfo {
   size_bytes: number
   created_at: string
 }
+
+export interface S3BackupObject { key: string; id: string; size_bytes: number; last_modified: string }
 
 export interface SystemRestoreResult {
   operation_id: string
@@ -938,6 +1058,7 @@ export interface OperatorCustomer { id:string; name:string; email:string; group_
 export interface OperatorPricingRule { id:string; name:string; plan_id:string; model:string; input_price_cents_per_1m_tokens:number; output_price_cents_per_1m_tokens:number; rate_multiplier:number; status:string; created_at:string; updated_at:string }
 export interface OperatorBalanceEntry { id:string; customer_id:string; kind:string; amount_cents:number; balance_after_cents:number; reference:string; note:string; actor:string; created_at:string }
 export interface OperatorRiskRule { id:string; name:string; rule_type:string; threshold:number; window_minutes:number; action:string; description:string; status:string; created_at:string; updated_at:string }
+export interface GatewayRiskBlock { api_key_id:string; rule_id:string; reason:string; expires_at:string; created_at:string }
 export interface OperatorNotice { id:string; title:string; content:string; audience:string; status:string; publish_at?:string; created_at:string; updated_at:string }
 export interface OperatorDashboard { customers:number; active_customers:number; plans:number; balance_cents:number; risk_rules:number; published_notices:number }
 
@@ -960,7 +1081,7 @@ export interface UsageReport {
   recent: UsageRecord[]
 }
 
-export type CostAllocationDimension = 'api_key' | 'model'
+export type CostAllocationDimension = 'api_key' | 'user' | 'department' | 'group' | 'model'
 
 export interface CostAllocationRow {
   dimension: CostAllocationDimension
