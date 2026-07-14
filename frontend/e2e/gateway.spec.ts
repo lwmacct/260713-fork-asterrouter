@@ -173,24 +173,24 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
     model_denylist: [],
     qps_limit: 0,
     monthly_token_limit: 0,
-    monthly_budget_cents: 200,
+    monthly_budget_cents: 400,
     overage_action: 'block',
     prompt_logging_mode: 'metadata_only',
     retention_days: 30,
     status: 'active'
   })
 
-  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 80)).status()).toBe(200)
-  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 80)).status()).toBe(200)
+  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 160)).status()).toBe(200)
+  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 160)).status()).toBe(200)
   const budgetWarning = await policyAlert(page, token, budgetKey.record.id, 'api_key_budget')
   expect(budgetWarning).toMatchObject({ severity: 'warning', status: 'active' })
-  expect(budgetWarning.metadata).toMatchObject({ current_month_cost_cents: '160', budget_used_percent: '80' })
-  await expectUsageCost(page, token, budgetKey.record.id, 160)
+  expect(budgetWarning.metadata).toMatchObject({ current_month_cost_cents: '320', budget_used_percent: '80' })
+  await expectUsageCost(page, token, budgetKey.record.id, 320)
 
-  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 40)).status()).toBe(200)
+  expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 80)).status()).toBe(200)
   const budgetCritical = await policyAlert(page, token, budgetKey.record.id, 'api_key_budget')
   expect(budgetCritical).toMatchObject({ id: budgetWarning.id, severity: 'critical', status: 'active' })
-  expect(budgetCritical.metadata).toMatchObject({ current_month_cost_cents: '200', budget_used_percent: '100' })
+  expect(budgetCritical.metadata).toMatchObject({ current_month_cost_cents: '400', budget_used_percent: '100' })
 
   const budgetRejected = await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 1)
   expect(budgetRejected.status()).toBe(429)
@@ -203,7 +203,7 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
   }))
   expect(usage.recent).toContainEqual(expect.objectContaining({ api_key_id: quotaKey.record.id, model: quotaModel, status: 'error', error_type: 'quota_exceeded' }))
   expect(usage.recent).toContainEqual(expect.objectContaining({ api_key_id: budgetKey.record.id, model: budgetModel, status: 'error', error_type: 'budget_exceeded' }))
-  expect(usage.recent.filter((item) => item.api_key_id === budgetKey.record.id).reduce((sum, item) => sum + Number(item.cost_cents || 0), 0)).toBe(200)
+  expect(usage.recent.filter((item) => item.api_key_id === budgetKey.record.id).reduce((sum, item) => sum + Number(item.cost_cents || 0), 0)).toBe(400)
 
   const traces = await envelope<Array<Record<string, unknown>>>(await page.request.get('/api/v1/admin/gateway-traces?limit=100', {
     headers: { Authorization: `Bearer ${token}` }
