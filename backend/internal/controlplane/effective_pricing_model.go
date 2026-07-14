@@ -52,6 +52,11 @@ const (
 	CacheProbeStatusFailed    = "failed"
 	CacheProbeStatusSkipped   = "skipped"
 
+	BillingReconciliationPending     = "pending"
+	BillingReconciliationMatched     = "matched"
+	BillingReconciliationAmbiguous   = "ambiguous"
+	BillingReconciliationUnallocated = "unallocated"
+
 	AffinityBindingSupplier = "supplier"
 	AffinityBindingAccount  = "account"
 )
@@ -191,31 +196,50 @@ type ProviderCacheCapabilityRequest struct {
 	UsageSchema       string `json:"usage_schema"`
 }
 
+type ProviderCacheProductionMetrics struct {
+	ID                     string
+	ProviderAccountID      string
+	UpstreamModel          string
+	Protocol               string
+	MetricsCoverage        float64
+	EligibleRequestHitRate float64
+	CacheTokenHitRate      float64
+	CacheWriteReadRatio    float64
+	BillingConsistencyRate float64
+	ProductionSampleCount  int64
+	MetricsObserved        bool
+	CacheActivityObserved  bool
+	ObservedAt             time.Time
+}
+
 type ProviderCacheProbeRun struct {
-	ID                      string    `json:"id"`
-	ProviderID              string    `json:"provider_id"`
-	ProviderAccountID       string    `json:"provider_account_id"`
-	UpstreamModel           string    `json:"upstream_model"`
-	Protocol                string    `json:"protocol"`
-	ProbeSeriesID           string    `json:"probe_series_id"`
-	SessionHash             string    `json:"session_hash"`
-	PrefixFingerprint       string    `json:"prefix_fingerprint"`
-	PrefixTokens            int64     `json:"prefix_tokens"`
-	WarmCacheReadTokens     int64     `json:"warm_cache_read_tokens"`
-	WarmCacheWriteTokens    int64     `json:"warm_cache_write_tokens"`
-	WarmTTFTMS              int64     `json:"warm_ttft_ms"`
-	ReuseCacheReadTokens    int64     `json:"reuse_cache_read_tokens"`
-	ReuseCacheWriteTokens   int64     `json:"reuse_cache_write_tokens"`
-	ReuseTTFTMS             int64     `json:"reuse_ttft_ms"`
-	ControlCacheReadTokens  int64     `json:"control_cache_read_tokens"`
-	ControlCacheWriteTokens int64     `json:"control_cache_write_tokens"`
-	ControlTTFTMS           int64     `json:"control_ttft_ms"`
-	CacheFieldsPresent      bool      `json:"cache_fields_present"`
-	EstimatedCostMicros     int64     `json:"estimated_cost_micros"`
-	Status                  string    `json:"status"`
-	FailureReason           string    `json:"failure_reason"`
-	StartedAt               time.Time `json:"started_at"`
-	FinishedAt              time.Time `json:"finished_at"`
+	ID                       string    `json:"id"`
+	ProviderID               string    `json:"provider_id"`
+	ProviderAccountID        string    `json:"provider_account_id"`
+	UpstreamModel            string    `json:"upstream_model"`
+	Protocol                 string    `json:"protocol"`
+	ProbeSeriesID            string    `json:"probe_series_id"`
+	SessionHash              string    `json:"session_hash"`
+	PrefixFingerprint        string    `json:"prefix_fingerprint"`
+	PrefixTokens             int64     `json:"prefix_tokens"`
+	WarmCacheReadTokens      int64     `json:"warm_cache_read_tokens"`
+	WarmCacheWriteTokens     int64     `json:"warm_cache_write_tokens"`
+	WarmTTFTMS               int64     `json:"warm_ttft_ms"`
+	WarmUpstreamRequestID    string    `json:"warm_upstream_request_id"`
+	ReuseCacheReadTokens     int64     `json:"reuse_cache_read_tokens"`
+	ReuseCacheWriteTokens    int64     `json:"reuse_cache_write_tokens"`
+	ReuseTTFTMS              int64     `json:"reuse_ttft_ms"`
+	ReuseUpstreamRequestID   string    `json:"reuse_upstream_request_id"`
+	ControlCacheReadTokens   int64     `json:"control_cache_read_tokens"`
+	ControlCacheWriteTokens  int64     `json:"control_cache_write_tokens"`
+	ControlTTFTMS            int64     `json:"control_ttft_ms"`
+	ControlUpstreamRequestID string    `json:"control_upstream_request_id"`
+	CacheFieldsPresent       bool      `json:"cache_fields_present"`
+	EstimatedCostMicros      int64     `json:"estimated_cost_micros"`
+	Status                   string    `json:"status"`
+	FailureReason            string    `json:"failure_reason"`
+	StartedAt                time.Time `json:"started_at"`
+	FinishedAt               time.Time `json:"finished_at"`
 }
 
 type CacheProbeRequest struct {
@@ -226,44 +250,59 @@ type CacheProbeRequest struct {
 	MaxCostMicros     int64  `json:"max_cost_micros"`
 }
 
+type CacheProbeReservationLimits struct {
+	DayStart              time.Time
+	Now                   time.Time
+	Cooldown              time.Duration
+	StaleAfter            time.Duration
+	DailyTokenBudget      int64
+	DailyCostBudgetMicros int64
+}
+
 type EffectivePricingPolicy struct {
-	ID                         string    `json:"id"`
-	Mode                       string    `json:"mode"`
-	WindowHours                int       `json:"window_hours"`
-	MinSampleCount             int64     `json:"min_sample_count"`
-	MinMetricsCoverage         float64   `json:"min_metrics_coverage"`
-	MinBillingConsistency      float64   `json:"min_billing_consistency"`
-	MinCostImprovement         float64   `json:"min_cost_improvement"`
-	MaxErrorRateRegression     float64   `json:"max_error_rate_regression"`
-	MaxP95LatencyRegression    float64   `json:"max_p95_latency_regression"`
-	CanaryPercent              int       `json:"canary_percent"`
-	SupplierAffinityTTLSeconds int       `json:"supplier_affinity_ttl_seconds"`
-	AccountAffinityTTLSeconds  int       `json:"account_affinity_ttl_seconds"`
-	ProbeEnabled               bool      `json:"probe_enabled"`
-	ProbeDailyTokenBudget      int64     `json:"probe_daily_token_budget"`
-	ProbeDailyCostBudgetMicros int64     `json:"probe_daily_cost_budget_micros"`
-	ProbeCooldownSeconds       int       `json:"probe_cooldown_seconds"`
-	UpdatedBy                  string    `json:"updated_by"`
-	CreatedAt                  time.Time `json:"created_at"`
-	UpdatedAt                  time.Time `json:"updated_at"`
+	ID                             string    `json:"id"`
+	Mode                           string    `json:"mode"`
+	WindowHours                    int       `json:"window_hours"`
+	MinSampleCount                 int64     `json:"min_sample_count"`
+	MinMetricsCoverage             float64   `json:"min_metrics_coverage"`
+	MinBillingConsistency          float64   `json:"min_billing_consistency"`
+	MinCostImprovement             float64   `json:"min_cost_improvement"`
+	MinCacheHitRateImprovement     float64   `json:"min_cache_hit_rate_improvement"`
+	MinAffinityImprovement         float64   `json:"min_affinity_improvement"`
+	MaxCacheTiebreakCostRegression float64   `json:"max_cache_tiebreak_cost_regression"`
+	MaxErrorRateRegression         float64   `json:"max_error_rate_regression"`
+	MaxP95LatencyRegression        float64   `json:"max_p95_latency_regression"`
+	CanaryPercent                  int       `json:"canary_percent"`
+	SupplierAffinityTTLSeconds     int       `json:"supplier_affinity_ttl_seconds"`
+	AccountAffinityTTLSeconds      int       `json:"account_affinity_ttl_seconds"`
+	ProbeEnabled                   bool      `json:"probe_enabled"`
+	ProbeDailyTokenBudget          int64     `json:"probe_daily_token_budget"`
+	ProbeDailyCostBudgetMicros     int64     `json:"probe_daily_cost_budget_micros"`
+	ProbeCooldownSeconds           int       `json:"probe_cooldown_seconds"`
+	UpdatedBy                      string    `json:"updated_by"`
+	CreatedAt                      time.Time `json:"created_at"`
+	UpdatedAt                      time.Time `json:"updated_at"`
 }
 
 type EffectivePricingPolicyRequest struct {
-	Mode                       string  `json:"mode"`
-	WindowHours                int     `json:"window_hours"`
-	MinSampleCount             int64   `json:"min_sample_count"`
-	MinMetricsCoverage         float64 `json:"min_metrics_coverage"`
-	MinBillingConsistency      float64 `json:"min_billing_consistency"`
-	MinCostImprovement         float64 `json:"min_cost_improvement"`
-	MaxErrorRateRegression     float64 `json:"max_error_rate_regression"`
-	MaxP95LatencyRegression    float64 `json:"max_p95_latency_regression"`
-	CanaryPercent              int     `json:"canary_percent"`
-	SupplierAffinityTTLSeconds int     `json:"supplier_affinity_ttl_seconds"`
-	AccountAffinityTTLSeconds  int     `json:"account_affinity_ttl_seconds"`
-	ProbeEnabled               bool    `json:"probe_enabled"`
-	ProbeDailyTokenBudget      int64   `json:"probe_daily_token_budget"`
-	ProbeDailyCostBudgetMicros int64   `json:"probe_daily_cost_budget_micros"`
-	ProbeCooldownSeconds       int     `json:"probe_cooldown_seconds"`
+	Mode                           string  `json:"mode"`
+	WindowHours                    int     `json:"window_hours"`
+	MinSampleCount                 int64   `json:"min_sample_count"`
+	MinMetricsCoverage             float64 `json:"min_metrics_coverage"`
+	MinBillingConsistency          float64 `json:"min_billing_consistency"`
+	MinCostImprovement             float64 `json:"min_cost_improvement"`
+	MinCacheHitRateImprovement     float64 `json:"min_cache_hit_rate_improvement"`
+	MinAffinityImprovement         float64 `json:"min_affinity_improvement"`
+	MaxCacheTiebreakCostRegression float64 `json:"max_cache_tiebreak_cost_regression"`
+	MaxErrorRateRegression         float64 `json:"max_error_rate_regression"`
+	MaxP95LatencyRegression        float64 `json:"max_p95_latency_regression"`
+	CanaryPercent                  int     `json:"canary_percent"`
+	SupplierAffinityTTLSeconds     int     `json:"supplier_affinity_ttl_seconds"`
+	AccountAffinityTTLSeconds      int     `json:"account_affinity_ttl_seconds"`
+	ProbeEnabled                   bool    `json:"probe_enabled"`
+	ProbeDailyTokenBudget          int64   `json:"probe_daily_token_budget"`
+	ProbeDailyCostBudgetMicros     int64   `json:"probe_daily_cost_budget_micros"`
+	ProbeCooldownSeconds           int     `json:"probe_cooldown_seconds"`
 }
 
 type EffectivePriceSnapshot struct {
@@ -314,6 +353,14 @@ type EffectivePricingDecisionActionRequest struct {
 	CanaryPercent int    `json:"canary_percent"`
 }
 
+type EffectivePricingDecisionEvaluationRequest struct {
+	Model                      string `json:"model"`
+	UpstreamModel              string `json:"upstream_model"`
+	Protocol                   string `json:"protocol"`
+	CurrentProviderAccountID   string `json:"current_provider_account_id"`
+	CandidateProviderAccountID string `json:"candidate_provider_account_id"`
+}
+
 type RoutingAffinityBinding struct {
 	ScopeKey          string    `json:"scope_key"`
 	Kind              string    `json:"kind"`
@@ -334,8 +381,10 @@ type EffectivePricingUsageAggregate struct {
 	UpstreamModel              string
 	Protocol                   string
 	RequestCount               int64
+	SuccessfulRequestCount     int64
 	ErrorCount                 int64
 	CacheMetricsRequestCount   int64
+	CacheHitRequestCount       int64
 	TotalInputTokens           int64
 	UncachedInputTokens        int64
 	CacheReadTokens            int64
@@ -345,6 +394,7 @@ type EffectivePricingUsageAggregate struct {
 	ProcurementCostMicros      int64
 	ProcurementCostRecordCount int64
 	LatencyTotalMS             int64
+	LastCacheObservedAt        *time.Time
 }
 
 type EffectivePricingReport struct {
@@ -353,6 +403,12 @@ type EffectivePricingReport struct {
 	Policy      EffectivePricingPolicy      `json:"policy"`
 	Rows        []EffectivePricingReportRow `json:"rows"`
 	Decisions   []EffectivePricingDecision  `json:"decisions"`
+}
+
+type EffectivePricingReportQuery struct {
+	Model       string
+	Protocol    string
+	WindowHours int
 }
 
 type EffectivePricingReportRow struct {

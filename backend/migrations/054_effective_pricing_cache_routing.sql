@@ -126,12 +126,15 @@ CREATE TABLE IF NOT EXISTS provider_cache_probe_runs (
   warm_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   warm_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   warm_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  warm_upstream_request_id TEXT NOT NULL DEFAULT '',
   reuse_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   reuse_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   reuse_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  reuse_upstream_request_id TEXT NOT NULL DEFAULT '',
   control_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   control_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   control_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  control_upstream_request_id TEXT NOT NULL DEFAULT '',
   cache_fields_present BOOLEAN NOT NULL DEFAULT FALSE,
   estimated_cost_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
@@ -139,6 +142,10 @@ CREATE TABLE IF NOT EXISTS provider_cache_probe_runs (
   started_at TIMESTAMPTZ NOT NULL,
   finished_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS warm_upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS reuse_upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS control_upstream_request_id TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS provider_cache_probe_runs_account_started_idx
   ON provider_cache_probe_runs(provider_account_id, upstream_model, protocol, started_at DESC);
@@ -151,6 +158,9 @@ CREATE TABLE IF NOT EXISTS effective_pricing_policies (
   min_metrics_coverage DOUBLE PRECISION NOT NULL DEFAULT 0.8,
   min_billing_consistency DOUBLE PRECISION NOT NULL DEFAULT 0.95,
   min_cost_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.08,
+  min_cache_hit_rate_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10,
+  min_affinity_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10,
+  max_cache_tiebreak_cost_regression DOUBLE PRECISION NOT NULL DEFAULT 0.02,
   max_error_rate_regression DOUBLE PRECISION NOT NULL DEFAULT 0.005,
   max_p95_latency_regression DOUBLE PRECISION NOT NULL DEFAULT 0.2,
   canary_percent INTEGER NOT NULL DEFAULT 5,
@@ -158,12 +168,16 @@ CREATE TABLE IF NOT EXISTS effective_pricing_policies (
   account_affinity_ttl_seconds INTEGER NOT NULL DEFAULT 1800,
   probe_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   probe_daily_token_budget BIGINT NOT NULL DEFAULT 100000,
-  probe_daily_cost_budget_micros BIGINT NOT NULL DEFAULT 1000000,
+  probe_daily_cost_budget_micros BIGINT NOT NULL DEFAULT 10000000,
   probe_cooldown_seconds INTEGER NOT NULL DEFAULT 1800,
   updated_by TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS min_cache_hit_rate_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10;
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS min_affinity_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10;
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS max_cache_tiebreak_cost_regression DOUBLE PRECISION NOT NULL DEFAULT 0.02;
 
 CREATE TABLE IF NOT EXISTS effective_price_snapshots (
   id TEXT PRIMARY KEY,

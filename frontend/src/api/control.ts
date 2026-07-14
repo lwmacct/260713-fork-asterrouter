@@ -9,10 +9,16 @@ import type {
   AlertSummary,
   AuditLog,
   AuditLogSummary,
+  CacheProbeRequest,
   CostAllocationReport,
   Department,
   DepartmentRequest,
   Dashboard,
+  EffectivePricingDecision,
+  EffectivePricingDecisionEvaluationRequest,
+  EffectivePricingPolicy,
+  EffectivePricingPolicyRequest,
+  EffectivePricingReport,
   ExportJob,
   ExportJobKind,
   GatewayPolicyExplanation,
@@ -36,9 +42,15 @@ import type {
   ProviderAccount,
   ProviderAccountHealthCheck,
   ProviderAccountRequest,
+  ProviderBillingLine,
+  ProviderBillingLineRequest,
+  ProviderCacheCapability,
+  ProviderCacheProbeRun,
   ProviderHealthCheck,
   ProviderConnection,
   ProviderRequest,
+  ProcurementPrice,
+  ProcurementPriceRequest,
   RoutingGroup,
   RoutingGroupRequest,
   UsageReport,
@@ -297,6 +309,76 @@ export async function createModelPricing(payload: ModelPricingRequest): Promise<
 
 export async function updateModelPricing(id: string, payload: ModelPricingRequest): Promise<ModelPricing> {
   const response = await apiClient.put<ModelPricing>(`/admin/model-pricings/${id}`, payload)
+  return response.data
+}
+
+export async function getEffectivePricingReport(params?: { model?: string; protocol?: string; window_hours?: number }): Promise<EffectivePricingReport> {
+  const response = await apiClient.get<EffectivePricingReport>('/admin/effective-pricing/report', { params })
+  return response.data
+}
+
+export async function getEffectivePricingPolicy(): Promise<EffectivePricingPolicy> {
+  const response = await apiClient.get<EffectivePricingPolicy>('/admin/effective-pricing/policy')
+  return response.data
+}
+
+export async function updateEffectivePricingPolicy(payload: EffectivePricingPolicyRequest): Promise<EffectivePricingPolicy> {
+  const response = await apiClient.put<EffectivePricingPolicy>('/admin/effective-pricing/policy', payload)
+  return response.data
+}
+
+export async function getProcurementPrices(): Promise<ProcurementPrice[]> {
+  const response = await apiClient.get<ProcurementPrice[] | null>('/admin/procurement-prices')
+  return listOrEmpty(response.data)
+}
+
+export async function createProcurementPrice(payload: ProcurementPriceRequest): Promise<ProcurementPrice> {
+  const response = await apiClient.post<ProcurementPrice>('/admin/procurement-prices', payload)
+  return response.data
+}
+
+export async function updateProcurementPrice(id: string, payload: ProcurementPriceRequest): Promise<ProcurementPrice> {
+  const response = await apiClient.put<ProcurementPrice>(`/admin/procurement-prices/${id}`, payload)
+  return response.data
+}
+
+export async function getProviderBillingLines(): Promise<ProviderBillingLine[]> {
+  const response = await apiClient.get<ProviderBillingLine[] | null>('/admin/provider-billing-lines')
+  return listOrEmpty(response.data)
+}
+
+export async function createProviderBillingLine(payload: ProviderBillingLineRequest): Promise<ProviderBillingLine> {
+  const response = await apiClient.post<ProviderBillingLine>('/admin/provider-billing-lines', payload)
+  return response.data
+}
+
+export async function getProviderCacheCapabilities(): Promise<ProviderCacheCapability[]> {
+  const response = await apiClient.get<ProviderCacheCapability[] | null>('/admin/provider-cache-capabilities')
+  return listOrEmpty(response.data)
+}
+
+export async function getProviderCacheProbeRuns(limit = 100): Promise<ProviderCacheProbeRun[]> {
+  const response = await apiClient.get<ProviderCacheProbeRun[] | null>('/admin/provider-cache-probes', { params: { limit } })
+  return listOrEmpty(response.data)
+}
+
+export async function runProviderCacheProbe(payload: CacheProbeRequest): Promise<ProviderCacheProbeRun> {
+  const response = await apiClient.post<ProviderCacheProbeRun>('/admin/provider-cache-probes', payload)
+  return response.data
+}
+
+export async function getEffectivePricingDecisions(): Promise<EffectivePricingDecision[]> {
+  const response = await apiClient.get<EffectivePricingDecision[] | null>('/admin/effective-pricing/decisions')
+  return listOrEmpty(response.data)
+}
+
+export async function evaluateEffectivePricingDecision(payload: EffectivePricingDecisionEvaluationRequest): Promise<EffectivePricingDecision> {
+  const response = await apiClient.post<EffectivePricingDecision>('/admin/effective-pricing/decisions/evaluate', payload)
+  return response.data
+}
+
+export async function actOnEffectivePricingDecision(id: string, action: string, canaryPercent = 0): Promise<EffectivePricingDecision> {
+  const response = await apiClient.post<EffectivePricingDecision>(`/admin/effective-pricing/decisions/${id}/action`, { action, canary_percent: canaryPercent })
   return response.data
 }
 

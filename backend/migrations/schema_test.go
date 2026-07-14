@@ -71,6 +71,57 @@ func TestMigrationSnapshotsApplyToRuntimePostgres(t *testing.T) {
 	}
 }
 
+func TestAIAttemptDispatchMigrationUpgradesExistingAttempts(t *testing.T) {
+	schema := testutil.NewPostgresSchema(t)
+	db := testutil.OpenPostgres(t, schema.URL)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE ai_attempts (
+  id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  provider_id TEXT NOT NULL DEFAULT '',
+  provider_account_id TEXT NOT NULL DEFAULT '',
+  route_id TEXT NOT NULL DEFAULT '',
+  upstream_model TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  error_type TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  UNIQUE(operation_id, attempt_number)
+);
+INSERT INTO ai_attempts(id, operation_id, attempt_number, provider_account_id, status, created_at, updated_at)
+VALUES('attempt-old-1','operation-old',1,'account-old','running',NOW(),NOW()),
+      ('attempt-old-2','operation-old',2,'account-old','running',NOW(),NOW());
+`); err != nil {
+		t.Fatalf("create pre-053 ai_attempts: %v", err)
+	}
+	body, err := migrationFiles.ReadFile("053_ai_attempt_provider_dispatch.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for run := 0; run < 2; run++ {
+		if _, err := db.ExecContext(ctx, string(body)); err != nil {
+			t.Fatalf("apply 053 run %d: %v", run+1, err)
+		}
+	}
+	var state, key string
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT dispatch_state, dispatch_version, dispatch_key FROM ai_attempts WHERE id='attempt-old-1'`).Scan(&state, &version, &key); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || version != 0 || key != "attempt-old-1" {
+		t.Fatalf("upgraded dispatch state=%q version=%d key=%q", state, version, key)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ai_attempts SET provider_task_id='task-shared' WHERE id='attempt-old-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ai_attempts SET provider_task_id='task-shared' WHERE id='attempt-old-2'`); err == nil {
+		t.Fatal("provider task uniqueness constraint accepted duplicate task binding")
+	}
+}
+
 func TestRuntimeSchemaMatchesMigrationSnapshots(t *testing.T) {
 	snapshotSchema := testutil.NewPostgresSchema(t)
 	initializeRuntimeSchema(t, snapshotSchema.URL)

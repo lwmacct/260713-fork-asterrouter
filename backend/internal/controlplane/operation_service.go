@@ -195,10 +195,12 @@ func (s *Service) BindAIAttemptProviderTask(ctx context.Context, attemptID strin
 		return AIAttempt{}, false, ErrAIAttemptNotFound
 	}
 	if attempt.ProviderTaskID != "" {
-		if attempt.ProviderTaskID == reference.ProviderTaskID && attempt.ProviderRequestID == reference.ProviderRequestID {
+		if attempt.ProviderTaskID != reference.ProviderTaskID || attempt.ProviderRequestID != reference.ProviderRequestID {
+			return attempt, false, ErrAIAttemptDispatchConflict
+		}
+		if attempt.DispatchState != AIAttemptDispatchUnknown {
 			return attempt, false, nil
 		}
-		return attempt, false, ErrAIAttemptDispatchConflict
 	}
 	if !oneOf(attempt.DispatchState, AIAttemptDispatchSubmitted, AIAttemptDispatchUnknown) || attempt.DispatchVersion != expectedVersion {
 		return attempt, false, ErrAIAttemptDispatchState
@@ -275,6 +277,46 @@ func (s *Service) RecordAIAttemptReconciliation(ctx context.Context, attemptID s
 	return s.updateAIAttemptDispatch(ctx, requested, expectedVersion)
 }
 
+func (s *Service) ProveAIAttemptNotCreated(ctx context.Context, attemptID string, expectedVersion int) (AIAttempt, bool, error) {
+	attempt, found, err := s.repo.FindAIAttempt(ctx, strings.TrimSpace(attemptID))
+	if err != nil {
+		return AIAttempt{}, false, err
+	}
+	if !found {
+		return AIAttempt{}, false, ErrAIAttemptNotFound
+	}
+	if attempt.ProviderTaskID != "" {
+		return attempt, false, ErrAIAttemptDispatchConflict
+	}
+	changed := false
+	if attempt.DispatchState != AIAttemptDispatchProvenNotCreated {
+		if !oneOf(attempt.DispatchState, AIAttemptDispatchPrepared, AIAttemptDispatchSubmitted, AIAttemptDispatchUnknown) || attempt.DispatchVersion != expectedVersion {
+			return attempt, false, ErrAIAttemptDispatchState
+		}
+		now := s.nowUTC()
+		requested := attempt
+		requested.DispatchState = AIAttemptDispatchProvenNotCreated
+		requested.ProviderTaskStatus = AIAttemptDispatchProvenNotCreated
+		requested.LastReconciledAt = &now
+		requested.ReconcileAfter = nil
+		requested.UpdatedAt = now
+		attempt, changed, err = s.updateAIAttemptDispatch(ctx, requested, expectedVersion)
+		if err != nil {
+			return attempt, false, err
+		}
+	}
+	if attempt.Status == AIAttemptStatusRunning {
+		if err := s.CompleteAIAttempt(ctx, attempt.ID, AIAttemptStatusSkipped, AIAttemptDispatchProvenNotCreated); err != nil {
+			return attempt, changed, err
+		}
+		attempt, _, err = s.repo.FindAIAttempt(ctx, attempt.ID)
+		if err != nil {
+			return AIAttempt{}, changed, err
+		}
+	}
+	return attempt, changed, nil
+}
+
 func (s *Service) AIAttemptsForReconciliation(ctx context.Context, limit int) ([]AIAttempt, error) {
 	return s.repo.ListAIAttemptsForReconciliation(ctx, s.nowUTC(), limit)
 }
@@ -291,7 +333,7 @@ func (s *Service) updateAIAttemptDispatch(ctx context.Context, requested AIAttem
 }
 
 func (s *Service) CompleteAIAttempt(ctx context.Context, attemptID, status, errorType string) error {
-	if !oneOf(status, AIAttemptStatusSucceeded, AIAttemptStatusFailed, AIAttemptStatusSkipped) {
+	if !oneOf(status, AIAttemptStatusSucceeded, AIAttemptStatusFailed, AIAttemptStatusSkipped, AIAttemptStatusCanceled) {
 		return errors.New("invalid ai attempt terminal status")
 	}
 	updated, err := s.repo.CompleteAIAttempt(ctx, strings.TrimSpace(attemptID), status, strings.TrimSpace(errorType), s.nowUTC())

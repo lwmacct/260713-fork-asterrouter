@@ -47,10 +47,14 @@ type Repository interface {
 	CompleteAIOperation(ctx context.Context, id, status, errorType string, completedAt time.Time) (bool, error)
 	CreateDurableAIJob(ctx context.Context, operation AIOperation, job AIJob, event AIJobEvent, outbox TransactionalOutboxEvent) (AIJob, bool, error)
 	FindAIJob(ctx context.Context, id string) (AIJob, bool, error)
+	FindAIJobByOperationID(ctx context.Context, operationID string) (AIJob, bool, error)
 	FindOwnedAIJob(ctx context.Context, id string, owner AIJobOwner) (AIJob, bool, error)
 	RequestAIJobCancellation(ctx context.Context, id string, owner AIJobOwner, requestedAt time.Time) (AIJob, bool, bool, error)
 	ClaimQueuedAIJobs(ctx context.Context, now, leaseUntil time.Time, workerID, leaseToken string, limit int) ([]AIJob, error)
+	ListAIJobsForDeliveryRebuild(ctx context.Context, now time.Time, limit int) ([]AIJob, error)
+	ExtendAIJobQueueLease(ctx context.Context, id string, expectedVersion int, fenceToken int64, leaseToken string, leaseUntil, extendedAt time.Time) (AIJob, bool, error)
 	TransitionAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, toStatus, reason string, transitionedAt time.Time) (AIJob, bool, error)
+	RequeueAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, reason string, nextEligibleAt, transitionedAt time.Time) (AIJob, bool, error)
 	ListAIJobEvents(ctx context.Context, jobID string) ([]AIJobEvent, error)
 	CreateAIAttempt(ctx context.Context, attempt AIAttempt) error
 	CreateOrGetAIAttempt(ctx context.Context, attempt AIAttempt) (AIAttempt, bool, error)
@@ -102,9 +106,12 @@ type Repository interface {
 	SaveProcurementPrice(ctx context.Context, price ProcurementPrice) error
 	ListProviderBillingLines(ctx context.Context) ([]ProviderBillingLine, error)
 	SaveProviderBillingLine(ctx context.Context, line ProviderBillingLine) error
+	SaveProviderBillingLineAndReconcileUsage(ctx context.Context, line ProviderBillingLine, record UsageRecord) error
 	ListProviderCacheCapabilities(ctx context.Context) ([]ProviderCacheCapability, error)
 	SaveProviderCacheCapability(ctx context.Context, capability ProviderCacheCapability) error
+	UpsertProviderCacheProductionMetrics(ctx context.Context, metrics ProviderCacheProductionMetrics) error
 	ListProviderCacheProbeRuns(ctx context.Context, limit int) ([]ProviderCacheProbeRun, error)
+	ReserveProviderCacheProbeRun(ctx context.Context, run ProviderCacheProbeRun, limits CacheProbeReservationLimits) (bool, string, error)
 	SaveProviderCacheProbeRun(ctx context.Context, run ProviderCacheProbeRun) error
 	GetEffectivePricingPolicy(ctx context.Context) (EffectivePricingPolicy, bool, error)
 	SaveEffectivePricingPolicy(ctx context.Context, policy EffectivePricingPolicy) error
@@ -716,6 +723,9 @@ func (r *MemoryRepository) Close() error {
 }
 
 func memoryUsageRecordMatches(record UsageRecord, query UsageQuery) bool {
+	if query.ID != "" && record.ID != query.ID {
+		return false
+	}
 	if query.APIKeyID != "" && record.APIKeyID != query.APIKeyID {
 		return false
 	}
@@ -744,6 +754,9 @@ func memoryUsageRecordMatches(record UsageRecord, query UsageQuery) bool {
 		return false
 	}
 	if query.AccountID != "" && record.ProviderAccountID != query.AccountID {
+		return false
+	}
+	if query.UpstreamRequestID != "" && record.UpstreamRequestID != query.UpstreamRequestID {
 		return false
 	}
 	if query.Status != "" && record.Status != query.Status {
@@ -885,6 +898,7 @@ func appendTimeFilter(clauses *[]string, args *[]any, column string, operator st
 }
 
 func appendUsageRecordFilters(clauses *[]string, args *[]any, query UsageQuery) {
+	appendExactFilter(clauses, args, "id", query.ID)
 	appendExactFilter(clauses, args, "api_key_id", query.APIKeyID)
 	appendAnyExactFilter(clauses, args, "api_key_id", query.APIKeyIDs)
 	appendExactFilter(clauses, args, "customer_id", query.CustomerID)
@@ -895,6 +909,7 @@ func appendUsageRecordFilters(clauses *[]string, args *[]any, query UsageQuery) 
 	appendExactFilter(clauses, args, "model", query.Model)
 	appendExactFilter(clauses, args, "provider_id", query.ProviderID)
 	appendExactFilter(clauses, args, "provider_account_id", query.AccountID)
+	appendExactFilter(clauses, args, "upstream_request_id", query.UpstreamRequestID)
 	appendExactFilter(clauses, args, "status", query.Status)
 	appendTimeFilter(clauses, args, "created_at", ">=", query.CreatedFrom)
 	appendTimeFilter(clauses, args, "created_at", "<=", query.CreatedTo)
@@ -2198,12 +2213,15 @@ CREATE TABLE IF NOT EXISTS provider_cache_probe_runs (
   warm_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   warm_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   warm_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  warm_upstream_request_id TEXT NOT NULL DEFAULT '',
   reuse_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   reuse_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   reuse_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  reuse_upstream_request_id TEXT NOT NULL DEFAULT '',
   control_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
   control_cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   control_ttft_ms BIGINT NOT NULL DEFAULT 0,
+  control_upstream_request_id TEXT NOT NULL DEFAULT '',
   cache_fields_present BOOLEAN NOT NULL DEFAULT FALSE,
   estimated_cost_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
@@ -2211,6 +2229,10 @@ CREATE TABLE IF NOT EXISTS provider_cache_probe_runs (
   started_at TIMESTAMPTZ NOT NULL,
   finished_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS warm_upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS reuse_upstream_request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_cache_probe_runs ADD COLUMN IF NOT EXISTS control_upstream_request_id TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS provider_cache_probe_runs_account_started_idx
   ON provider_cache_probe_runs(provider_account_id, upstream_model, protocol, started_at DESC);
@@ -2223,6 +2245,9 @@ CREATE TABLE IF NOT EXISTS effective_pricing_policies (
   min_metrics_coverage DOUBLE PRECISION NOT NULL DEFAULT 0.8,
   min_billing_consistency DOUBLE PRECISION NOT NULL DEFAULT 0.95,
   min_cost_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.08,
+  min_cache_hit_rate_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10,
+  min_affinity_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10,
+  max_cache_tiebreak_cost_regression DOUBLE PRECISION NOT NULL DEFAULT 0.02,
   max_error_rate_regression DOUBLE PRECISION NOT NULL DEFAULT 0.005,
   max_p95_latency_regression DOUBLE PRECISION NOT NULL DEFAULT 0.2,
   canary_percent INTEGER NOT NULL DEFAULT 5,
@@ -2230,12 +2255,16 @@ CREATE TABLE IF NOT EXISTS effective_pricing_policies (
   account_affinity_ttl_seconds INTEGER NOT NULL DEFAULT 1800,
   probe_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   probe_daily_token_budget BIGINT NOT NULL DEFAULT 100000,
-  probe_daily_cost_budget_micros BIGINT NOT NULL DEFAULT 1000000,
+  probe_daily_cost_budget_micros BIGINT NOT NULL DEFAULT 10000000,
   probe_cooldown_seconds INTEGER NOT NULL DEFAULT 1800,
   updated_by TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS min_cache_hit_rate_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10;
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS min_affinity_improvement DOUBLE PRECISION NOT NULL DEFAULT 0.10;
+ALTER TABLE effective_pricing_policies ADD COLUMN IF NOT EXISTS max_cache_tiebreak_cost_regression DOUBLE PRECISION NOT NULL DEFAULT 0.02;
 
 CREATE TABLE IF NOT EXISTS effective_price_snapshots (
   id TEXT PRIMARY KEY,
@@ -2953,9 +2982,9 @@ type usageRecordExecutor interface {
 
 func saveUsageRecord(ctx context.Context, executor usageRecordExecutor, record UsageRecord) error {
 	_, err := executor.ExecContext(ctx, `
-INSERT INTO usage_records(id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, provider_id, provider_account_id, status, error_type, latency_ms, input_tokens, output_tokens, cost_cents, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
-`, record.ID, record.OperationID, record.AttemptID, record.UsageVersion, record.UsageSource, record.RequestFingerprint, record.APIKeyID, record.CustomerID, record.ProfileScope, record.PlatformTenantID, record.PlatformTenantName, record.GatewayPrincipalID, record.GatewayPrincipalName, record.ExternalAuthIntegrationID, record.ExternalSubjectReference, record.APIFingerprint, record.Model, record.UpstreamModel, record.ProviderID, record.ProviderAccountID, record.Status, record.ErrorType, record.LatencyMS, record.InputTokens, record.OutputTokens, record.CostCents, record.CreatedAt)
+INSERT INTO usage_records(id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, cost_cents, created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)
+`, record.ID, record.OperationID, record.AttemptID, record.UsageVersion, record.UsageSource, record.RequestFingerprint, record.APIKeyID, record.CustomerID, record.ProfileScope, record.PlatformTenantID, record.PlatformTenantName, record.GatewayPrincipalID, record.GatewayPrincipalName, record.ExternalAuthIntegrationID, record.ExternalSubjectReference, record.APIFingerprint, record.Model, record.UpstreamModel, record.Protocol, record.ProviderID, record.ProviderAccountID, record.Status, record.ErrorType, record.LatencyMS, record.TTFTMS, record.InputTokens, record.OutputTokens, record.TotalInputTokens, record.UncachedInputTokens, record.CacheReadTokens, record.CacheWrite5mTokens, record.CacheWrite1hTokens, record.CacheFieldsPresent, record.UsageNormalizationStatus, record.UpstreamRequestID, record.ProcurementCostMicros, record.ProcurementCostCurrency, record.ProcurementCostSource, record.ProcurementCostConfidence, record.ProcurementPriceID, record.ProviderBillingLineID, record.CostCents, record.CreatedAt)
 	return err
 }
 
@@ -2969,7 +2998,7 @@ func (r *PostgresRepository) QueryUsageRecords(ctx context.Context, query UsageQ
 	args := []any{}
 	appendUsageRecordFilters(&clauses, &args, query)
 	sqlText := `
-SELECT id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, provider_id, provider_account_id, status, error_type, latency_ms, input_tokens, output_tokens, cost_cents, created_at
+SELECT id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, cost_cents, created_at
 FROM usage_records`
 	if len(clauses) > 0 {
 		sqlText += " WHERE " + strings.Join(clauses, " AND ")
@@ -2984,7 +3013,7 @@ FROM usage_records`
 	var out []UsageRecord
 	for rows.Next() {
 		var record UsageRecord
-		if err := rows.Scan(&record.ID, &record.OperationID, &record.AttemptID, &record.UsageVersion, &record.UsageSource, &record.RequestFingerprint, &record.APIKeyID, &record.CustomerID, &record.ProfileScope, &record.PlatformTenantID, &record.PlatformTenantName, &record.GatewayPrincipalID, &record.GatewayPrincipalName, &record.ExternalAuthIntegrationID, &record.ExternalSubjectReference, &record.APIFingerprint, &record.Model, &record.UpstreamModel, &record.ProviderID, &record.ProviderAccountID, &record.Status, &record.ErrorType, &record.LatencyMS, &record.InputTokens, &record.OutputTokens, &record.CostCents, &record.CreatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.OperationID, &record.AttemptID, &record.UsageVersion, &record.UsageSource, &record.RequestFingerprint, &record.APIKeyID, &record.CustomerID, &record.ProfileScope, &record.PlatformTenantID, &record.PlatformTenantName, &record.GatewayPrincipalID, &record.GatewayPrincipalName, &record.ExternalAuthIntegrationID, &record.ExternalSubjectReference, &record.APIFingerprint, &record.Model, &record.UpstreamModel, &record.Protocol, &record.ProviderID, &record.ProviderAccountID, &record.Status, &record.ErrorType, &record.LatencyMS, &record.TTFTMS, &record.InputTokens, &record.OutputTokens, &record.TotalInputTokens, &record.UncachedInputTokens, &record.CacheReadTokens, &record.CacheWrite5mTokens, &record.CacheWrite1hTokens, &record.CacheFieldsPresent, &record.UsageNormalizationStatus, &record.UpstreamRequestID, &record.ProcurementCostMicros, &record.ProcurementCostCurrency, &record.ProcurementCostSource, &record.ProcurementCostConfidence, &record.ProcurementPriceID, &record.ProviderBillingLineID, &record.CostCents, &record.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, record)

@@ -599,6 +599,232 @@ export interface ModelPricingRequest {
   status: string
 }
 
+export interface ProcurementPrice {
+  id: string
+  provider_id: string
+  provider_account_id: string
+  upstream_model: string
+  protocol: string
+  currency: string
+  uncached_input_micros_per_1m_tokens: number
+  cache_read_micros_per_1m_tokens: number
+  cache_write_5m_micros_per_1m_tokens: number
+  cache_write_1h_micros_per_1m_tokens: number
+  output_micros_per_1m_tokens: number
+  request_micros: number
+  reference_input_micros_per_1m_tokens: number
+  reference_output_micros_per_1m_tokens: number
+  quoted_multiplier: number
+  recharge_multiplier: number
+  source_kind: string
+  source_reference: string
+  evidence_hash: string
+  confidence: string
+  status: string
+  effective_from: string
+  expires_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export type ProcurementPriceRequest = Omit<ProcurementPrice, 'id' | 'created_at' | 'updated_at'>
+
+export interface ProviderBillingLine {
+  id: string
+  provider_id: string
+  provider_account_id: string
+  external_line_id: string
+  external_request_id: string
+  usage_record_id: string
+  upstream_model: string
+  currency: string
+  amount_micros: number
+  input_cost_micros?: number
+  output_cost_micros?: number
+  cache_read_cost_micros?: number
+  cache_write_cost_micros?: number
+  source_kind: string
+  confidence: string
+  reconciliation_status: string
+  raw_payload_hash: string
+  usage_started_at?: string
+  usage_ended_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProviderBillingLineRequest {
+  provider_id: string
+  provider_account_id: string
+  external_line_id: string
+  external_request_id: string
+  usage_record_id: string
+  upstream_model: string
+  currency: string
+  amount_micros: number
+  input_cost_micros?: number
+  output_cost_micros?: number
+  cache_read_cost_micros?: number
+  cache_write_cost_micros?: number
+  source_kind: string
+  confidence: string
+  raw_payload_hash: string
+  usage_started_at: string
+  usage_ended_at: string
+}
+
+export interface ProviderCacheCapability {
+  id: string
+  provider_account_id: string
+  upstream_model: string
+  protocol: string
+  support_status: string
+  pool_affinity_grade: string
+  affinity_transport: string
+  affinity_field: string
+  cache_control_mode: string
+  usage_schema: string
+  metrics_coverage: number
+  eligible_request_hit_rate: number
+  cache_token_hit_rate: number
+  cache_write_read_ratio: number
+  affinity_consistency_rate: number
+  billing_consistency_rate: number
+  production_sample_count: number
+  probe_sample_count: number
+  degraded_reason: string
+  last_observed_at?: string
+  last_verified_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProviderCacheProbeRun {
+  id: string
+  provider_id: string
+  provider_account_id: string
+  upstream_model: string
+  protocol: string
+  probe_series_id: string
+  prefix_tokens: number
+  warm_cache_read_tokens: number
+  warm_cache_write_tokens: number
+  warm_ttft_ms: number
+  warm_upstream_request_id: string
+  reuse_cache_read_tokens: number
+  reuse_cache_write_tokens: number
+  reuse_ttft_ms: number
+  reuse_upstream_request_id: string
+  control_cache_read_tokens: number
+  control_cache_write_tokens: number
+  control_ttft_ms: number
+  control_upstream_request_id: string
+  cache_fields_present: boolean
+  estimated_cost_micros: number
+  status: string
+  failure_reason: string
+  started_at: string
+  finished_at: string
+}
+
+export interface CacheProbeRequest {
+  provider_account_id: string
+  upstream_model: string
+  protocol: string
+  prefix_tokens: number
+  max_cost_micros: number
+}
+
+export interface EffectivePricingPolicy {
+  id: string
+  mode: string
+  window_hours: number
+  min_sample_count: number
+  min_metrics_coverage: number
+  min_billing_consistency: number
+  min_cost_improvement: number
+  min_cache_hit_rate_improvement: number
+  min_affinity_improvement: number
+  max_cache_tiebreak_cost_regression: number
+  max_error_rate_regression: number
+  max_p95_latency_regression: number
+  canary_percent: number
+  supplier_affinity_ttl_seconds: number
+  account_affinity_ttl_seconds: number
+  probe_enabled: boolean
+  probe_daily_token_budget: number
+  probe_daily_cost_budget_micros: number
+  probe_cooldown_seconds: number
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type EffectivePricingPolicyRequest = Omit<EffectivePricingPolicy, 'id' | 'updated_by' | 'created_at' | 'updated_at'>
+
+export interface EffectivePricingDecision {
+  id: string
+  model: string
+  protocol: string
+  current_provider_account_id: string
+  candidate_provider_account_id: string
+  current_cost_micros_per_1m: number
+  candidate_cost_micros_per_1m: number
+  cost_improvement: number
+  status: string
+  reason_codes: string[]
+  canary_percent: number
+  sample_count: number
+  confidence: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface EffectivePricingReportRow {
+  provider_id: string
+  provider_name: string
+  provider_account_id: string
+  provider_account_name: string
+  upstream_model: string
+  protocol: string
+  currency: string
+  quoted_multiplier: number
+  billed_multiplier: number
+  effective_multiplier: number
+  effective_cost_micros_per_1m: number
+  request_count: number
+  error_rate: number
+  metrics_coverage: number
+  eligible_request_hit_rate: number
+  cache_token_hit_rate: number
+  cache_write_read_ratio: number
+  billing_consistency_rate: number
+  affinity_consistency_rate: number
+  cache_support_status: string
+  pool_affinity_grade: string
+  cost_confidence: string
+  price_id: string
+  recommendation: string
+  reason_codes: string[]
+}
+
+export interface EffectivePricingReport {
+  window_start: string
+  window_end: string
+  policy: EffectivePricingPolicy
+  rows: EffectivePricingReportRow[]
+  decisions: EffectivePricingDecision[]
+}
+
+export interface EffectivePricingDecisionEvaluationRequest {
+  model: string
+  upstream_model: string
+  protocol: string
+  current_provider_account_id: string
+  candidate_provider_account_id: string
+}
+
 export interface APIKeyRecord {
   id: string
   name: string
@@ -1250,13 +1476,29 @@ export interface UsageRecord {
   api_fingerprint: string
   model: string
   upstream_model: string
+  protocol: string
   provider_id: string
   provider_account_id: string
   status: string
   error_type: string
   latency_ms: number
+  ttft_ms?: number
   input_tokens: number
   output_tokens: number
+  total_input_tokens?: number
+  uncached_input_tokens?: number
+  cache_read_tokens?: number
+  cache_write_5m_tokens?: number
+  cache_write_1h_tokens?: number
+  cache_fields_present: boolean
+  usage_normalization_status: string
+  upstream_request_id: string
+  procurement_cost_micros?: number
+  procurement_cost_currency: string
+  procurement_cost_source: string
+  procurement_cost_confidence: string
+  procurement_price_id: string
+  provider_billing_line_id: string
   cost_cents: number
   created_at: string
 }

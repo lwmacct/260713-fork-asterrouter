@@ -38,6 +38,7 @@ const (
 	AIJobOutboxAggregate      = "ai_job"
 	AIJobDefaultTTL           = 24 * time.Hour
 	AIJobDefaultPollAfter     = 2
+	AIJobDefaultRetryAfter    = 5 * time.Second
 )
 
 type AIJob struct {

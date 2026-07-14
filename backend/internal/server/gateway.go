@@ -132,9 +132,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			errorType := gatewayPolicyErrorType(err)
 			_ = control.RecordGatewayCall(c.Request.Context(), auth, req.Model, "policy_rejected", err.Error())
 			_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
-				Model:     req.Model,
-				Status:    "error",
-				ErrorType: errorType,
+				Model: req.Model, Protocol: string(req.Protocol), Status: "error", ErrorType: errorType,
 				LatencyMS: time.Since(startedAt).Milliseconds(),
 			})
 			recordGatewayTrace(control, c, auth, gatewayTraceInput(req, controlplane.GatewayProvider{}, "error", http.StatusTooManyRequests, errorType, time.Since(startedAt).Milliseconds(), 0, 0, err.Error(), ""))
@@ -145,9 +143,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 		plan, err := control.PlanCanonicalGatewayRequest(c.Request.Context(), canonicalAuth, req)
 		if err != nil {
 			_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
-				Model:     req.Model,
-				Status:    "error",
-				ErrorType: "provider_selection_error",
+				Model: req.Model, Protocol: string(req.Protocol), Status: "error", ErrorType: "provider_selection_error",
 				LatencyMS: time.Since(startedAt).Milliseconds(),
 			})
 			recordGatewayTrace(control, c, auth, gatewayTraceInput(req, controlplane.GatewayProvider{}, "error", 0, "provider_selection_error", time.Since(startedAt).Milliseconds(), 0, 0, err.Error(), ""))
@@ -159,9 +155,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			routeErr := controlplane.ErrGatewayRouteUnavailable
 			_ = control.RecordGatewayCall(c.Request.Context(), auth, req.Model, "policy_rejected", routeErr.Error())
 			_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
-				Model:     req.Model,
-				Status:    "error",
-				ErrorType: "route_unavailable",
+				Model: req.Model, Protocol: string(req.Protocol), Status: "error", ErrorType: "route_unavailable",
 				LatencyMS: time.Since(startedAt).Milliseconds(),
 			})
 			recordGatewayTrace(control, c, auth, gatewayTraceInput(req, controlplane.GatewayProvider{}, "error", http.StatusServiceUnavailable, "route_unavailable", time.Since(startedAt).Milliseconds(), 0, 0, routeErr.Error(), marshalRouteEvidence(plan.Exclusions, nil)))
@@ -182,14 +176,20 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				return
 			}
 			if !capacityAcquired {
-				_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{Model: req.Model, Status: "error", ErrorType: capacityReason, LatencyMS: time.Since(startedAt).Milliseconds()})
+				_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{Model: req.Model, Protocol: string(req.Protocol), Status: "error", ErrorType: capacityReason, LatencyMS: time.Since(startedAt).Milliseconds()})
 				recordGatewayTrace(control, c, auth, gatewayTraceInput(req, controlplane.GatewayProvider{}, "error", http.StatusTooManyRequests, capacityReason, time.Since(startedAt).Milliseconds(), 0, 0, "gateway credential capacity rejected the request", ""))
 				_ = completeOperation(controlplane.AIOperationStatusFailed, capacityReason)
 				writeGatewayError(c, controlplane.ErrGatewayCapacityLimited)
 				return
 			}
 			defer credentialPermit.Release()
-			candidates := control.PreferStickyGatewayCandidate(canonicalAuth.CredentialID, req.Model, string(req.Protocol), req.StickyKey, plan.Candidates)
+			affinity := controlplane.GatewayAffinityInput{
+				TenantID: canonicalAuth.TenantID, PrincipalID: canonicalAuth.PrincipalID, CredentialID: canonicalAuth.CredentialID,
+				Model: req.Model, Protocol: string(req.Protocol), RouteGroup: plan.RouteGroup, StickyKey: req.StickyKey,
+				PolicyVersion: canonicalAuth.PolicyVersion,
+			}
+			pricedCandidates := control.OrderGatewayCandidatesByEffectivePricing(c.Request.Context(), req.Model, string(req.Protocol), req.Fingerprint, plan.Candidates)
+			candidates := control.PreferGatewayCandidatesWithAffinity(c.Request.Context(), affinity, pricedCandidates)
 			resp, provider, release, attempts, attemptErr := attemptGatewayCandidates(c, control, operation.ID, candidates, req.Payload, req.Stream)
 			routeAttempts := marshalRouteEvidence(plan.Exclusions, attempts)
 			if provider.AttemptID != "" {
@@ -203,6 +203,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
 					Model:             req.Model,
 					UpstreamModel:     provider.UpstreamModel,
+					Protocol:          string(req.Protocol),
 					ProviderID:        provider.ID,
 					ProviderAccountID: provider.AccountID,
 					Status:            "upstream_error",
@@ -222,7 +223,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				status = "upstream_error"
 			}
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				control.BindStickyGatewayCandidate(canonicalAuth.CredentialID, req.Model, string(req.Protocol), req.StickyKey, provider)
+				_ = control.BindGatewayCandidateAffinity(c.Request.Context(), affinity, provider)
 			}
 			summary := gatewayRouteSummary(req.Model, provider)
 			if req.Stream {
@@ -232,7 +233,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 					openAIError(c, http.StatusInternalServerError, "server_error", err.Error())
 					return
 				}
-				streamErr := streamUpstreamResponse(c, resp)
+				streamUsage, ttftMS, streamErr := streamUpstreamResponse(c, resp, startedAt)
 				errorType := ""
 				usageStatus := status
 				if streamErr != nil {
@@ -254,13 +255,25 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 					responseSummary = streamErr.Error()
 				}
 				usageErr := recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
-					Model:             req.Model,
-					UpstreamModel:     provider.UpstreamModel,
-					ProviderID:        provider.ID,
-					ProviderAccountID: provider.AccountID,
-					Status:            usageStatus,
-					ErrorType:         errorType,
-					LatencyMS:         time.Since(startedAt).Milliseconds(),
+					Model:                    req.Model,
+					UpstreamModel:            provider.UpstreamModel,
+					Protocol:                 string(req.Protocol),
+					ProviderID:               provider.ID,
+					ProviderAccountID:        provider.AccountID,
+					Status:                   usageStatus,
+					ErrorType:                errorType,
+					LatencyMS:                time.Since(startedAt).Milliseconds(),
+					TTFTMS:                   ttftMS,
+					InputTokens:              streamUsage.InputTokens,
+					OutputTokens:             streamUsage.OutputTokens,
+					TotalInputTokens:         streamUsage.TotalInputTokens,
+					UncachedInputTokens:      streamUsage.UncachedInputTokens,
+					CacheReadTokens:          streamUsage.CacheReadTokens,
+					CacheWrite5mTokens:       streamUsage.CacheWrite5mTokens,
+					CacheWrite1hTokens:       streamUsage.CacheWrite1hTokens,
+					CacheFieldsPresent:       streamUsage.CacheFieldsPresent,
+					UsageNormalizationStatus: streamUsage.UsageNormalizationStatus,
+					UpstreamRequestID:        upstreamRequestID(resp),
 				})
 				if usageErr != nil {
 					_ = completeOperation(controlplane.AIOperationStatusFailed, "usage_ledger_error")
@@ -268,14 +281,14 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				} else {
 					_ = completeOperation(operationStatus, errorType)
 				}
-				recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, usageStatus, resp.StatusCode, errorType, time.Since(startedAt).Milliseconds(), 0, 0, responseSummary, routeAttempts))
+				recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, usageStatus, resp.StatusCode, errorType, time.Since(startedAt).Milliseconds(), streamUsage.InputTokens, streamUsage.OutputTokens, responseSummary, routeAttempts))
 				if streamErr != nil && !c.Writer.Written() {
 					openAIError(c, http.StatusBadGateway, "upstream_error", streamErr.Error())
 				}
 				return
 			}
 
-			contentType, upstreamBody, err := readUpstreamResponse(resp)
+			contentType, upstreamBody, ttftMS, err := readUpstreamResponse(resp, startedAt)
 			if err != nil {
 				_ = control.CompleteAIAttempt(c.Request.Context(), provider.AttemptID, controlplane.AIAttemptStatusFailed, "response_read_error")
 				_ = completeOperation(controlplane.AIOperationStatusFailed, "response_read_error")
@@ -283,6 +296,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
 					Model:             req.Model,
 					UpstreamModel:     provider.UpstreamModel,
+					Protocol:          string(req.Protocol),
 					ProviderID:        provider.ID,
 					ProviderAccountID: provider.AccountID,
 					Status:            "upstream_error",
@@ -299,7 +313,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				openAIError(c, http.StatusInternalServerError, "server_error", err.Error())
 				return
 			}
-			inputTokens, outputTokens := parseUpstreamUsage(upstreamBody)
+			usage := parseGatewayUsage(upstreamBody)
 			errorType := ""
 			if status == "upstream_error" {
 				errorType = "upstream_status"
@@ -312,24 +326,34 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			}
 			_ = control.CompleteAIAttempt(c.Request.Context(), provider.AttemptID, attemptStatus, errorType)
 			usageErr := recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
-				Model:             req.Model,
-				UpstreamModel:     provider.UpstreamModel,
-				ProviderID:        provider.ID,
-				ProviderAccountID: provider.AccountID,
-				Status:            status,
-				ErrorType:         errorType,
-				LatencyMS:         time.Since(startedAt).Milliseconds(),
-				InputTokens:       inputTokens,
-				OutputTokens:      outputTokens,
+				Model:                    req.Model,
+				UpstreamModel:            provider.UpstreamModel,
+				Protocol:                 string(req.Protocol),
+				ProviderID:               provider.ID,
+				ProviderAccountID:        provider.AccountID,
+				Status:                   status,
+				ErrorType:                errorType,
+				LatencyMS:                time.Since(startedAt).Milliseconds(),
+				TTFTMS:                   ttftMS,
+				InputTokens:              usage.InputTokens,
+				OutputTokens:             usage.OutputTokens,
+				TotalInputTokens:         usage.TotalInputTokens,
+				UncachedInputTokens:      usage.UncachedInputTokens,
+				CacheReadTokens:          usage.CacheReadTokens,
+				CacheWrite5mTokens:       usage.CacheWrite5mTokens,
+				CacheWrite1hTokens:       usage.CacheWrite1hTokens,
+				CacheFieldsPresent:       usage.CacheFieldsPresent,
+				UsageNormalizationStatus: usage.UsageNormalizationStatus,
+				UpstreamRequestID:        upstreamRequestID(resp),
 			})
 			if usageErr != nil {
 				_ = completeOperation(controlplane.AIOperationStatusFailed, "usage_ledger_error")
-				recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, "error", http.StatusInternalServerError, "usage_ledger_error", time.Since(startedAt).Milliseconds(), inputTokens, outputTokens, usageErr.Error(), routeAttempts))
+				recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, "error", http.StatusInternalServerError, "usage_ledger_error", time.Since(startedAt).Milliseconds(), usage.InputTokens, usage.OutputTokens, usageErr.Error(), routeAttempts))
 				openAIError(c, http.StatusInternalServerError, "server_error", "failed to record gateway usage")
 				return
 			}
 			_ = completeOperation(operationStatus, errorType)
-			recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, status, resp.StatusCode, errorType, time.Since(startedAt).Milliseconds(), inputTokens, outputTokens, upstreamResponseSummary(resp.StatusCode, upstreamBody), routeAttempts))
+			recordGatewayTrace(control, c, auth, gatewayTraceInput(req, provider, status, resp.StatusCode, errorType, time.Since(startedAt).Milliseconds(), usage.InputTokens, usage.OutputTokens, upstreamResponseSummary(resp.StatusCode, upstreamBody), routeAttempts))
 			c.Data(resp.StatusCode, contentType, upstreamBody)
 			return
 		}
@@ -634,42 +658,40 @@ var gatewayHTTPClient = func(stream bool) *http.Client {
 	return &http.Client{Timeout: 120 * time.Second}
 }
 
-func readUpstreamResponse(resp *http.Response) (string, []byte, error) {
+func readUpstreamResponse(resp *http.Response, startedAt time.Time) (string, []byte, *int64, error) {
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, gatewayUpstreamBodyLimit+1))
-	if err != nil {
-		return "", nil, err
+	reader := io.LimitReader(resp.Body, gatewayUpstreamBodyLimit+1)
+	var body bytes.Buffer
+	buffer := make([]byte, 32*1024)
+	var ttftMS *int64
+	for {
+		n, readErr := reader.Read(buffer)
+		if n > 0 {
+			if ttftMS == nil {
+				value := time.Since(startedAt).Milliseconds()
+				ttftMS = &value
+			}
+			_, _ = body.Write(buffer[:n])
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", nil, ttftMS, readErr
+		}
 	}
-	if len(body) > gatewayUpstreamBodyLimit {
-		return "", nil, errUpstreamResponseTooLarge
+	if body.Len() > gatewayUpstreamBodyLimit {
+		return "", nil, ttftMS, errUpstreamResponseTooLarge
 	}
-	return contentType, body, nil
+	return contentType, body.Bytes(), ttftMS, nil
 }
 
 func parseUpstreamUsage(body []byte) (int, int) {
-	var payload struct {
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			InputTokens      int `json:"input_tokens"`
-			OutputTokens     int `json:"output_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return 0, 0
-	}
-	input := payload.Usage.PromptTokens
-	if input == 0 {
-		input = payload.Usage.InputTokens
-	}
-	output := payload.Usage.CompletionTokens
-	if output == 0 {
-		output = payload.Usage.OutputTokens
-	}
-	return input, output
+	usage := parseGatewayUsage(body)
+	return usage.InputTokens, usage.OutputTokens
 }
 
 func recordGatewayUsage(control *controlplane.Service, c *gin.Context, auth controlplane.GatewayAuthContext, input controlplane.GatewayUsageInput) error {
@@ -691,7 +713,7 @@ func recordGatewayTrace(control *controlplane.Service, c *gin.Context, auth cont
 	}
 }
 
-func streamUpstreamResponse(c *gin.Context, resp *http.Response) error {
+func streamUpstreamResponse(c *gin.Context, resp *http.Response, startedAt time.Time) (gatewayUsageObservation, *int64, error) {
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "text/event-stream"
@@ -702,19 +724,38 @@ func streamUpstreamResponse(c *gin.Context, resp *http.Response) error {
 	c.Status(resp.StatusCode)
 
 	buf := make([]byte, 32*1024)
+	collector := gatewaySSEUsageCollector{}
+	var ttftMS *int64
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			if ttftMS == nil {
+				value := time.Since(startedAt).Milliseconds()
+				ttftMS = &value
+			}
+			collector.Write(buf[:n])
 			if _, err := c.Writer.Write(buf[:n]); err != nil {
-				return err
+				return collector.Observation(), ttftMS, err
 			}
 			c.Writer.Flush()
 		}
 		if readErr == io.EOF {
-			return nil
+			return collector.Observation(), ttftMS, nil
 		}
 		if readErr != nil {
-			return readErr
+			return collector.Observation(), ttftMS, readErr
 		}
 	}
+}
+
+func upstreamRequestID(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	for _, key := range []string{"X-Request-ID", "Request-ID", "Anthropic-Request-ID", "X-Request-Id"} {
+		if value := strings.TrimSpace(resp.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }

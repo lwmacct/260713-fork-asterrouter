@@ -95,6 +95,14 @@ func (s *Service) CancelAIJobForAuth(ctx context.Context, auth gatewaycore.Canon
 }
 
 func (s *Service) ClaimReadyAIJobs(ctx context.Context, workerID string, leaseDuration time.Duration, limit int) ([]AIJob, error) {
+	return s.claimReadyAIJobs(ctx, workerID, leaseDuration, limit, true)
+}
+
+func (s *Service) claimReadyAIJobMetadata(ctx context.Context, workerID string, leaseDuration time.Duration, limit int) ([]AIJob, error) {
+	return s.claimReadyAIJobs(ctx, workerID, leaseDuration, limit, false)
+}
+
+func (s *Service) claimReadyAIJobs(ctx context.Context, workerID string, leaseDuration time.Duration, limit int, includePayload bool) ([]AIJob, error) {
 	if leaseDuration <= 0 {
 		return nil, errors.New("positive ai job lease duration is required")
 	}
@@ -102,6 +110,9 @@ func (s *Service) ClaimReadyAIJobs(ctx context.Context, workerID string, leaseDu
 	jobs, err := s.repo.ClaimQueuedAIJobs(ctx, now, now.Add(leaseDuration), strings.TrimSpace(workerID), "job_lease_"+randomID(12), limit)
 	if err != nil {
 		return nil, err
+	}
+	if !includePayload {
+		return jobs, nil
 	}
 	for index := range jobs {
 		payload, decryptErr := decryptSecret(s.secretKey, jobs[index].RequestPayloadCiphertext)
@@ -114,8 +125,43 @@ func (s *Service) ClaimReadyAIJobs(ctx context.Context, workerID string, leaseDu
 	return jobs, nil
 }
 
+func (s *Service) ExtendAIJobQueueLease(ctx context.Context, envelope AIJobDeliveryEnvelope, leaseDuration time.Duration) (AIJob, error) {
+	if err := validateAIJobDeliveryEnvelope(envelope); err != nil {
+		return AIJob{}, err
+	}
+	if leaseDuration <= 0 {
+		return AIJob{}, errors.New("positive ai job lease duration is required")
+	}
+	now := s.nowUTC()
+	job, extended, err := s.repo.ExtendAIJobQueueLease(
+		ctx, envelope.JobID, envelope.StatusVersion, envelope.FenceToken, envelope.QueueLeaseToken, now.Add(leaseDuration), now,
+	)
+	if err != nil {
+		return AIJob{}, err
+	}
+	if !extended {
+		return job, ErrAIJobStateConflict
+	}
+	return job, nil
+}
+
 func (s *Service) TransitionAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, toStatus, reason string) (AIJob, error) {
 	job, updated, err := s.repo.TransitionAIJob(ctx, strings.TrimSpace(id), expectedVersion, fenceToken, strings.TrimSpace(toStatus), strings.TrimSpace(reason), s.nowUTC())
+	if err != nil {
+		return AIJob{}, err
+	}
+	if !updated {
+		return job, ErrAIJobStateConflict
+	}
+	return job, nil
+}
+
+func (s *Service) RequeueAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, reason string, delay time.Duration) (AIJob, error) {
+	if delay < 0 {
+		return AIJob{}, errors.New("ai job retry delay must be non-negative")
+	}
+	now := s.nowUTC()
+	job, updated, err := s.repo.RequeueAIJob(ctx, strings.TrimSpace(id), expectedVersion, fenceToken, strings.TrimSpace(reason), now.Add(delay), now)
 	if err != nil {
 		return AIJob{}, err
 	}

@@ -24,7 +24,7 @@ func TestServiceDefaults(t *testing.T) {
 	}
 }
 
-func TestApplyProfilesRequiresOneImmutableDeploymentProfile(t *testing.T) {
+func TestApplyProfilesAllowsSwitchingOneActiveDeploymentProfile(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), ServiceOptions{Version: "test", StorageMode: "memory"})
 	got, err := svc.ApplyProfiles(context.Background(), []string{"enterprise"}, "enterprise")
 	if err != nil {
@@ -39,8 +39,12 @@ func TestApplyProfilesRequiresOneImmutableDeploymentProfile(t *testing.T) {
 	if _, err := svc.ApplyProfiles(context.Background(), []string{"enterprise", "personal"}, "enterprise"); err == nil {
 		t.Fatal("ApplyProfiles() accepted more than one deployment profile")
 	}
-	if _, err := svc.ApplyProfiles(context.Background(), []string{"platform"}, "platform"); err == nil {
-		t.Fatal("ApplyProfiles() changed the installed deployment profile")
+	got, err = svc.ApplyProfiles(context.Background(), []string{"platform"}, "platform")
+	if err != nil {
+		t.Fatalf("ApplyProfiles() switch error = %v", err)
+	}
+	if got.DefaultProfile != "platform" || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != "platform" {
+		t.Fatalf("profiles not switched: %+v", got.PublicSettings)
 	}
 }
 
@@ -213,25 +217,28 @@ func TestBootstrapProfilePersistsSingleConfiguredProfile(t *testing.T) {
 	}
 }
 
-func TestBootstrapProfileRejectsConfiguredRoleThatConflictsWithPersistedRole(t *testing.T) {
+func TestBootstrapProfileDoesNotOverrideRuntimeProfileSwitch(t *testing.T) {
 	repo := NewMemoryRepository()
 	installed := NewService(repo, ServiceOptions{Version: "test", StorageMode: "memory"})
 	if _, err := installed.ApplyInitialProfile(context.Background(), "enterprise"); err != nil {
 		t.Fatalf("ApplyInitialProfile() error = %v", err)
 	}
+	if _, err := installed.ApplyProfiles(context.Background(), []string{"platform"}, "platform"); err != nil {
+		t.Fatalf("ApplyProfiles() error = %v", err)
+	}
 
-	configuredAsPlatform := NewService(repo, ServiceOptions{
-		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"platform"}, DefaultProfile: "platform",
+	configuredAsEnterprise := NewService(repo, ServiceOptions{
+		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"enterprise"}, DefaultProfile: "enterprise",
 	})
-	if err := configuredAsPlatform.BootstrapProfile(context.Background()); err == nil {
-		t.Fatal("BootstrapProfile() accepted a bootstrap role that conflicts with the persisted installation")
+	if err := configuredAsEnterprise.BootstrapProfile(context.Background()); err != nil {
+		t.Fatalf("BootstrapProfile() after setup error = %v", err)
 	}
 
 	stored, err := installed.Admin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.DefaultProfile != "enterprise" || len(stored.EnabledProfiles) != 1 || stored.EnabledProfiles[0] != "enterprise" {
+	if stored.DefaultProfile != "platform" || len(stored.EnabledProfiles) != 1 || stored.EnabledProfiles[0] != "platform" {
 		t.Fatalf("persisted deployment profile changed: %+v", stored.PublicSettings)
 	}
 }

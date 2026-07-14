@@ -59,6 +59,17 @@ func (r *MemoryRepository) FindAIJob(_ context.Context, id string) (AIJob, bool,
 	return job, found, nil
 }
 
+func (r *MemoryRepository) FindAIJobByOperationID(_ context.Context, operationID string) (AIJob, bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, job := range r.aiJobs {
+		if job.OperationID == strings.TrimSpace(operationID) {
+			return job, true, nil
+		}
+	}
+	return AIJob{}, false, nil
+}
+
 func (r *MemoryRepository) FindOwnedAIJob(_ context.Context, id string, owner AIJobOwner) (AIJob, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -162,6 +173,52 @@ func (r *MemoryRepository) ClaimQueuedAIJobs(_ context.Context, now, leaseUntil 
 	return claimed, nil
 }
 
+func (r *MemoryRepository) ListAIJobsForDeliveryRebuild(_ context.Context, now time.Time, limit int) ([]AIJob, error) {
+	if limit <= 0 {
+		return []AIJob{}, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	jobs := make([]AIJob, 0)
+	for _, job := range r.aiJobs {
+		if job.Status == AIJobStatusDispatching && job.QueueLeaseUntil != nil && job.QueueLeaseUntil.After(now) && strings.TrimSpace(job.QueueLeaseToken) != "" {
+			jobs = append(jobs, job)
+		}
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
+			return jobs[i].UpdatedAt.Before(jobs[j].UpdatedAt)
+		}
+		return jobs[i].ID < jobs[j].ID
+	})
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs, nil
+}
+
+func (r *MemoryRepository) ExtendAIJobQueueLease(_ context.Context, id string, expectedVersion int, fenceToken int64, leaseToken string, leaseUntil, extendedAt time.Time) (AIJob, bool, error) {
+	if !leaseUntil.After(extendedAt) || strings.TrimSpace(leaseToken) == "" {
+		return AIJob{}, false, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, found := r.aiJobs[id]
+	if !found || job.Status != AIJobStatusDispatching || job.StatusVersion != expectedVersion || job.FenceToken != fenceToken ||
+		job.QueueLeaseUntil == nil || !job.QueueLeaseUntil.After(extendedAt) || job.QueueLeaseToken != leaseToken {
+		return job, false, nil
+	}
+	if !leaseUntil.After(*job.QueueLeaseUntil) {
+		return job, true, nil
+	}
+	job.QueueLeaseUntil = timePointer(leaseUntil)
+	if extendedAt.After(job.UpdatedAt) {
+		job.UpdatedAt = extendedAt
+	}
+	r.aiJobs[id] = job
+	return job, true, nil
+}
+
 func (r *MemoryRepository) TransitionAIJob(_ context.Context, id string, expectedVersion int, fenceToken int64, toStatus, reason string, transitionedAt time.Time) (AIJob, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -172,6 +229,40 @@ func (r *MemoryRepository) TransitionAIJob(_ context.Context, id string, expecte
 	updated, event, outbox, err := prepareAIJobTransition(job, toStatus, reason, transitionedAt)
 	if err != nil {
 		return AIJob{}, false, err
+	}
+	if _, exists := r.aiJobEvents[event.ID]; exists {
+		return AIJob{}, false, fmt.Errorf("ai job event %q already exists", event.ID)
+	}
+	if err := validateMemoryOutboxInsert(r.transactionalOutboxEvents, outbox); err != nil {
+		return AIJob{}, false, err
+	}
+	operation, ok := r.aiOperations[job.OperationID]
+	if !ok {
+		return AIJob{}, false, fmt.Errorf("ai operation %q not found", job.OperationID)
+	}
+	applyMemoryOperationJobStatus(&operation, updated.Status, updated.ErrorType, transitionedAt)
+	r.aiOperations[operation.ID] = operation
+	r.aiJobs[id] = updated
+	r.aiJobEvents[event.ID] = event
+	r.transactionalOutboxEvents[outbox.ID] = outbox
+	return updated, true, nil
+}
+
+func (r *MemoryRepository) RequeueAIJob(_ context.Context, id string, expectedVersion int, fenceToken int64, reason string, nextEligibleAt, transitionedAt time.Time) (AIJob, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, found := r.aiJobs[id]
+	if !found || job.StatusVersion != expectedVersion || (job.FenceToken > 0 && job.FenceToken != fenceToken) {
+		return job, false, nil
+	}
+	updated, event, outbox, err := prepareAIJobTransition(job, AIJobStatusQueued, reason, transitionedAt)
+	if err != nil {
+		return AIJob{}, false, err
+	}
+	if nextEligibleAt.After(transitionedAt) {
+		updated.NextEligibleAt = nextEligibleAt
+	} else {
+		updated.NextEligibleAt = transitionedAt
 	}
 	if _, exists := r.aiJobEvents[event.ID]; exists {
 		return AIJob{}, false, fmt.Errorf("ai job event %q already exists", event.ID)
@@ -257,6 +348,14 @@ func (r *PostgresRepository) CreateDurableAIJob(ctx context.Context, operation A
 func (r *PostgresRepository) FindAIJob(ctx context.Context, id string) (AIJob, bool, error) {
 	job, err := scanAIJob(r.db.QueryRowContext(ctx, `SELECT `+aiJobSelectColumns+` FROM ai_jobs WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
+		return AIJob{}, false, nil
+	}
+	return job, err == nil, err
+}
+
+func (r *PostgresRepository) FindAIJobByOperationID(ctx context.Context, operationID string) (AIJob, bool, error) {
+	job, err := scanAIJob(r.db.QueryRowContext(ctx, `SELECT `+aiJobSelectColumns+` FROM ai_jobs WHERE operation_id=$1`, strings.TrimSpace(operationID)))
+	if err == sql.ErrNoRows {
 		return AIJob{}, false, nil
 	}
 	return job, err == nil, err
@@ -369,6 +468,49 @@ func (r *PostgresRepository) ClaimQueuedAIJobs(ctx context.Context, now, leaseUn
 	return claimed, nil
 }
 
+func (r *PostgresRepository) ListAIJobsForDeliveryRebuild(ctx context.Context, now time.Time, limit int) ([]AIJob, error) {
+	if limit <= 0 {
+		return []AIJob{}, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT `+aiJobSelectColumns+` FROM ai_jobs
+WHERE status=$1 AND queue_lease_until>$2 AND queue_lease_token<>''
+ORDER BY updated_at, id LIMIT $3`, AIJobStatusDispatching, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := make([]AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *PostgresRepository) ExtendAIJobQueueLease(ctx context.Context, id string, expectedVersion int, fenceToken int64, leaseToken string, leaseUntil, extendedAt time.Time) (AIJob, bool, error) {
+	if !leaseUntil.After(extendedAt) || strings.TrimSpace(leaseToken) == "" {
+		return AIJob{}, false, nil
+	}
+	job, err := scanAIJob(r.db.QueryRowContext(ctx, `UPDATE ai_jobs
+SET queue_lease_until=GREATEST(queue_lease_until,$1), updated_at=GREATEST(updated_at,$2)
+WHERE id=$3 AND status=$4 AND status_version=$5 AND fence_token=$6 AND queue_lease_token=$7 AND queue_lease_until>$2
+RETURNING `+aiJobSelectColumns, leaseUntil, extendedAt, id, AIJobStatusDispatching, expectedVersion, fenceToken, leaseToken))
+	if err == nil {
+		return job, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return AIJob{}, false, err
+	}
+	current, _, findErr := r.FindAIJob(ctx, id)
+	if findErr != nil {
+		return AIJob{}, false, findErr
+	}
+	return current, false, nil
+}
+
 func (r *PostgresRepository) TransitionAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, toStatus, reason string, transitionedAt time.Time) (AIJob, bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -388,6 +530,40 @@ func (r *PostgresRepository) TransitionAIJob(ctx context.Context, id string, exp
 	updated, event, outbox, err := prepareAIJobTransition(job, toStatus, reason, transitionedAt)
 	if err != nil {
 		return AIJob{}, false, err
+	}
+	if err := persistAIJobTransition(ctx, tx, job, updated, event, outbox); err != nil {
+		return AIJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AIJob{}, false, err
+	}
+	return updated, true, nil
+}
+
+func (r *PostgresRepository) RequeueAIJob(ctx context.Context, id string, expectedVersion int, fenceToken int64, reason string, nextEligibleAt, transitionedAt time.Time) (AIJob, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AIJob{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	job, err := scanAIJob(tx.QueryRowContext(ctx, `SELECT `+aiJobSelectColumns+` FROM ai_jobs WHERE id=$1 FOR UPDATE`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AIJob{}, false, nil
+	}
+	if err != nil {
+		return AIJob{}, false, err
+	}
+	if job.StatusVersion != expectedVersion || (job.FenceToken > 0 && job.FenceToken != fenceToken) {
+		return job, false, nil
+	}
+	updated, event, outbox, err := prepareAIJobTransition(job, AIJobStatusQueued, reason, transitionedAt)
+	if err != nil {
+		return AIJob{}, false, err
+	}
+	if nextEligibleAt.After(transitionedAt) {
+		updated.NextEligibleAt = nextEligibleAt
+	} else {
+		updated.NextEligibleAt = transitionedAt
 	}
 	if err := persistAIJobTransition(ctx, tx, job, updated, event, outbox); err != nil {
 		return AIJob{}, false, err

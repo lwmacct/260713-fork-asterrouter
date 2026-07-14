@@ -18,79 +18,13 @@ type gatewayScheduler struct {
 	mu             sync.Mutex
 	rateSamples    map[string][]gatewayRateSample
 	halfOpenProbes map[string]bool
-	stickyBindings map[gatewayStickyKey]gatewayStickyBinding
 }
 
 func newGatewayScheduler() *gatewayScheduler {
 	return &gatewayScheduler{
 		rateSamples:    map[string][]gatewayRateSample{},
 		halfOpenProbes: map[string]bool{},
-		stickyBindings: map[gatewayStickyKey]gatewayStickyBinding{},
 	}
-}
-
-type gatewayStickyBinding struct {
-	routeID   string
-	accountID string
-	expiresAt time.Time
-}
-
-type gatewayStickyKey struct {
-	apiKeyID       string
-	requestedModel string
-	protocol       string
-	stickyID       string
-}
-
-func (s *Service) PreferStickyGatewayCandidate(apiKeyID string, requestedModel string, protocol string, stickyID string, candidates []GatewayProvider) []GatewayProvider {
-	if s.scheduler == nil || len(candidates) < 2 || stickyID == "" || !candidates[0].StickyEnabled {
-		return candidates
-	}
-	key := stickyBindingKey(apiKeyID, requestedModel, protocol, stickyID)
-	s.scheduler.mu.Lock()
-	binding, ok := s.scheduler.stickyBindings[key]
-	if ok && time.Now().UTC().After(binding.expiresAt) {
-		delete(s.scheduler.stickyBindings, key)
-		ok = false
-	}
-	s.scheduler.mu.Unlock()
-	if !ok {
-		return candidates
-	}
-	for index, candidate := range candidates {
-		if candidate.RouteID != binding.routeID || candidate.AccountID != binding.accountID {
-			continue
-		}
-		if index == 0 {
-			candidates[0].SelectionReason += "; sticky route reused"
-			return candidates
-		}
-		out := append([]GatewayProvider(nil), candidates...)
-		selected := out[index]
-		selected.SelectionReason += "; sticky route reused"
-		copy(out[1:index+1], out[0:index])
-		out[0] = selected
-		return out
-	}
-	return candidates
-}
-
-func (s *Service) BindStickyGatewayCandidate(apiKeyID string, requestedModel string, protocol string, stickyID string, provider GatewayProvider) {
-	if s.scheduler == nil || stickyID == "" || !provider.StickyEnabled || provider.RouteID == "" || provider.AccountID == "" {
-		return
-	}
-	ttl := provider.StickyTTLSeconds
-	if ttl <= 0 {
-		ttl = 1800
-	}
-	key := stickyBindingKey(apiKeyID, requestedModel, protocol, stickyID)
-	s.scheduler.mu.Lock()
-	s.scheduler.stickyBindings[key] = gatewayStickyBinding{routeID: provider.RouteID, accountID: provider.AccountID, expiresAt: time.Now().UTC().Add(time.Duration(ttl) * time.Second)}
-	s.scheduler.mu.Unlock()
-}
-
-func stickyBindingKey(apiKeyID string, requestedModel string, protocol string, stickyID string) gatewayStickyKey {
-	return gatewayStickyKey{apiKeyID: apiKeyID, requestedModel: requestedModel, protocol: protocol, stickyID: stickyID}
 }
 
 type ProviderAccountPermit struct {

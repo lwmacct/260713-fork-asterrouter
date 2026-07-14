@@ -57,6 +57,7 @@ type Service struct {
 	externalAuthJWKSFetcher        externalAuthJWKSFetcher
 	externalAuthJWKSCache          map[string]externalAuthJWKSCacheEntry
 	platformUsageHTTPClient        *http.Client
+	providerCacheProbeHTTPClient   *http.Client
 	slotMu                         sync.Mutex
 	accountSlots                   map[string]int
 	scheduler                      *gatewayScheduler
@@ -88,6 +89,8 @@ func NewService(repo Repository, gatewayPath string, secretKey ...string) *Servi
 	capacityStore, _ := repo.(CredentialCapacityStore)
 	return &Service{repo: repo, gatewayPath: gatewayPath, secretKey: key, now: time.Now, rateWindows: map[string][]time.Time{}, credentialCapacityStore: capacityStore, externalAuthJWKSFetcher: fetchExternalAuthJWKS, externalAuthJWKSCache: map[string]externalAuthJWKSCacheEntry{}, platformUsageHTTPClient: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("platform usage sink redirects are not allowed")
+	}}, providerCacheProbeHTTPClient: &http.Client{Timeout: providerProbeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return errors.New("provider cache probe redirects are not allowed")
 	}}, accountSlots: map[string]int{}, scheduler: newGatewayScheduler()}
 }
 
@@ -1252,21 +1255,37 @@ func (s *Service) RecordGatewayCall(ctx context.Context, auth GatewayAuthContext
 }
 
 type GatewayUsageInput struct {
-	OperationID        string
-	AttemptID          string
-	UsageVersion       int
-	UsageSource        string
-	RequestFingerprint string
-	Model              string
-	UpstreamModel      string
-	ProviderID         string
-	ProviderAccountID  string
-	Status             string
-	ErrorType          string
-	LatencyMS          int64
-	InputTokens        int
-	OutputTokens       int
-	CostCents          int
+	OperationID               string
+	AttemptID                 string
+	UsageVersion              int
+	UsageSource               string
+	RequestFingerprint        string
+	Model                     string
+	UpstreamModel             string
+	Protocol                  string
+	ProviderID                string
+	ProviderAccountID         string
+	Status                    string
+	ErrorType                 string
+	LatencyMS                 int64
+	TTFTMS                    *int64
+	InputTokens               int
+	OutputTokens              int
+	TotalInputTokens          *int
+	UncachedInputTokens       *int
+	CacheReadTokens           *int
+	CacheWrite5mTokens        *int
+	CacheWrite1hTokens        *int
+	CacheFieldsPresent        bool
+	UsageNormalizationStatus  string
+	UpstreamRequestID         string
+	ProcurementCostMicros     *int64
+	ProcurementCostCurrency   string
+	ProcurementCostSource     string
+	ProcurementCostConfidence string
+	ProcurementPriceID        string
+	ProviderBillingLineID     string
+	CostCents                 int
 }
 
 type GatewayTraceInput struct {
@@ -1307,27 +1326,69 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 			costCents = estimated
 		}
 	}
+	procurementCostMicros := nonNegativeInt64Pointer(in.ProcurementCostMicros)
+	procurementCostCurrency := strings.ToUpper(strings.TrimSpace(in.ProcurementCostCurrency))
+	procurementCostSource := strings.TrimSpace(in.ProcurementCostSource)
+	procurementCostConfidence := strings.TrimSpace(in.ProcurementCostConfidence)
+	procurementPriceID := strings.TrimSpace(in.ProcurementPriceID)
+	if procurementCostMicros == nil {
+		if estimate, ok, estimateErr := s.estimateGatewayProcurementCost(ctx, in, s.nowUTC()); estimateErr != nil {
+			return estimateErr
+		} else if ok {
+			procurementCostMicros = &estimate.CostMicros
+			procurementCostCurrency = estimate.Currency
+			procurementCostSource = estimate.Source
+			procurementCostConfidence = estimate.Confidence
+			procurementPriceID = estimate.PriceID
+		}
+	}
+	if procurementCostSource == "" {
+		procurementCostSource = "unknown"
+	}
+	if procurementCostConfidence == "" {
+		procurementCostConfidence = ProcurementCostConfidenceUnknown
+	}
+	usageNormalizationStatus := strings.TrimSpace(in.UsageNormalizationStatus)
+	if usageNormalizationStatus == "" {
+		usageNormalizationStatus = "unknown"
+	}
 	record := UsageRecord{
-		ID:                 "usage_" + randomID(12),
-		OperationID:        strings.TrimSpace(in.OperationID),
-		AttemptID:          strings.TrimSpace(in.AttemptID),
-		UsageVersion:       in.UsageVersion,
-		UsageSource:        strings.TrimSpace(in.UsageSource),
-		RequestFingerprint: strings.TrimSpace(in.RequestFingerprint),
-		APIKeyID:           auth.APIKey.ID,
-		CustomerID:         auth.APIKey.CustomerID,
-		APIFingerprint:     auth.APIKey.Fingerprint,
-		Model:              strings.TrimSpace(in.Model),
-		UpstreamModel:      strings.TrimSpace(in.UpstreamModel),
-		ProviderID:         strings.TrimSpace(in.ProviderID),
-		ProviderAccountID:  strings.TrimSpace(in.ProviderAccountID),
-		Status:             status,
-		ErrorType:          strings.TrimSpace(in.ErrorType),
-		LatencyMS:          in.LatencyMS,
-		InputTokens:        nonNegative(in.InputTokens),
-		OutputTokens:       nonNegative(in.OutputTokens),
-		CostCents:          costCents,
-		CreatedAt:          s.nowUTC(),
+		ID:                        "usage_" + randomID(12),
+		OperationID:               strings.TrimSpace(in.OperationID),
+		AttemptID:                 strings.TrimSpace(in.AttemptID),
+		UsageVersion:              in.UsageVersion,
+		UsageSource:               strings.TrimSpace(in.UsageSource),
+		RequestFingerprint:        strings.TrimSpace(in.RequestFingerprint),
+		APIKeyID:                  auth.APIKey.ID,
+		CustomerID:                auth.APIKey.CustomerID,
+		APIFingerprint:            auth.APIKey.Fingerprint,
+		Model:                     strings.TrimSpace(in.Model),
+		UpstreamModel:             strings.TrimSpace(in.UpstreamModel),
+		Protocol:                  strings.TrimSpace(in.Protocol),
+		ProviderID:                strings.TrimSpace(in.ProviderID),
+		ProviderAccountID:         strings.TrimSpace(in.ProviderAccountID),
+		Status:                    status,
+		ErrorType:                 strings.TrimSpace(in.ErrorType),
+		LatencyMS:                 in.LatencyMS,
+		TTFTMS:                    nonNegativeInt64Pointer(in.TTFTMS),
+		InputTokens:               nonNegative(in.InputTokens),
+		OutputTokens:              nonNegative(in.OutputTokens),
+		TotalInputTokens:          nonNegativeIntPointer(in.TotalInputTokens),
+		UncachedInputTokens:       nonNegativeIntPointer(in.UncachedInputTokens),
+		CacheReadTokens:           nonNegativeIntPointer(in.CacheReadTokens),
+		CacheWrite5mTokens:        nonNegativeIntPointer(in.CacheWrite5mTokens),
+		CacheWrite1hTokens:        nonNegativeIntPointer(in.CacheWrite1hTokens),
+		CacheFieldsPresent:        in.CacheFieldsPresent,
+		UsageNormalizationStatus:  usageNormalizationStatus,
+		UpstreamRequestID:         strings.TrimSpace(in.UpstreamRequestID),
+		ProcurementCostMicros:     procurementCostMicros,
+		ProcurementCostCurrency:   procurementCostCurrency,
+		ProcurementCostSource:     procurementCostSource,
+		ProcurementCostConfidence: procurementCostConfidence,
+		ProcurementPriceID:        procurementPriceID,
+		ProviderBillingLineID:     strings.TrimSpace(in.ProviderBillingLineID),
+		CostCents:                 costCents,
+		CreatedAt:                 s.nowUTC(),
 	}
 	applyGatewayPlatformSnapshotToUsage(&record, auth)
 	if record.OperationID != "" {

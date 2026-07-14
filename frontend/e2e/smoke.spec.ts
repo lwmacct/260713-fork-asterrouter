@@ -73,8 +73,9 @@ test('@smoke @surface-smoke login persists and opens the enabled deployment surf
   expect(errors).toEqual([])
 })
 
-test('@smoke @surface-smoke demo settings can switch between all product modes', async ({ page }, testInfo) => {
-  test.skip(!expectedDemoMode, 'Deployment profiles remain immutable outside demo mode.')
+test('@smoke @surface-smoke settings can switch between all product modes', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  test.skip(Boolean(process.env.CI), 'Profile mutation is covered outside CI; CI keeps global deployment state stable.')
   test.skip(testInfo.project.name !== 'chromium-desktop', 'The profile mutation contract runs once; responsive layout is covered separately.')
 
   const errors = captureBrowserErrors(page)
@@ -82,21 +83,42 @@ test('@smoke @surface-smoke demo settings can switch between all product modes',
   const token = await page.evaluate(() => localStorage.getItem('asterrouter_admin_token') || '')
   const headers = { Authorization: `Bearer ${token}` }
   const allProfiles = ['enterprise', 'personal', 'relay_operator', 'platform']
+  const originalProfile = expectedProfile || 'personal'
+  const targetProfile = originalProfile === 'enterprise' ? 'personal' : 'enterprise'
+  const targetJourney = profileJourney[targetProfile]
+  const switchedProfiles = [targetProfile]
+  const originalProfiles = expectedDemoMode ? allProfiles : [originalProfile]
+
+  await page.goto('/admin/settings')
+  await page.getByRole('button', { name: 'Gateway services' }).click()
+  await expect(page.getByText(expectedDemoMode ? 'Switch demo experience' : 'Switch deployment profile')).toBeVisible()
+  await expect(page.locator('button[data-profile]')).toHaveCount(4)
+  if (process.env.CI) {
+    expect(errors).toEqual([])
+    return
+  }
 
   try {
-    await page.goto('/admin/settings')
-    await page.getByRole('button', { name: 'Gateway services' }).click()
-    await expect(page.getByText('Switch demo experience')).toBeVisible()
-    await expect(page.locator('button[data-profile]')).toHaveCount(4)
-
-    await page.locator('button[data-profile="platform"]').click()
-    await expect(page).toHaveURL(/\/platform\/overview$/)
+    await page.evaluate(() => {
+      (window as Window & { __asterProfileSwitchPage?: string }).__asterProfileSwitchPage = 'before-switch'
+    })
+    await page.locator(`button[data-profile="${targetProfile}"]`).click()
+    await expect(page).toHaveURL(new RegExp(`${targetJourney.path}$`))
+    await expect.poll(() => page.evaluate(
+      () => (window as Window & { __asterProfileSwitchPage?: string }).__asterProfileSwitchPage
+    )).toBeUndefined()
+    await expect(page.locator('aside a[href="/console/overview"]')).toHaveCount(targetProfile === 'personal' ? 1 : 0)
+    await expect(page.locator('aside a[href="/operator/overview"]')).toHaveCount(0)
+    await expect(page.locator('aside a[href="/admin/dashboard"]')).toHaveCount(targetProfile === 'enterprise' ? 1 : 0)
+    await expect(page.locator('aside a[href="/platform/overview"]')).toHaveCount(targetProfile === 'platform' ? 1 : 0)
+    await page.getByRole('button', { name: 'Account menu' }).click()
+    await expect(page.locator('.account-dropdown button')).toHaveCount(2)
     const settings = await page.request.get('/api/v1/settings/public')
-    await expect(settings.json()).resolves.toMatchObject({ data: { default_profile: 'platform', enabled_profiles: expect.arrayContaining(allProfiles) } })
+    await expect(settings.json()).resolves.toMatchObject({ data: { default_profile: targetProfile, enabled_profiles: switchedProfiles } })
   } finally {
     await page.request.put('/api/v1/system/profiles', {
       headers,
-      data: { enabled_profiles: allProfiles, default_profile: 'personal' }
+      data: { enabled_profiles: originalProfiles, default_profile: originalProfile }
     })
   }
 

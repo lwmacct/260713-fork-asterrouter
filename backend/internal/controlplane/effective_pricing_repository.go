@@ -52,6 +52,17 @@ func (r *MemoryRepository) SaveProviderBillingLine(_ context.Context, line Provi
 	return nil
 }
 
+func (r *MemoryRepository) SaveProviderBillingLineAndReconcileUsage(_ context.Context, line ProviderBillingLine, record UsageRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, found := r.usageRecords[record.ID]; !found {
+		return errors.New("usage record not found")
+	}
+	r.providerBillingLines[line.ID] = line
+	r.usageRecords[record.ID] = record
+	return nil
+}
+
 func (r *MemoryRepository) ListProviderCacheCapabilities(context.Context) ([]ProviderCacheCapability, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -75,6 +86,14 @@ func (r *MemoryRepository) SaveProviderCacheCapability(_ context.Context, capabi
 	return nil
 }
 
+func (r *MemoryRepository) UpsertProviderCacheProductionMetrics(_ context.Context, metrics ProviderCacheProductionMetrics) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	capability := applyProviderCacheProductionMetrics(r.providerCacheCapabilities[metrics.ID], metrics)
+	r.providerCacheCapabilities[metrics.ID] = capability
+	return nil
+}
+
 func (r *MemoryRepository) ListProviderCacheProbeRuns(_ context.Context, limit int) ([]ProviderCacheProbeRun, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -88,6 +107,35 @@ func (r *MemoryRepository) ListProviderCacheProbeRuns(_ context.Context, limit i
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (r *MemoryRepository) ReserveProviderCacheProbeRun(_ context.Context, run ProviderCacheProbeRun, limits CacheProbeReservationLimits) (bool, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var reservedTokens, reservedCost int64
+	for _, current := range r.providerCacheProbeRuns {
+		if current.Status == CacheProbeStatusSkipped {
+			continue
+		}
+		if current.Status == CacheProbeStatusRunning && current.StartedAt.After(limits.Now.Add(-limits.StaleAfter)) {
+			return false, "probe_concurrency_limit", nil
+		}
+		if !current.StartedAt.Before(limits.DayStart) {
+			reservedTokens += current.PrefixTokens * 3
+			reservedCost += current.EstimatedCostMicros
+		}
+		if current.ProviderAccountID == run.ProviderAccountID && current.UpstreamModel == run.UpstreamModel && current.Protocol == run.Protocol && current.StartedAt.After(limits.Now.Add(-limits.Cooldown)) {
+			return false, "probe_cooldown_active", nil
+		}
+	}
+	if limits.DailyTokenBudget <= 0 || run.PrefixTokens > (limits.DailyTokenBudget-reservedTokens)/3 {
+		return false, "probe_daily_token_budget_exceeded", nil
+	}
+	if limits.DailyCostBudgetMicros <= 0 || run.EstimatedCostMicros > limits.DailyCostBudgetMicros-reservedCost {
+		return false, "probe_daily_cost_budget_exceeded", nil
+	}
+	r.providerCacheProbeRuns[run.ID] = run
+	return true, "", nil
 }
 
 func (r *MemoryRepository) SaveProviderCacheProbeRun(_ context.Context, run ProviderCacheProbeRun) error {
@@ -195,11 +243,21 @@ func (r *MemoryRepository) SummarizeEffectivePricingUsage(_ context.Context, fro
 			byKey[key] = aggregate
 		}
 		aggregate.RequestCount++
-		if record.ErrorType != "" || record.Status == "error" || record.Status == "upstream_error" {
+		failed := record.ErrorType != "" || record.Status == "error" || record.Status == "upstream_error"
+		if failed {
 			aggregate.ErrorCount++
+		} else {
+			aggregate.SuccessfulRequestCount++
 		}
-		if record.CacheFieldsPresent {
+		if !failed && record.CacheFieldsPresent {
 			aggregate.CacheMetricsRequestCount++
+			if valueOr(record.CacheReadTokens, 0) > 0 {
+				aggregate.CacheHitRequestCount++
+			}
+			if aggregate.LastCacheObservedAt == nil || record.CreatedAt.After(*aggregate.LastCacheObservedAt) {
+				observedAt := record.CreatedAt
+				aggregate.LastCacheObservedAt = &observedAt
+			}
 		}
 		aggregate.TotalInputTokens += int64(valueOr(record.TotalInputTokens, record.InputTokens))
 		aggregate.UncachedInputTokens += int64(valueOr(record.UncachedInputTokens, 0))
@@ -318,7 +376,11 @@ FROM provider_billing_lines ORDER BY created_at DESC`)
 }
 
 func (r *PostgresRepository) SaveProviderBillingLine(ctx context.Context, line ProviderBillingLine) error {
-	_, err := r.db.ExecContext(ctx, `
+	return saveProviderBillingLine(ctx, r.db, line)
+}
+
+func saveProviderBillingLine(ctx context.Context, executor usageRecordExecutor, line ProviderBillingLine) error {
+	_, err := executor.ExecContext(ctx, `
 INSERT INTO provider_billing_lines(
   id, provider_id, provider_account_id, external_line_id, external_request_id,
   usage_record_id, upstream_model, currency, amount_micros, input_cost_micros,
@@ -343,6 +405,36 @@ ON CONFLICT(id) DO UPDATE SET
 		line.Confidence, line.ReconciliationStatus, line.RawPayloadHash, line.UsageStartedAt, line.UsageEndedAt,
 		line.CreatedAt, line.UpdatedAt)
 	return err
+}
+
+func (r *PostgresRepository) SaveProviderBillingLineAndReconcileUsage(ctx context.Context, line ProviderBillingLine, record UsageRecord) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveProviderBillingLine(ctx, tx, line); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE usage_records SET
+  procurement_cost_micros=$1, procurement_cost_currency=$2,
+  procurement_cost_source=$3, procurement_cost_confidence=$4,
+  provider_billing_line_id=$5
+WHERE id=$6`, record.ProcurementCostMicros, record.ProcurementCostCurrency,
+		record.ProcurementCostSource, record.ProcurementCostConfidence,
+		record.ProviderBillingLineID, record.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("usage record not found")
+	}
+	return tx.Commit()
 }
 
 func (r *PostgresRepository) ListProviderCacheCapabilities(ctx context.Context) ([]ProviderCacheCapability, error) {
@@ -406,14 +498,56 @@ ON CONFLICT(id) DO UPDATE SET
 	return err
 }
 
+func (r *PostgresRepository) UpsertProviderCacheProductionMetrics(ctx context.Context, metrics ProviderCacheProductionMetrics) error {
+	supportStatus := CacheSupportUnknown
+	var lastObservedAt *time.Time
+	if metrics.MetricsObserved {
+		supportStatus = CacheSupportAccepted
+		lastObservedAt = &metrics.ObservedAt
+	}
+	if metrics.CacheActivityObserved {
+		supportStatus = CacheSupportObserved
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO provider_cache_capabilities(
+  id, provider_account_id, upstream_model, protocol, support_status,
+  pool_affinity_grade, affinity_transport, cache_control_mode, usage_schema,
+  metrics_coverage, eligible_request_hit_rate, cache_token_hit_rate,
+  cache_write_read_ratio, billing_consistency_rate, production_sample_count,
+  last_observed_at, created_at, updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+ON CONFLICT(provider_account_id, upstream_model, protocol) DO UPDATE SET
+  metrics_coverage=EXCLUDED.metrics_coverage,
+  eligible_request_hit_rate=EXCLUDED.eligible_request_hit_rate,
+  cache_token_hit_rate=EXCLUDED.cache_token_hit_rate,
+  cache_write_read_ratio=EXCLUDED.cache_write_read_ratio,
+  billing_consistency_rate=EXCLUDED.billing_consistency_rate,
+  production_sample_count=EXCLUDED.production_sample_count,
+	  support_status=CASE
+	    WHEN EXCLUDED.support_status=$18 AND provider_cache_capabilities.support_status IN ($19,$20,$21)
+	      THEN $18
+	    WHEN EXCLUDED.support_status=$21 AND provider_cache_capabilities.support_status IN ($19,$20)
+	      THEN $21
+    ELSE provider_cache_capabilities.support_status
+  END,
+  last_observed_at=COALESCE(EXCLUDED.last_observed_at, provider_cache_capabilities.last_observed_at),
+  updated_at=EXCLUDED.updated_at`,
+		metrics.ID, metrics.ProviderAccountID, metrics.UpstreamModel, metrics.Protocol, supportStatus,
+		PoolAffinityUnknown, AffinityTransportNone, "passthrough_if_present", "auto",
+		metrics.MetricsCoverage, metrics.EligibleRequestHitRate, metrics.CacheTokenHitRate,
+		metrics.CacheWriteReadRatio, metrics.BillingConsistencyRate, metrics.ProductionSampleCount,
+		lastObservedAt, metrics.ObservedAt, CacheSupportObserved, CacheSupportUnknown, CacheSupportClaimed, CacheSupportAccepted)
+	return err
+}
+
 func (r *PostgresRepository) ListProviderCacheProbeRuns(ctx context.Context, limit int) ([]ProviderCacheProbeRun, error) {
 	limit, _ = normalizeListWindow(limit, 0, 100, 500)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, provider_id, provider_account_id, upstream_model, protocol,
        probe_series_id, session_hash, prefix_fingerprint, prefix_tokens,
-       warm_cache_read_tokens, warm_cache_write_tokens, warm_ttft_ms,
-       reuse_cache_read_tokens, reuse_cache_write_tokens, reuse_ttft_ms,
-       control_cache_read_tokens, control_cache_write_tokens, control_ttft_ms,
+	       warm_cache_read_tokens, warm_cache_write_tokens, warm_ttft_ms, warm_upstream_request_id,
+	       reuse_cache_read_tokens, reuse_cache_write_tokens, reuse_ttft_ms, reuse_upstream_request_id,
+	       control_cache_read_tokens, control_cache_write_tokens, control_ttft_ms, control_upstream_request_id,
        cache_fields_present, estimated_cost_micros, status, failure_reason,
        started_at, finished_at
 FROM provider_cache_probe_runs ORDER BY started_at DESC LIMIT $1`, limit)
@@ -426,9 +560,9 @@ FROM provider_cache_probe_runs ORDER BY started_at DESC LIMIT $1`, limit)
 		var run ProviderCacheProbeRun
 		if err := rows.Scan(&run.ID, &run.ProviderID, &run.ProviderAccountID, &run.UpstreamModel, &run.Protocol,
 			&run.ProbeSeriesID, &run.SessionHash, &run.PrefixFingerprint, &run.PrefixTokens,
-			&run.WarmCacheReadTokens, &run.WarmCacheWriteTokens, &run.WarmTTFTMS,
-			&run.ReuseCacheReadTokens, &run.ReuseCacheWriteTokens, &run.ReuseTTFTMS,
-			&run.ControlCacheReadTokens, &run.ControlCacheWriteTokens, &run.ControlTTFTMS,
+			&run.WarmCacheReadTokens, &run.WarmCacheWriteTokens, &run.WarmTTFTMS, &run.WarmUpstreamRequestID,
+			&run.ReuseCacheReadTokens, &run.ReuseCacheWriteTokens, &run.ReuseTTFTMS, &run.ReuseUpstreamRequestID,
+			&run.ControlCacheReadTokens, &run.ControlCacheWriteTokens, &run.ControlTTFTMS, &run.ControlUpstreamRequestID,
 			&run.CacheFieldsPresent, &run.EstimatedCostMicros, &run.Status, &run.FailureReason,
 			&run.StartedAt, &run.FinishedAt); err != nil {
 			return nil, err
@@ -443,43 +577,124 @@ func (r *PostgresRepository) SaveProviderCacheProbeRun(ctx context.Context, run 
 INSERT INTO provider_cache_probe_runs(
   id, provider_id, provider_account_id, upstream_model, protocol,
   probe_series_id, session_hash, prefix_fingerprint, prefix_tokens,
-  warm_cache_read_tokens, warm_cache_write_tokens, warm_ttft_ms,
-  reuse_cache_read_tokens, reuse_cache_write_tokens, reuse_ttft_ms,
-  control_cache_read_tokens, control_cache_write_tokens, control_ttft_ms,
-  cache_fields_present, estimated_cost_micros, status, failure_reason,
-  started_at, finished_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+	  warm_cache_read_tokens, warm_cache_write_tokens, warm_ttft_ms, warm_upstream_request_id,
+	  reuse_cache_read_tokens, reuse_cache_write_tokens, reuse_ttft_ms, reuse_upstream_request_id,
+	  control_cache_read_tokens, control_cache_write_tokens, control_ttft_ms, control_upstream_request_id,
+	  cache_fields_present, estimated_cost_micros, status, failure_reason,
+	  started_at, finished_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 ON CONFLICT(id) DO UPDATE SET
   warm_cache_read_tokens=EXCLUDED.warm_cache_read_tokens,
-  warm_cache_write_tokens=EXCLUDED.warm_cache_write_tokens, warm_ttft_ms=EXCLUDED.warm_ttft_ms,
-  reuse_cache_read_tokens=EXCLUDED.reuse_cache_read_tokens,
-  reuse_cache_write_tokens=EXCLUDED.reuse_cache_write_tokens, reuse_ttft_ms=EXCLUDED.reuse_ttft_ms,
-  control_cache_read_tokens=EXCLUDED.control_cache_read_tokens,
-  control_cache_write_tokens=EXCLUDED.control_cache_write_tokens, control_ttft_ms=EXCLUDED.control_ttft_ms,
+	  warm_cache_write_tokens=EXCLUDED.warm_cache_write_tokens, warm_ttft_ms=EXCLUDED.warm_ttft_ms,
+	  warm_upstream_request_id=EXCLUDED.warm_upstream_request_id,
+	  reuse_cache_read_tokens=EXCLUDED.reuse_cache_read_tokens,
+	  reuse_cache_write_tokens=EXCLUDED.reuse_cache_write_tokens, reuse_ttft_ms=EXCLUDED.reuse_ttft_ms,
+	  reuse_upstream_request_id=EXCLUDED.reuse_upstream_request_id,
+	  control_cache_read_tokens=EXCLUDED.control_cache_read_tokens,
+	  control_cache_write_tokens=EXCLUDED.control_cache_write_tokens, control_ttft_ms=EXCLUDED.control_ttft_ms,
+	  control_upstream_request_id=EXCLUDED.control_upstream_request_id,
   cache_fields_present=EXCLUDED.cache_fields_present, estimated_cost_micros=EXCLUDED.estimated_cost_micros,
   status=EXCLUDED.status, failure_reason=EXCLUDED.failure_reason, finished_at=EXCLUDED.finished_at`,
 		run.ID, run.ProviderID, run.ProviderAccountID, run.UpstreamModel, run.Protocol,
 		run.ProbeSeriesID, run.SessionHash, run.PrefixFingerprint, run.PrefixTokens,
-		run.WarmCacheReadTokens, run.WarmCacheWriteTokens, run.WarmTTFTMS,
-		run.ReuseCacheReadTokens, run.ReuseCacheWriteTokens, run.ReuseTTFTMS,
-		run.ControlCacheReadTokens, run.ControlCacheWriteTokens, run.ControlTTFTMS,
+		run.WarmCacheReadTokens, run.WarmCacheWriteTokens, run.WarmTTFTMS, run.WarmUpstreamRequestID,
+		run.ReuseCacheReadTokens, run.ReuseCacheWriteTokens, run.ReuseTTFTMS, run.ReuseUpstreamRequestID,
+		run.ControlCacheReadTokens, run.ControlCacheWriteTokens, run.ControlTTFTMS, run.ControlUpstreamRequestID,
 		run.CacheFieldsPresent, run.EstimatedCostMicros, run.Status, run.FailureReason,
 		run.StartedAt, run.FinishedAt)
 	return err
 }
 
+func (r *PostgresRepository) ReserveProviderCacheProbeRun(ctx context.Context, run ProviderCacheProbeRun, limits CacheProbeReservationLimits) (reserved bool, reason string, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, "", err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var policyID string
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM effective_pricing_policies WHERE id=$1 FOR UPDATE`, defaultEffectivePricingPolicyID).Scan(&policyID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			_ = tx.Rollback()
+			return false, "probe_disabled", nil
+		}
+		return false, "", err
+	}
+	var activeRuns int
+	if err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM provider_cache_probe_runs
+WHERE status=$1 AND started_at>$2`, CacheProbeStatusRunning, limits.Now.Add(-limits.StaleAfter)).Scan(&activeRuns); err != nil {
+		return false, "", err
+	}
+	if activeRuns > 0 {
+		_ = tx.Rollback()
+		return false, "probe_concurrency_limit", nil
+	}
+	var latestStartedAt time.Time
+	err = tx.QueryRowContext(ctx, `
+SELECT started_at FROM provider_cache_probe_runs
+WHERE provider_account_id=$1 AND upstream_model=$2 AND protocol=$3 AND status<>$4
+ORDER BY started_at DESC LIMIT 1`, run.ProviderAccountID, run.UpstreamModel, run.Protocol, CacheProbeStatusSkipped).Scan(&latestStartedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, "", err
+	}
+	if err == nil && latestStartedAt.After(limits.Now.Add(-limits.Cooldown)) {
+		_ = tx.Rollback()
+		return false, "probe_cooldown_active", nil
+	}
+	var reservedTokens, reservedCost int64
+	if err = tx.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(prefix_tokens * 3), 0), COALESCE(SUM(estimated_cost_micros), 0)
+FROM provider_cache_probe_runs WHERE started_at>=$1 AND status<>$2`, limits.DayStart, CacheProbeStatusSkipped).Scan(&reservedTokens, &reservedCost); err != nil {
+		return false, "", err
+	}
+	if limits.DailyTokenBudget <= 0 || run.PrefixTokens > (limits.DailyTokenBudget-reservedTokens)/3 {
+		_ = tx.Rollback()
+		return false, "probe_daily_token_budget_exceeded", nil
+	}
+	if limits.DailyCostBudgetMicros <= 0 || run.EstimatedCostMicros > limits.DailyCostBudgetMicros-reservedCost {
+		_ = tx.Rollback()
+		return false, "probe_daily_cost_budget_exceeded", nil
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO provider_cache_probe_runs(
+  id, provider_id, provider_account_id, upstream_model, protocol,
+  probe_series_id, session_hash, prefix_fingerprint, prefix_tokens,
+  warm_cache_read_tokens, warm_cache_write_tokens, warm_ttft_ms,
+  reuse_cache_read_tokens, reuse_cache_write_tokens, reuse_ttft_ms,
+  control_cache_read_tokens, control_cache_write_tokens, control_ttft_ms,
+  cache_fields_present, estimated_cost_micros, status, failure_reason,
+  started_at, finished_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,0,0,0,0,0,0,0,FALSE,$10,$11,'',$12,$12)`,
+		run.ID, run.ProviderID, run.ProviderAccountID, run.UpstreamModel, run.Protocol,
+		run.ProbeSeriesID, run.SessionHash, run.PrefixFingerprint, run.PrefixTokens,
+		run.EstimatedCostMicros, CacheProbeStatusRunning, run.StartedAt)
+	if err != nil {
+		return false, "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, "", err
+	}
+	return true, "", nil
+}
+
 func (r *PostgresRepository) GetEffectivePricingPolicy(ctx context.Context) (EffectivePricingPolicy, bool, error) {
 	var policy EffectivePricingPolicy
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, mode, window_hours, min_sample_count, min_metrics_coverage,
-       min_billing_consistency, min_cost_improvement, max_error_rate_regression,
+	SELECT id, mode, window_hours, min_sample_count, min_metrics_coverage,
+	       min_billing_consistency, min_cost_improvement, min_cache_hit_rate_improvement,
+	       min_affinity_improvement, max_cache_tiebreak_cost_regression, max_error_rate_regression,
        max_p95_latency_regression, canary_percent, supplier_affinity_ttl_seconds,
        account_affinity_ttl_seconds, probe_enabled, probe_daily_token_budget,
        probe_daily_cost_budget_micros, probe_cooldown_seconds, updated_by,
        created_at, updated_at
 FROM effective_pricing_policies WHERE id=$1`, defaultEffectivePricingPolicyID).Scan(
 		&policy.ID, &policy.Mode, &policy.WindowHours, &policy.MinSampleCount, &policy.MinMetricsCoverage,
-		&policy.MinBillingConsistency, &policy.MinCostImprovement, &policy.MaxErrorRateRegression,
+		&policy.MinBillingConsistency, &policy.MinCostImprovement, &policy.MinCacheHitRateImprovement,
+		&policy.MinAffinityImprovement, &policy.MaxCacheTiebreakCostRegression, &policy.MaxErrorRateRegression,
 		&policy.MaxP95LatencyRegression, &policy.CanaryPercent, &policy.SupplierAffinityTTLSeconds,
 		&policy.AccountAffinityTTLSeconds, &policy.ProbeEnabled, &policy.ProbeDailyTokenBudget,
 		&policy.ProbeDailyCostBudgetMicros, &policy.ProbeCooldownSeconds, &policy.UpdatedBy,
@@ -496,18 +711,22 @@ FROM effective_pricing_policies WHERE id=$1`, defaultEffectivePricingPolicyID).S
 func (r *PostgresRepository) SaveEffectivePricingPolicy(ctx context.Context, policy EffectivePricingPolicy) error {
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO effective_pricing_policies(
-  id, mode, window_hours, min_sample_count, min_metrics_coverage,
-  min_billing_consistency, min_cost_improvement, max_error_rate_regression,
+	  id, mode, window_hours, min_sample_count, min_metrics_coverage,
+	  min_billing_consistency, min_cost_improvement, min_cache_hit_rate_improvement,
+	  min_affinity_improvement, max_cache_tiebreak_cost_regression, max_error_rate_regression,
   max_p95_latency_regression, canary_percent, supplier_affinity_ttl_seconds,
   account_affinity_ttl_seconds, probe_enabled, probe_daily_token_budget,
   probe_daily_cost_budget_micros, probe_cooldown_seconds, updated_by,
   created_at, updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+	VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 ON CONFLICT(id) DO UPDATE SET
   mode=EXCLUDED.mode, window_hours=EXCLUDED.window_hours,
   min_sample_count=EXCLUDED.min_sample_count, min_metrics_coverage=EXCLUDED.min_metrics_coverage,
-  min_billing_consistency=EXCLUDED.min_billing_consistency,
-  min_cost_improvement=EXCLUDED.min_cost_improvement,
+	  min_billing_consistency=EXCLUDED.min_billing_consistency,
+	  min_cost_improvement=EXCLUDED.min_cost_improvement,
+	  min_cache_hit_rate_improvement=EXCLUDED.min_cache_hit_rate_improvement,
+	  min_affinity_improvement=EXCLUDED.min_affinity_improvement,
+	  max_cache_tiebreak_cost_regression=EXCLUDED.max_cache_tiebreak_cost_regression,
   max_error_rate_regression=EXCLUDED.max_error_rate_regression,
   max_p95_latency_regression=EXCLUDED.max_p95_latency_regression,
   canary_percent=EXCLUDED.canary_percent,
@@ -518,7 +737,8 @@ ON CONFLICT(id) DO UPDATE SET
   probe_cooldown_seconds=EXCLUDED.probe_cooldown_seconds,
   updated_by=EXCLUDED.updated_by, updated_at=EXCLUDED.updated_at`,
 		policy.ID, policy.Mode, policy.WindowHours, policy.MinSampleCount, policy.MinMetricsCoverage,
-		policy.MinBillingConsistency, policy.MinCostImprovement, policy.MaxErrorRateRegression,
+		policy.MinBillingConsistency, policy.MinCostImprovement, policy.MinCacheHitRateImprovement,
+		policy.MinAffinityImprovement, policy.MaxCacheTiebreakCostRegression, policy.MaxErrorRateRegression,
 		policy.MaxP95LatencyRegression, policy.CanaryPercent, policy.SupplierAffinityTTLSeconds,
 		policy.AccountAffinityTTLSeconds, policy.ProbeEnabled, policy.ProbeDailyTokenBudget,
 		policy.ProbeDailyCostBudgetMicros, policy.ProbeCooldownSeconds, policy.UpdatedBy,
@@ -680,10 +900,12 @@ func (r *PostgresRepository) DeleteRoutingAffinityBinding(ctx context.Context, s
 
 func (r *PostgresRepository) SummarizeEffectivePricingUsage(ctx context.Context, from, to time.Time) ([]EffectivePricingUsageAggregate, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT provider_id, provider_account_id, upstream_model, protocol,
-       COUNT(*),
-       COALESCE(SUM(CASE WHEN status IN ('error','upstream_error') OR error_type<>'' THEN 1 ELSE 0 END),0),
-       COALESCE(SUM(CASE WHEN cache_fields_present THEN 1 ELSE 0 END),0),
+	SELECT provider_id, provider_account_id, upstream_model, protocol,
+	       COUNT(*),
+	       COALESCE(SUM(CASE WHEN status NOT IN ('error','upstream_error') AND error_type='' THEN 1 ELSE 0 END),0),
+	       COALESCE(SUM(CASE WHEN status IN ('error','upstream_error') OR error_type<>'' THEN 1 ELSE 0 END),0),
+	       COALESCE(SUM(CASE WHEN status NOT IN ('error','upstream_error') AND error_type='' AND cache_fields_present THEN 1 ELSE 0 END),0),
+	       COALESCE(SUM(CASE WHEN status NOT IN ('error','upstream_error') AND error_type='' AND cache_fields_present AND COALESCE(cache_read_tokens,0)>0 THEN 1 ELSE 0 END),0),
        COALESCE(SUM(COALESCE(total_input_tokens,input_tokens)),0),
        COALESCE(SUM(COALESCE(uncached_input_tokens,0)),0),
        COALESCE(SUM(COALESCE(cache_read_tokens,0)),0),
@@ -692,7 +914,8 @@ SELECT provider_id, provider_account_id, upstream_model, protocol,
        COALESCE(SUM(output_tokens),0),
        COALESCE(SUM(COALESCE(procurement_cost_micros,0)),0),
        COALESCE(SUM(CASE WHEN procurement_cost_micros IS NOT NULL THEN 1 ELSE 0 END),0),
-       COALESCE(SUM(latency_ms),0)
+	       COALESCE(SUM(latency_ms),0),
+	       MAX(CASE WHEN status NOT IN ('error','upstream_error') AND error_type='' AND cache_fields_present THEN created_at END)
 FROM usage_records
 WHERE provider_account_id<>'' AND created_at >= $1 AND created_at <= $2
 GROUP BY provider_id, provider_account_id, upstream_model, protocol
@@ -705,12 +928,12 @@ ORDER BY provider_account_id, upstream_model, protocol`, from, to)
 	for rows.Next() {
 		var aggregate EffectivePricingUsageAggregate
 		if err := rows.Scan(&aggregate.ProviderID, &aggregate.ProviderAccountID, &aggregate.UpstreamModel,
-			&aggregate.Protocol, &aggregate.RequestCount, &aggregate.ErrorCount,
-			&aggregate.CacheMetricsRequestCount, &aggregate.TotalInputTokens,
+			&aggregate.Protocol, &aggregate.RequestCount, &aggregate.SuccessfulRequestCount, &aggregate.ErrorCount,
+			&aggregate.CacheMetricsRequestCount, &aggregate.CacheHitRequestCount, &aggregate.TotalInputTokens,
 			&aggregate.UncachedInputTokens, &aggregate.CacheReadTokens,
 			&aggregate.CacheWrite5mTokens, &aggregate.CacheWrite1hTokens,
 			&aggregate.OutputTokens, &aggregate.ProcurementCostMicros,
-			&aggregate.ProcurementCostRecordCount, &aggregate.LatencyTotalMS); err != nil {
+			&aggregate.ProcurementCostRecordCount, &aggregate.LatencyTotalMS, &aggregate.LastCacheObservedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, aggregate)

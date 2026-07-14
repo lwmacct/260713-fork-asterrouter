@@ -124,6 +124,65 @@ func TestAIJobQueueLeaseFenceAndCancellationRaceContract(t *testing.T) {
 	})
 }
 
+func TestAIJobDeliveryRebuildAndLeaseExtensionRepositoryContract(t *testing.T) {
+	forEachAIJobRepository(t, func(t *testing.T, repo Repository) {
+		ctx := context.Background()
+		svc := newAIJobTestService(t, repo)
+		base := time.Date(2026, time.July, 15, 1, 0, 0, 0, time.UTC)
+		now := base
+		svc.now = func() time.Time { return now }
+		job, _, err := svc.BeginDurableAIJob(ctx, aiJobTestAuth("tenant-rebuild", "principal-rebuild"), aiJobTestRequest("job-idem-rebuild", "fingerprint-rebuild"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := svc.ClaimReadyAIJobs(ctx, "scheduler-rebuild", time.Minute, 1)
+		if err != nil || len(claimed) != 1 {
+			t.Fatalf("claimed=%+v err=%v", claimed, err)
+		}
+		envelope, err := NewAIJobDeliveryEnvelope(claimed[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		active, err := repo.ListAIJobsForDeliveryRebuild(ctx, base.Add(30*time.Second), 10)
+		if err != nil || len(active) != 1 || active[0].ID != job.ID {
+			t.Fatalf("active rebuild jobs=%+v err=%v", active, err)
+		}
+
+		now = base.Add(30 * time.Second)
+		extended, err := svc.ExtendAIJobQueueLease(ctx, envelope, 2*time.Minute)
+		wantLeaseUntil := now.Add(2 * time.Minute)
+		if err != nil || extended.QueueLeaseUntil == nil || !extended.QueueLeaseUntil.Equal(wantLeaseUntil) || extended.StatusVersion != claimed[0].StatusVersion || extended.FenceToken != claimed[0].FenceToken {
+			t.Fatalf("extended job=%+v err=%v", extended, err)
+		}
+		wrongLease := envelope
+		wrongLease.QueueLeaseToken = "wrong-job-lease"
+		if _, err := svc.ExtendAIJobQueueLease(ctx, wrongLease, 3*time.Minute); !errors.Is(err, ErrAIJobStateConflict) {
+			t.Fatalf("wrong lease extension error=%v", err)
+		}
+		active, err = repo.ListAIJobsForDeliveryRebuild(ctx, base.Add(90*time.Second), 10)
+		if err != nil || len(active) != 1 || active[0].QueueLeaseUntil == nil || !active[0].QueueLeaseUntil.Equal(wantLeaseUntil) {
+			t.Fatalf("extended rebuild jobs=%+v err=%v", active, err)
+		}
+		events, err := svc.AIJobEvents(ctx, job.ID)
+		if err != nil || len(events) != 2 {
+			t.Fatalf("lease extension events=%+v err=%v", events, err)
+		}
+		outbox, err := svc.TransactionalOutboxEvents(ctx, job.ID)
+		if err != nil || len(outbox) != 2 {
+			t.Fatalf("lease extension outbox=%+v err=%v", outbox, err)
+		}
+
+		now = wantLeaseUntil
+		if active, err := repo.ListAIJobsForDeliveryRebuild(ctx, now, 10); err != nil || len(active) != 0 {
+			t.Fatalf("expired rebuild jobs=%+v err=%v", active, err)
+		}
+		reclaimed, err := svc.ClaimReadyAIJobs(ctx, "scheduler-reclaimed", time.Minute, 1)
+		if err != nil || len(reclaimed) != 1 || reclaimed[0].StatusVersion <= claimed[0].StatusVersion || reclaimed[0].FenceToken <= claimed[0].FenceToken {
+			t.Fatalf("reclaimed=%+v err=%v", reclaimed, err)
+		}
+	})
+}
+
 func TestAIJobAdmissionIsAtomicAcrossConcurrentRequests(t *testing.T) {
 	forEachAIJobRepository(t, func(t *testing.T, repo Repository) {
 		svc := newAIJobTestService(t, repo)

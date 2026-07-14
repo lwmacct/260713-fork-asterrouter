@@ -52,6 +52,9 @@ func TestAIAttemptProviderDispatchContract(t *testing.T) {
 			if err != nil || replayed.ID != attempt.ID {
 				t.Fatalf("BeginAIAttempt replay=%+v err=%v", replayed, err)
 			}
+			if _, err := svc.BeginAIAttempt(ctx, operation.ID, 1, GatewayProvider{ID: provider.ID, AccountID: "different-account", RouteID: provider.RouteID, UpstreamModel: provider.UpstreamModel}); !errors.Is(err, ErrAIAttemptDispatchConflict) {
+				t.Fatalf("conflicting attempt provider error=%v", err)
+			}
 
 			prepared, changed, err := svc.PrepareAIAttemptDispatch(ctx, attempt.ID)
 			if err != nil || !changed || prepared.DispatchState != AIAttemptDispatchPrepared || prepared.DispatchVersion != 1 {
@@ -83,17 +86,150 @@ func TestAIAttemptProviderDispatchContract(t *testing.T) {
 			if err != nil || changed || acceptedReplay.ProviderTaskID != reference.ProviderTaskID {
 				t.Fatalf("BindAIAttemptProviderTask replay=%+v changed=%t err=%v", acceptedReplay, changed, err)
 			}
+			if _, _, err := svc.BindAIAttemptProviderTask(ctx, attempt.ID, accepted.DispatchVersion, ProviderTaskReference{ProviderTaskID: "different-task"}, base.Add(3*time.Minute)); !errors.Is(err, ErrAIAttemptDispatchConflict) {
+				t.Fatalf("conflicting provider task error=%v", err)
+			}
+			unknownAfterAccepted, changed, err := svc.MarkAIAttemptDispatchUnknown(ctx, attempt.ID, accepted.DispatchVersion, base.Add(3*time.Minute))
+			if err != nil || !changed || unknownAfterAccepted.DispatchState != AIAttemptDispatchUnknown {
+				t.Fatalf("accepted task unknown=%+v changed=%t err=%v", unknownAfterAccepted, changed, err)
+			}
+			reconfirmed, changed, err := svc.BindAIAttemptProviderTask(ctx, attempt.ID, unknownAfterAccepted.DispatchVersion, reference, base.Add(3*time.Minute))
+			if err != nil || !changed || reconfirmed.DispatchState != AIAttemptDispatchAccepted || reconfirmed.ProviderTaskID != reference.ProviderTaskID {
+				t.Fatalf("reconfirmed provider task=%+v changed=%t err=%v", reconfirmed, changed, err)
+			}
 
+			svc.now = func() time.Time { return base.Add(2 * time.Minute) }
+			if ready, err := svc.AIAttemptsForReconciliation(ctx, 10); err != nil || len(ready) != 0 {
+				t.Fatalf("early AIAttemptsForReconciliation() attempts=%+v err=%v", ready, err)
+			}
 			svc.now = func() time.Time { return base.Add(4 * time.Minute) }
 			ready, err := svc.AIAttemptsForReconciliation(ctx, 10)
 			if err != nil || len(ready) != 1 || ready[0].ProviderTaskID != reference.ProviderTaskID {
 				t.Fatalf("AIAttemptsForReconciliation() attempts=%+v err=%v", ready, err)
 			}
-			observed, changed, err := svc.RecordAIAttemptReconciliation(ctx, attempt.ID, accepted.DispatchVersion, "running", base.Add(10*time.Minute))
-			if err != nil || !changed || observed.ProviderTaskStatus != "running" || observed.DispatchVersion != 5 {
+			observed, changed, err := svc.RecordAIAttemptReconciliation(ctx, attempt.ID, reconfirmed.DispatchVersion, "running", base.Add(10*time.Minute))
+			if err != nil || !changed || observed.ProviderTaskStatus != "running" || observed.DispatchVersion != reconfirmed.DispatchVersion+1 {
 				t.Fatalf("RecordAIAttemptReconciliation() attempt=%+v changed=%t err=%v", observed, changed, err)
 			}
 		})
+	}
+}
+
+func TestAIAttemptCreationIsAtomicAcrossConcurrentInstances(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(*testing.T) (Repository, Repository)
+	}{
+		{name: "memory", open: func(*testing.T) (Repository, Repository) {
+			repo := NewMemoryRepository()
+			return repo, repo
+		}},
+		{name: "postgres", open: func(t *testing.T) (Repository, Repository) {
+			schema := testutil.NewPostgresSchema(t)
+			first, err := NewPostgresRepository(context.Background(), schema.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := NewPostgresRepository(context.Background(), schema.URL)
+			if err != nil {
+				_ = first.Close()
+				t.Fatal(err)
+			}
+			return first, second
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			first, second := test.open(t)
+			t.Cleanup(func() { _ = first.Close(); _ = second.Close() })
+			firstService := NewService(first, "/v1")
+			secondService := NewService(second, "/v1")
+			operation, _, err := firstService.BeginCanonicalOperation(context.Background(), operationTestAuth(), operationTestRequest("attempt-concurrent", "attempt-concurrent-fingerprint"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := GatewayProvider{ID: "provider", AccountID: "account", RouteID: "route", UpstreamModel: "model"}
+			var ids sync.Map
+			errorsSeen := make(chan error, 20)
+			var wait sync.WaitGroup
+			for index := 0; index < 20; index++ {
+				wait.Add(1)
+				go func(index int) {
+					defer wait.Done()
+					service := firstService
+					if index%2 == 1 {
+						service = secondService
+					}
+					attempt, beginErr := service.BeginAIAttempt(context.Background(), operation.ID, 1, provider)
+					if beginErr != nil {
+						errorsSeen <- beginErr
+						return
+					}
+					ids.Store(attempt.ID, struct{}{})
+				}(index)
+			}
+			wait.Wait()
+			close(errorsSeen)
+			for err := range errorsSeen {
+				t.Errorf("BeginAIAttempt(): %v", err)
+			}
+			count := 0
+			ids.Range(func(_, _ any) bool { count++; return true })
+			if count != 1 {
+				t.Fatalf("distinct attempt ids=%d, want 1", count)
+			}
+		})
+	}
+}
+
+func TestAIAttemptDispatchPersistsAcrossPostgresRestart(t *testing.T) {
+	schema := testutil.NewPostgresSchema(t)
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, schema.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, "/v1")
+	base := time.Date(2026, time.July, 14, 14, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return base }
+	operation, _, err := svc.BeginCanonicalOperation(ctx, operationTestAuth(), operationTestRequest("restart-dispatch", "restart-dispatch-fingerprint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkAIOperationRunning(ctx, operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := svc.BeginAIAttempt(ctx, operation.ID, 1, GatewayProvider{ID: "provider-restart", AccountID: "account-restart", RouteID: "route-restart", UpstreamModel: "model-restart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &providerDispatchExecutorStub{result: ProviderDispatchResult{
+		Outcome:        ProviderDispatchOutcomeAccepted,
+		Task:           ProviderTaskReference{ProviderTaskID: "task-restart", ProviderRequestID: "request-restart", Status: "running"},
+		ReconcileAfter: base.Add(time.Minute),
+	}}
+	persisted, _, err := svc.ExecuteAIAttemptDispatch(ctx, attempt.ID, []byte(`{"input":"synthetic"}`), executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewPostgresRepository(ctx, schema.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restarted := NewService(reopened, "/v1")
+	restarted.now = func() time.Time { return base.Add(2 * time.Minute) }
+	found, ok, err := restarted.AIAttempt(ctx, persisted.ID)
+	if err != nil || !ok || found.DispatchState != AIAttemptDispatchAccepted || found.ProviderTaskID != "task-restart" || found.DispatchIntentJSON == "" {
+		t.Fatalf("restarted attempt=%+v found=%t err=%v", found, ok, err)
+	}
+	due, err := restarted.AIAttemptsForReconciliation(ctx, 10)
+	if err != nil || len(due) != 1 || due[0].ID != persisted.ID {
+		t.Fatalf("restarted reconciliation=%+v err=%v", due, err)
 	}
 }
 

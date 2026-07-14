@@ -25,6 +25,7 @@ const (
 	AIAttemptStatusSucceeded = "succeeded"
 	AIAttemptStatusFailed    = "failed"
 	AIAttemptStatusSkipped   = "skipped"
+	AIAttemptStatusCanceled  = "canceled"
 
 	AIAttemptDispatchPending          = "pending"
 	AIAttemptDispatchPrepared         = "prepared"

@@ -722,6 +722,7 @@ type CostAllocationReport struct {
 type UsageQuery struct {
 	Limit                     int
 	Offset                    int
+	ID                        string
 	Search                    string
 	APIKeyID                  string
 	APIKeyIDs                 []string
@@ -733,6 +734,7 @@ type UsageQuery struct {
 	Model                     string
 	ProviderID                string
 	AccountID                 string
+	UpstreamRequestID         string
 	Status                    string
 	CreatedFrom               time.Time
 	CreatedTo                 time.Time

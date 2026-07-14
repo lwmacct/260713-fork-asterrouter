@@ -98,7 +98,7 @@ func (s *Service) Update(ctx context.Context, in AdminSettings) (AdminSettings, 
 		return AdminSettings{}, err
 	}
 	if profileConfigurationChanged(current, in) {
-		return AdminSettings{}, errors.New("deployment profile is fixed after installation; create a separate instance for a different business model")
+		return AdminSettings{}, errors.New("change the active deployment profile from the deployment switcher")
 	}
 	values, err := valuesFromAdminSettings(in)
 	if err != nil {
@@ -148,7 +148,7 @@ func (s *Service) ApplyProfiles(ctx context.Context, profiles []string, defaultP
 		return AdminSettings{}, errors.New("at least one profile is required")
 	}
 	if !s.demoMode && len(enabledProfiles) != 1 {
-		return AdminSettings{}, errors.New("exactly one deployment profile is supported; migrate to a separate instance before changing profiles")
+		return AdminSettings{}, errors.New("exactly one active deployment profile is supported")
 	}
 	defaultProfile = strings.TrimSpace(defaultProfile)
 	if defaultProfile == "" {
@@ -158,23 +158,16 @@ func (s *Service) ApplyProfiles(ctx context.Context, profiles []string, defaultP
 		return AdminSettings{}, fmt.Errorf("default profile %q is not enabled", defaultProfile)
 	}
 	if !s.demoMode {
-		if err := s.repo.InitializeDeploymentProfile(ctx, defaultProfile); err == nil {
-			return s.Admin(ctx)
-		} else if !errors.Is(err, ErrDeploymentProfileInitialized) {
-			return AdminSettings{}, err
-		}
 		raw, err := s.repo.GetAll(ctx)
 		if err != nil {
 			return AdminSettings{}, err
 		}
-		persistedProfile, err := persistedDeploymentProfile(raw)
-		if err != nil {
-			return AdminSettings{}, err
+		if !parseBool(raw[KeySetupCompleted]) {
+			if err := s.repo.InitializeDeploymentProfile(ctx, defaultProfile); err != nil {
+				return AdminSettings{}, err
+			}
+			return s.Admin(ctx)
 		}
-		if persistedProfile != defaultProfile {
-			return AdminSettings{}, ErrDeploymentProfileInitialized
-		}
-		return s.Admin(ctx)
 	}
 	encodedProfiles, _ := json.Marshal(enabledProfiles)
 	if err := s.repo.SetMultiple(ctx, map[string]string{
@@ -200,8 +193,8 @@ func sameProfiles(left, right []string) bool {
 }
 
 // ApplyInitialProfile completes a fresh installation with one primary product
-// profile. A deployment profile is immutable once setup is complete because
-// current Core resources do not carry an end-to-end profile scope.
+// profile. Subsequent profile changes go through ApplyProfiles so they can be
+// authorized as an installation-level operation.
 func (s *Service) ApplyInitialProfile(ctx context.Context, profile string) (AdminSettings, error) {
 	profile = strings.TrimSpace(profile)
 	if !isProfile(profile) {
@@ -235,18 +228,15 @@ func (s *Service) BootstrapProfile(ctx context.Context) error {
 	} else if !errors.Is(err, ErrDeploymentProfileInitialized) {
 		return err
 	}
+	// Environment configuration is bootstrap input only. Runtime profile
+	// changes are persisted by the system profile endpoint, but the stored
+	// single-profile state must still be complete before startup continues.
 	raw, err := s.repo.GetAll(ctx)
 	if err != nil {
 		return err
 	}
-	persistedProfile, err := persistedDeploymentProfile(raw)
-	if err != nil {
-		return err
-	}
-	if persistedProfile != profile {
-		return fmt.Errorf("configured deployment role %q does not match persisted deployment profile %q; deploy a separate instance for a different business model", profile, persistedProfile)
-	}
-	return nil
+	_, err = persistedDeploymentProfile(raw)
+	return err
 }
 
 func persistedDeploymentProfile(raw map[string]string) (string, error) {

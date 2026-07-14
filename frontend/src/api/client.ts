@@ -65,6 +65,8 @@ apiClient.interceptors.request.use((config) => {
     '/alerts',
     '/audit-logs',
     '/plugins',
+    '/settings',
+    '/system',
     '/cost-allocation'
   ]
   if (

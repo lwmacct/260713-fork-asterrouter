@@ -36,7 +36,7 @@ func requireProfileBundleChange(c *gin.Context, control *controlplane.Service, p
 	if !profileBundleChanged(previous, next) {
 		return true
 	}
-	httpx.Error(c, http.StatusConflict, 1455, "deployment profile is fixed after installation; create a separate instance for a different business model")
+	httpx.Error(c, http.StatusConflict, 1455, "change the active deployment profile from the deployment switcher")
 	return false
 }
 

@@ -114,6 +114,7 @@ func (f *FakeOpenAI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"upstream-model","object":"model"}]}`)
 		return
 	}
+	w.Header().Set("X-Request-ID", "req-fake-openai-1")
 
 	switch mode {
 	case OpenAIStream:
@@ -123,6 +124,7 @@ func (f *FakeOpenAI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
+		_, _ = io.WriteString(w, "data: {\"id\":\"stream-1\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":11,\"prompt_tokens_details\":{\"cached_tokens\":5}}}\n\n")
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	case OpenAIHTTPError:
 		w.Header().Set("Content-Type", "application/json")
@@ -135,6 +137,6 @@ func (f *FakeOpenAI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	default:
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"completion-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":11}}`)
+		_, _ = io.WriteString(w, `{"id":"completion-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":11,"prompt_tokens_details":{"cached_tokens":3}}}`)
 	}
 }

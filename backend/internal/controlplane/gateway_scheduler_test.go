@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,33 +97,53 @@ func TestProviderAccountCircuitOpensAndHalfOpenProbeIsExclusive(t *testing.T) {
 	}
 }
 
-func TestStickyGatewayCandidateIsScopedAndReused(t *testing.T) {
-	svc := NewService(NewMemoryRepository(), "/v1")
+func TestGatewayCandidateAffinityReusesAccountThenSupplierWithinScope(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	repo := NewMemoryRepository()
+	svc := NewService(repo, "/v1", "affinity-test-secret")
+	svc.now = func() time.Time { return now }
 	candidates := []GatewayProvider{
-		{RouteID: "route-a", AccountID: "acct-a", StickyEnabled: true, StickyTTLSeconds: 600, SelectionReason: "a"},
-		{RouteID: "route-b", AccountID: "acct-b", StickyEnabled: true, StickyTTLSeconds: 600, SelectionReason: "b"},
+		{ID: "provider-a", RouteID: "route-a", AccountID: "acct-a", StickyEnabled: true, StickyTTLSeconds: 600, SelectionReason: "a"},
+		{ID: "provider-b", RouteID: "route-b", AccountID: "acct-b", StickyEnabled: true, StickyTTLSeconds: 600, SelectionReason: "b"},
 	}
-
-	svc.BindStickyGatewayCandidate("key-a", "public-model:stable", "openai_chat", "session-1", candidates[1])
-	preferred := svc.PreferStickyGatewayCandidate("key-a", "public-model:stable", "openai_chat", "session-1", candidates)
+	input := GatewayAffinityInput{
+		TenantID: "tenant-a", PrincipalID: "customer-a", CredentialID: "key-a", Model: "public-model",
+		Protocol: "openai_chat", RouteGroup: "stable", StickyKey: "session-1", PolicyVersion: 3,
+	}
+	if err := svc.BindGatewayCandidateAffinity(ctx, input, candidates[1]); err != nil {
+		t.Fatalf("BindGatewayCandidateAffinity(): %v", err)
+	}
+	preferred := svc.PreferGatewayCandidatesWithAffinity(ctx, input, candidates)
 	if preferred[0].RouteID != "route-b" || preferred[1].RouteID != "route-a" {
-		t.Fatalf("sticky candidate not preferred: %+v", preferred)
+		t.Fatalf("account affinity candidate not preferred: %+v", preferred)
 	}
-	if got := svc.PreferStickyGatewayCandidate("key-b", "public-model:stable", "openai_chat", "session-1", candidates); got[0].RouteID != "route-a" {
-		t.Fatalf("sticky binding leaked across keys: %+v", got)
+	if !strings.Contains(preferred[0].SelectionReason, "session account affinity reused") {
+		t.Fatalf("account affinity reason missing: %+v", preferred[0])
 	}
-	if got := svc.PreferStickyGatewayCandidate("key-a", "public-model:cheap", "openai_chat", "session-1", candidates); got[0].RouteID != "route-a" {
-		t.Fatalf("sticky binding leaked across route groups: %+v", got)
+	newSession := input
+	newSession.StickyKey = "session-2"
+	if got := svc.PreferGatewayCandidatesWithAffinity(ctx, newSession, candidates); got[0].ID != "provider-b" || !strings.Contains(got[0].SelectionReason, "customer supplier affinity reused") {
+		t.Fatalf("supplier affinity not reused for a new session: %+v", got)
 	}
-
-	key := stickyBindingKey("key-a", "public-model:stable", "openai_chat", "session-1")
-	svc.scheduler.mu.Lock()
-	binding := svc.scheduler.stickyBindings[key]
-	binding.expiresAt = time.Now().UTC().Add(-time.Second)
-	svc.scheduler.stickyBindings[key] = binding
-	svc.scheduler.mu.Unlock()
-	if got := svc.PreferStickyGatewayCandidate("key-a", "public-model:stable", "openai_chat", "session-1", candidates); got[0].RouteID != "route-a" {
-		t.Fatalf("expired sticky binding still applied: %+v", got)
+	otherCustomer := input
+	otherCustomer.PrincipalID = "customer-b"
+	otherCustomer.CredentialID = "key-b"
+	if got := svc.PreferGatewayCandidatesWithAffinity(ctx, otherCustomer, candidates); got[0].RouteID != "route-a" {
+		t.Fatalf("affinity binding leaked across customers: %+v", got)
+	}
+	otherRouteGroup := input
+	otherRouteGroup.RouteGroup = "cheap"
+	if got := svc.PreferGatewayCandidatesWithAffinity(ctx, otherRouteGroup, candidates); got[0].RouteID != "route-a" {
+		t.Fatalf("affinity binding leaked across route groups: %+v", got)
+	}
+	accountScope := svc.gatewayAffinityScopeKey(AffinityBindingAccount, input)
+	if strings.Contains(accountScope, input.StickyKey) || strings.Contains(accountScope, input.CredentialID) {
+		t.Fatalf("affinity scope exposes raw identity: %q", accountScope)
+	}
+	now = now.Add(25 * time.Hour)
+	if got := svc.PreferGatewayCandidatesWithAffinity(ctx, input, candidates); got[0].RouteID != "route-a" {
+		t.Fatalf("expired affinity binding still applied: %+v", got)
 	}
 }
 

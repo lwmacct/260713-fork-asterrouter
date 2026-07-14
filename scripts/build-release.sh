@@ -120,7 +120,7 @@ release = {
     "version": version,
     "channel": "stable",
     "name": f"AsterRouter {version}",
-    "notes": "Adds API key policy and rotation flows, gateway credential capacity controls, protocol edge normalization, transactional operation/outbox and AI job foundations, plus explicit local demo-mode startup safeguards.",
+    "notes": "Adds effective pricing administration and usage normalization, provider dispatch decisions, AI job delivery workers, gateway affinity and accounting updates, plus expanded first-install and settings validation.",
     "published_at": build_date,
     "html_url": html_url,
     "assets": assets,

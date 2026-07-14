@@ -20,9 +20,10 @@ func TestGatewayOpenAIContractForJSONAndStreaming(t *testing.T) {
 		stream      bool
 		wantAccept  string
 		wantContent string
+		wantCached  int
 	}{
-		{name: "json", mode: testutil.OpenAINormal, wantAccept: "application/json", wantContent: `"id":"completion-1"`},
-		{name: "stream", mode: testutil.OpenAIStream, stream: true, wantAccept: "text/event-stream", wantContent: "data: [DONE]"},
+		{name: "json", mode: testutil.OpenAINormal, wantAccept: "application/json", wantContent: `"id":"completion-1"`, wantCached: 3},
+		{name: "stream", mode: testutil.OpenAIStream, stream: true, wantAccept: "text/event-stream", wantContent: "data: [DONE]", wantCached: 5},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			upstream := testutil.NewFakeOpenAI(t)
@@ -61,8 +62,11 @@ func TestGatewayOpenAIContractForJSONAndStreaming(t *testing.T) {
 			if usage.Recent[0].OperationID != operationID || usage.Recent[0].AttemptID == "" || usage.Recent[0].UsageVersion != 1 || usage.Recent[0].RequestFingerprint == "" {
 				t.Fatalf("usage ledger identity = %#v", usage.Recent[0])
 			}
-			if !test.stream && (usage.Recent[0].InputTokens != 7 || usage.Recent[0].OutputTokens != 11) {
-				t.Fatalf("JSON usage tokens = %#v", usage.Recent[0])
+			if usage.Recent[0].InputTokens != 7 || usage.Recent[0].OutputTokens != 11 || usage.Recent[0].CacheReadTokens == nil || *usage.Recent[0].CacheReadTokens != test.wantCached {
+				t.Fatalf("normalized usage tokens = %#v", usage.Recent[0])
+			}
+			if usage.Recent[0].Protocol != "openai_chat_completions" || usage.Recent[0].TTFTMS == nil || !usage.Recent[0].CacheFieldsPresent || usage.Recent[0].UsageNormalizationStatus != usageNormalizationOpenAI || usage.Recent[0].UpstreamRequestID != "req-fake-openai-1" {
+				t.Fatalf("normalized usage evidence = %#v", usage.Recent[0])
 			}
 			operation, found, err := control.AIOperation(context.Background(), operationID)
 			if err != nil || !found || operation.Status != controlplane.AIOperationStatusSucceeded {

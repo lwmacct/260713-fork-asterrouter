@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/astercloud/asterrouter/backend/internal/auth"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/httpx"
 	"github.com/astercloud/asterrouter/backend/internal/settings"
@@ -10,6 +11,9 @@ import (
 )
 
 func registerSurfaceSettings(group *gin.RouterGroup, svc *settings.Service, control *controlplane.Service) {
+	group.GET("/settings/email-templates/defaults", func(c *gin.Context) {
+		httpx.OK(c, auth.DefaultEmailTemplates())
+	})
 	group.GET("/settings", func(c *gin.Context) {
 		data, err := svc.Admin(c.Request.Context())
 		if err != nil {

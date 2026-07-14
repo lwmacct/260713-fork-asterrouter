@@ -82,7 +82,7 @@ func TestPlatformAPIRequiresEnabledProfileAndExplicitSurfaceBinding(t *testing.T
 	}
 }
 
-func TestSystemProfileChangesCannotMutateAnInstalledDeployment(t *testing.T) {
+func TestSystemProfileChangesRequireSystemAdministrator(t *testing.T) {
 	settingsService := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{
 		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"enterprise"}, DefaultProfile: "enterprise",
 	})
@@ -115,12 +115,21 @@ func TestSystemProfileChangesCannotMutateAnInstalledDeployment(t *testing.T) {
 	allowed.Header.Set("Content-Type", "application/json")
 	allowedRec := httptest.NewRecorder()
 	handler.ServeHTTP(allowedRec, allowed)
-	if allowedRec.Code != http.StatusConflict {
+	if allowedRec.Code != http.StatusOK {
 		t.Fatalf("system administrator mutation status=%d body=%s", allowedRec.Code, allowedRec.Body.String())
 	}
 	current, err := settingsService.Admin(context.Background())
-	if err != nil || current.DefaultProfile != "enterprise" || len(current.EnabledProfiles) != 1 || current.EnabledProfiles[0] != "enterprise" {
-		t.Fatalf("installed profile mutated=%+v err=%v", current.PublicSettings, err)
+	if err != nil || current.DefaultProfile != "platform" || len(current.EnabledProfiles) != 1 || current.EnabledProfiles[0] != "platform" {
+		t.Fatalf("installed profile was not switched=%+v err=%v", current.PublicSettings, err)
+	}
+	for _, path := range []string{"/api/v1/platform/settings", "/api/v1/platform/settings/email-templates/defaults"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("platform settings path=%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

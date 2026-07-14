@@ -15,6 +15,7 @@ const AdminAuditView = () => import('@/views/admin/AdminAuditView.vue')
 const AdminCostAllocationView = () => import('@/views/admin/AdminCostAllocationView.vue')
 const AdminDashboardView = () => import('@/views/admin/AdminDashboardView.vue')
 const AdminDepartmentsView = () => import('@/views/admin/AdminDepartmentsView.vue')
+const AdminEffectivePricingView = () => import('@/views/admin/AdminEffectivePricingView.vue')
 const AdminOrganizationGroupsView = () => import('@/views/admin/AdminOrganizationGroupsView.vue')
 const AdminExportJobsView = () => import('@/views/admin/AdminExportJobsView.vue')
 const AdminGatewayTracesView = () => import('@/views/admin/AdminGatewayTracesView.vue')
@@ -169,6 +170,7 @@ const router = createRouter({
         { path: 'routing-groups', component: AdminRoutingGroupsView, meta: { titleKey: 'admin.routingGroups', descriptionKey: 'routingGroups.subtitle' } },
         { path: 'provider-accounts', component: AdminProviderAccountsView, meta: { titleKey: 'admin.providerAccounts', descriptionKey: 'providerAccounts.subtitle' } },
         { path: 'model-pricings', component: AdminModelPricingsView, meta: { titleKey: 'admin.modelPricings', descriptionKey: 'modelPricings.subtitle' } },
+        { path: 'effective-pricing', component: AdminEffectivePricingView, meta: { titleKey: 'admin.effectivePricing', descriptionKey: 'effectivePricing.subtitle' } },
         { path: 'users', component: AdminUsersView, meta: { titleKey: 'admin.users', descriptionKey: 'users.subtitle' } },
         { path: 'departments', component: AdminDepartmentsView, meta: { titleKey: 'admin.departments', descriptionKey: 'departments.subtitle' } },
 				{ path: 'organization-groups', component: AdminOrganizationGroupsView, meta: { titleKey: 'organizationGroups.title', descriptionKey: 'organizationGroups.subtitle' } },
@@ -238,6 +240,7 @@ const router = createRouter({
         { path: 'alerts', component: AdminAlertsView, meta: { titleKey: 'admin.alerts', descriptionKey: 'alerts.subtitle' } },
         { path: 'audit', component: AdminAuditView, meta: { titleKey: 'admin.audit', descriptionKey: 'audit.subtitle' } },
         { path: 'plugins', component: AdminPluginsView, meta: { titleKey: 'admin.plugins', descriptionKey: 'plugins.subtitle' } },
+        { path: 'settings', component: AdminSettingsView, meta: { titleKey: 'admin.settings', descriptionKey: 'admin.subtitle' } },
         { path: 'account', component: AccountProfileView, meta: { titleKey: 'account.title', descriptionKey: 'account.subtitle' } },
         { path: ':pathMatch(.*)*', redirect: '/platform/overview' }
       ]

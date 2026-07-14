@@ -141,8 +141,8 @@ func (r *MemoryRepository) CompleteAIOperation(_ context.Context, id, status, er
 	return true, nil
 }
 
-func (r *MemoryRepository) CreateAIAttempt(_ context.Context, attempt AIAttempt) error {
-	_, created, err := r.CreateOrGetAIAttempt(context.Background(), attempt)
+func (r *MemoryRepository) CreateAIAttempt(ctx context.Context, attempt AIAttempt) error {
+	_, created, err := r.CreateOrGetAIAttempt(ctx, attempt)
 	if err != nil {
 		return err
 	}

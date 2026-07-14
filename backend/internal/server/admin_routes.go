@@ -21,6 +21,7 @@ func registerAdminRoutes(admin *gin.RouterGroup, control *controlplane.Service, 
 	registerGatewayModelAdminRoutes(admin, control)
 	registerAPIKeyAdminRoutes(admin, control)
 	registerModelPricingAdminRoutes(admin, control)
+	registerEffectivePricingAdminRoutes(admin, control)
 	registerObservabilityAdminRoutesForScope(admin, control, "")
 	registerAlertAdminRoutes(admin, control)
 	registerCSVExportJobRoutes(admin.Group("/export-jobs"), control, exportJobs)

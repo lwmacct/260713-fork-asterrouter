@@ -36,7 +36,7 @@ AsterRouter sits between your applications and the AI providers you are authoriz
 | Employee, department, SSO, and internal-service governance | **Enterprise** | `/admin` and `/portal` |
 | A developer API or AI capabilities inside an existing SaaS, OEM, or client product | **AI Platform** | `/platform` |
 
-Each production instance chooses one role during installation. The role is immutable because its business objects, navigation, and access boundary are different.
+Each production instance starts with one active role during installation. A system administrator can switch the active role later from Settings; only the selected role is exposed at a time, while existing data is retained.
 
 ## Offer AI without taking over your product
 
@@ -100,7 +100,7 @@ Replace `enterprise` with `personal`, `relay_operator`, or `platform` as appropr
 docker compose up --build
 ```
 
-Open `http://localhost:8080/setup` to choose one deployment role and review its business boundary before completing setup. After installation, AsterRouter clears any browser session left by another deployment role and asks you to sign in again before opening the selected console. Retrying the same installation choice is safe; requesting a different role is rejected. For non-interactive deployment, set `ASTER_DEPLOYMENT_ROLE=platform`; the older matching `ASTER_PROFILES=platform` and `ASTER_DEFAULT_PROFILE=platform` pair remains compatible. The choice is persisted on first boot and cannot be changed. Deploy another instance for another role.
+Open `http://localhost:8080/setup` to choose one deployment role and review its business boundary before completing setup. After installation, AsterRouter clears any browser session left by another deployment role and asks you to sign in again before opening the selected console. Retrying the same installation choice is safe. A system administrator can switch the active role later from Settings; the previous role is hidden but its data is retained. For non-interactive deployment, set `ASTER_DEPLOYMENT_ROLE=platform`; the older matching `ASTER_PROFILES=platform` and `ASTER_DEFAULT_PROFILE=platform` pair remains compatible as bootstrap input.
 
 ## Private deployment and managed delivery
 

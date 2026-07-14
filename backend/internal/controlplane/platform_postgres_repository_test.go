@@ -41,11 +41,18 @@ func TestPostgresRepositoryPersistsPlatformDomainAndEvidenceSnapshots(t *testing
 	if err := repo.SaveUsageRecordAndEnqueuePlatformUsage(ctx, deliveryUsage, []PlatformUsageDeliveryEvent{deliveryEvent}); err != nil {
 		t.Fatal(err)
 	}
-	usage := UsageRecord{ID: "usage-platform-postgres", APIKeyID: key.ID, APIFingerprint: key.Fingerprint, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-subject", Model: "model", Status: "forwarded", CreatedAt: now}
+	ttftMS := int64(125)
+	totalInputTokens, uncachedInputTokens, cacheReadTokens := 100, 40, 60
+	procurementCostMicros := int64(321)
+	usage := UsageRecord{ID: "usage-platform-postgres", APIKeyID: key.ID, APIFingerprint: key.Fingerprint, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-subject", Model: "model", UpstreamModel: "upstream-model", Protocol: "openai_chat_completions", ProviderID: "provider-a", ProviderAccountID: "account-a", Status: "forwarded", TTFTMS: &ttftMS, InputTokens: 100, OutputTokens: 20, TotalInputTokens: &totalInputTokens, UncachedInputTokens: &uncachedInputTokens, CacheReadTokens: &cacheReadTokens, CacheFieldsPresent: true, UsageNormalizationStatus: "normalized_openai", UpstreamRequestID: "upstream-request-a", ProcurementCostMicros: &procurementCostMicros, ProcurementCostCurrency: "USD", ProcurementCostSource: "procurement_price", ProcurementCostConfidence: ProcurementCostConfidenceEstimated, ProcurementPriceID: "price-a", CreatedAt: now}
+	affinity := RoutingAffinityBinding{ScopeKey: "affinity-postgres", Kind: AffinityBindingAccount, ProviderID: "provider-a", ProviderAccountID: "account-a", RouteID: "route-a", Model: "model", Protocol: "openai_chat_completions", PolicyVersion: 3, CreatedAt: now, LastReusedAt: now, ExpiresAt: now.Add(time.Hour)}
 	trace := GatewayTrace{ID: "trace-platform-postgres", APIKeyID: key.ID, APIFingerprint: key.Fingerprint, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-subject", Model: "model", Status: "forwarded", CreatedAt: now}
 	audit := AuditLog{ID: "audit-platform-postgres", Actor: "operator", Action: "invoke", ResourceType: "gateway_call", ResourceID: "call", Summary: "platform call", ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-subject", CreatedAt: now}
 	alert := AlertEvent{ID: "alert-platform-postgres", Type: AlertTypeAPIKeyQuota, Severity: AlertSeverityWarning, Status: AlertStatusActive, Title: "platform alert", Summary: "platform alert", ResourceType: "api_key", ResourceID: key.ID, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-subject", DedupeKey: "platform-postgres", FirstSeenAt: now, LastSeenAt: now}
 	if err := repo.SaveUsageRecord(ctx, usage); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveRoutingAffinityBinding(ctx, affinity); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SaveGatewayTrace(ctx, trace); err != nil {
@@ -103,6 +110,13 @@ func TestPostgresRepositoryPersistsPlatformDomainAndEvidenceSnapshots(t *testing
 	}
 	if persistedUsage.ID == "" || persistedUsage.PlatformTenantName != tenant.Name || persistedUsage.GatewayPrincipalName != principal.Name || persistedUsage.ExternalSubjectReference != "opaque-subject" {
 		t.Fatalf("persisted platform usage=%+v all=%+v", persistedUsage, usageRecords)
+	}
+	if persistedUsage.TTFTMS == nil || *persistedUsage.TTFTMS != ttftMS || persistedUsage.CacheReadTokens == nil || *persistedUsage.CacheReadTokens != cacheReadTokens || persistedUsage.ProcurementCostMicros == nil || *persistedUsage.ProcurementCostMicros != procurementCostMicros || persistedUsage.Protocol != usage.Protocol || persistedUsage.UpstreamRequestID != usage.UpstreamRequestID {
+		t.Fatalf("persisted effective pricing usage=%+v", persistedUsage)
+	}
+	persistedAffinity, found, err := reopened.FindRoutingAffinityBinding(ctx, affinity.ScopeKey, now)
+	if err != nil || !found || persistedAffinity.ProviderAccountID != affinity.ProviderAccountID || persistedAffinity.PolicyVersion != affinity.PolicyVersion {
+		t.Fatalf("persisted affinity=%+v found=%t err=%v", persistedAffinity, found, err)
 	}
 	traces, err := reopened.QueryGatewayTraces(ctx, GatewayTraceQuery{ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, GatewayPrincipalID: principal.ID, ExternalAuthIntegrationID: integration.ID})
 	if err != nil || len(traces) != 1 || traces[0].PlatformTenantName != tenant.Name || traces[0].GatewayPrincipalName != principal.Name || traces[0].ExternalSubjectReference != "opaque-subject" {

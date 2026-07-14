@@ -2,7 +2,6 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { AlertTriangle, Building2, Check, Database, Download, FileText, KeyRound, Laptop, Mail, PanelsTopLeft, Power, RadioTower, RefreshCw, RotateCcw, Save, ServerCog, ShieldCheck, SlidersHorizontal, ToggleLeft, UserRound } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import { getAdminSettings, getDefaultEmailTemplates, previewEmailTemplate, runRetentionCleanup, testEmailTemplate, testSMTP, updateAdminSettings } from '@/api/settings'
 import {
   checkSystemUpdates,
@@ -21,12 +20,10 @@ import {
   rollbackSystemUpdate,
   updateSystemProfiles
 } from '@/api/system'
-import { setPublicSettingsCache } from '@/router'
 import { useAppStore } from '@/stores/app'
 import type { AdminSettings, S3BackupObject, SystemArchiveInfo, SystemUpdateInfo } from '@/types'
 
 const { t } = useI18n()
-const router = useRouter()
 const app = useAppStore()
 const loading = ref(false)
 const saving = ref(false)
@@ -38,7 +35,7 @@ const updateAction = ref('')
 const archiveAction = ref('')
 const backups = ref<SystemArchiveInfo[]>([])
 const remoteBackups = ref<S3BackupObject[]>([])
-const activeSettingsTab = ref<'general' | 'terms' | 'features' | 'security' | 'defaults' | 'gateway' | 'email' | 'backup'>('general')
+const activeSettingsTab = ref<'general' | 'terms' | 'features' | 'security' | 'defaults' | 'gateway' | 'email' | 'backup'>('gateway')
 const smtpTestRecipient = ref('')
 const smtpTesting = ref(false)
 const s3Testing = ref(false)
@@ -189,8 +186,8 @@ function profileLabel(profile: string): string {
   return profile
 }
 
-async function switchDemoProfile(profile: string) {
-  if (!form.demo_mode || profileSwitching.value || form.default_profile === profile) return
+async function switchProfile(profile: string) {
+  if (profileSwitching.value || form.default_profile === profile) return
   const target = deploymentProfiles.find((item) => item.id === profile)
   if (!target) return
 
@@ -198,13 +195,12 @@ async function switchDemoProfile(profile: string) {
   error.value = ''
   message.value = ''
   try {
-    const next = await updateSystemProfiles(deploymentProfiles.map((item) => item.id), profile)
+    const next = await updateSystemProfiles([profile], profile)
     form.enabled_profiles = [...next.enabled_profiles]
     form.default_profile = next.default_profile
     await app.loadPublicSettings()
-    setPublicSettingsCache(app.publicSettings)
-    message.value = t('settings.demoProfileSwitched', { profile: profileLabel(profile) })
-    await router.push(target.route)
+    message.value = t(form.demo_mode ? 'settings.demoProfileSwitched' : 'settings.profileSwitched', { profile: profileLabel(profile) })
+    window.location.assign(target.route)
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('common.failed')
   } finally {
@@ -608,52 +604,34 @@ onMounted(async () => {
           <h2>{{ t('settings.deployment') }}</h2>
         </div>
         <div class="panel-body">
-          <template v-if="form.demo_mode">
-            <div class="notice success">
-              <strong>{{ t('settings.demoProfileSwitchTitle') }}</strong>
-              <span>{{ t('settings.demoProfileSwitchHelp') }}</span>
-            </div>
-            <div class="setup-grid">
-              <button
-                v-for="profile in deploymentProfiles"
-                :key="profile.id"
-                class="profile-card"
-                :class="{ active: form.default_profile === profile.id, primary: form.default_profile === profile.id }"
-                type="button"
-                :data-profile="profile.id"
-                :aria-pressed="form.default_profile === profile.id"
-                :disabled="Boolean(profileSwitching)"
-                @click="switchDemoProfile(profile.id)"
-              >
-                <span class="profile-card-topline">
-                  <component :is="profile.icon" :size="28" aria-hidden="true" />
-                  <span class="profile-check" :class="{ active: form.default_profile === profile.id }">
-                    <Check v-if="form.default_profile === profile.id" :size="15" aria-hidden="true" />
-                  </span>
+          <div class="notice" :class="{ success: form.demo_mode }">
+            <strong>{{ t(form.demo_mode ? 'settings.demoProfileSwitchTitle' : 'settings.profileSwitchTitle') }}</strong>
+            <span>{{ t(form.demo_mode ? 'settings.demoProfileSwitchHelp' : 'settings.profileSwitchHelp') }}</span>
+          </div>
+          <div class="setup-grid">
+            <button
+              v-for="profile in deploymentProfiles"
+              :key="profile.id"
+              class="profile-card"
+              :class="{ active: form.default_profile === profile.id, primary: form.default_profile === profile.id }"
+              type="button"
+              :data-profile="profile.id"
+              :aria-pressed="form.default_profile === profile.id"
+              :disabled="Boolean(profileSwitching)"
+              @click="switchProfile(profile.id)"
+            >
+              <span class="profile-card-topline">
+                <component :is="profile.icon" :size="28" aria-hidden="true" />
+                <span class="profile-check" :class="{ active: form.default_profile === profile.id }">
+                  <Check v-if="form.default_profile === profile.id" :size="15" aria-hidden="true" />
                 </span>
-                <h2>{{ t(profile.title) }}</h2>
-                <p>{{ t(profile.desc) }}</p>
-                <span class="profile-owner">{{ t(profile.owner) }}</span>
-                <span class="profile-route">{{ profile.route }}</span>
-              </button>
-            </div>
-          </template>
-          <template v-else>
-          <div class="notice">
-            <strong>
-              <AlertTriangle :size="15" />
-              {{ t('settings.profileFixedTitle') }}
-            </strong>
-            <span>{{ t('settings.profileFixedHelp') }}</span>
+              </span>
+              <h2>{{ t(profile.title) }}</h2>
+              <p>{{ t(profile.desc) }}</p>
+              <span class="profile-owner">{{ t(profile.owner) }}</span>
+              <span class="profile-route">{{ profile.route }}</span>
+            </button>
           </div>
-          <div class="field">
-            <label>{{ t('settings.deploymentProfile') }}</label>
-            <div class="status-line">
-              <span class="pill status-success">{{ profileLabel(form.default_profile || form.enabled_profiles[0] || '-') }}</span>
-            </div>
-            <span class="hint">{{ t('settings.deploymentProfileHelp') }}</span>
-          </div>
-          </template>
           <div class="field">
             <label>{{ t('settings.gatewayBasePath') }}</label>
             <input v-model="form.gateway_base_path" />

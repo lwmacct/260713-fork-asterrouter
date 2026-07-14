@@ -759,21 +759,23 @@ func New(opts Options) http.Handler {
 		httpx.OK(c, profileBundleResponse(current))
 	})
 	systemAPI.PUT("/profiles", func(c *gin.Context) {
-		if opts.Config.DemoMode {
-			var req profileBundleRequest
-			if err := c.ShouldBindJSON(&req); err != nil {
-				httpx.Error(c, http.StatusBadRequest, 1402, "invalid profile bundle payload")
-				return
-			}
-			current, err := opts.SettingsService.ApplyProfiles(c.Request.Context(), req.EnabledProfiles, req.DefaultProfile)
-			if err != nil {
-				httpx.Error(c, http.StatusBadRequest, 1403, err.Error())
-				return
-			}
-			httpx.OK(c, profileBundleResponse(current))
+		var req profileBundleRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1402, "invalid profile bundle payload")
 			return
 		}
-		httpx.Error(c, http.StatusConflict, 1403, "deployment profile is fixed after installation; create a separate instance for a different business model")
+		current, err := opts.SettingsService.ApplyProfiles(c.Request.Context(), req.EnabledProfiles, req.DefaultProfile)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1403, err.Error())
+			return
+		}
+		if current.DefaultProfile == controlplane.ProfileScopePlatform && opts.ControlService != nil {
+			if err := opts.ControlService.EnsurePlatformBootstrap(c.Request.Context()); err != nil {
+				httpx.Error(c, http.StatusInternalServerError, 1404, "failed to initialize platform domain")
+				return
+			}
+		}
+		httpx.OK(c, profileBundleResponse(current))
 	})
 
 	admin := api.Group("/admin")
@@ -944,6 +946,8 @@ func New(opts Options) http.Handler {
 	platformAPI.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfacePlatform))
 	platformAPI.Use(requireSurfaceRBAC(opts.ControlService, controlplane.SurfacePlatform))
 	registerPlatformRoutes(platformAPI, opts.ControlService, opts.PluginService)
+	registerSurfaceSettings(platformAPI, opts.SettingsService, opts.ControlService)
+	registerSystemRoutes(platformAPI.Group("/system"), opts.SystemService, opts.SettingsService, opts.ControlService)
 	registerGatewayRoutes(r, opts.ControlService)
 
 	serveSPA(r, opts.Config.FrontendDir)
