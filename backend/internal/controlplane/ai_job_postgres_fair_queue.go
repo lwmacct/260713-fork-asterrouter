@@ -166,6 +166,7 @@ func lockPostgresAIJobAdmissionScopes(ctx context.Context, tx *sql.Tx, job AIJob
 		keys = append(keys, "ai-job-admission:principal:"+aiJobPrincipalFairKey(job))
 	}
 	for _, key := range keys {
+		key = strings.ReplaceAll(key, "\x00", "\n")
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
 			return err
 		}

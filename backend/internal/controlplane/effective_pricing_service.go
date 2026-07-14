@@ -679,7 +679,7 @@ func aggregateCacheEconomics(aggregate EffectivePricingUsageAggregate, price Pro
 	uncachedRequestCost := price.RequestMicros*aggregate.RequestCount + uncachedInputCost + scaledTokenCost(aggregate.OutputTokens, price.OutputMicrosPer1MTokens)
 	uncachedCostPer1M := scaledPerMillion(uncachedRequestCost, tokenCount)
 	componentTokens := aggregate.UncachedInputTokens + aggregate.CacheReadTokens + aggregate.CacheWrite5mTokens + aggregate.CacheWrite1hTokens
-	if aggregate.RequestCount <= 0 || aggregate.SuccessfulRequestCount != aggregate.RequestCount || aggregate.CacheMetricsRequestCount != aggregate.SuccessfulRequestCount || componentTokens != aggregate.TotalInputTokens {
+	if aggregate.CacheMetricsRequestCount <= 0 || componentTokens != aggregate.TotalInputTokens {
 		return uncachedCostPer1M, 0, 0, false
 	}
 	modeledInputCost := scaledTokenCost(aggregate.UncachedInputTokens, price.UncachedInputMicrosPer1MTokens) +

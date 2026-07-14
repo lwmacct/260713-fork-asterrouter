@@ -14,6 +14,7 @@ async function invokeWithSyntheticUsage(page: Page, key: string, model: string, 
   return page.request.post('/v1/chat/completions', {
     data: {
       model,
+      max_cost_cents: tokens,
       messages: [{ role: 'user', content: `synthetic ${tokens}-token policy request` }],
       synthetic_usage: { prompt_tokens: tokens, completion_tokens: 0 }
     },
@@ -144,7 +145,7 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
     model: budgetModel,
     currency: 'USD',
     input_price_cents_per_1m_tokens: 1000000,
-    output_price_cents_per_1m_tokens: 1000000,
+    output_price_cents_per_1m_tokens: 0,
     status: 'active'
   })
   const budgetKey = await adminPost<{ key: string; record: { id: string } }>(page, token, '/api-keys', {

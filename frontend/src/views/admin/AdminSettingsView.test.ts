@@ -5,8 +5,10 @@ import * as settings from '@/api/settings'
 import * as system from '@/api/system'
 import AdminSettingsView from './AdminSettingsView.vue'
 
+const loadPublicSettingsMock = vi.fn()
+
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ loadPublicSettings: vi.fn() })
+  useAppStore: () => ({ loadPublicSettings: loadPublicSettingsMock })
 }))
 
 vi.mock('@/api/settings', () => ({
@@ -44,6 +46,7 @@ const loadedSettings = {
   gateway_base_path: '/v1',
   default_profile: 'enterprise',
   enabled_profiles: ['enterprise'],
+  demo_mode: false,
   email_templates: [],
   runtime_restart_required: false,
   runtime_restart_reasons: [],
@@ -60,6 +63,7 @@ describe('AdminSettingsView', () => {
     vi.mocked(system.checkSystemUpdates).mockResolvedValue({ has_update: false, source: 'none' } as never)
     vi.mocked(system.listSystemBackups).mockResolvedValue([])
     vi.mocked(system.listS3Backups).mockResolvedValue([])
+    window.history.replaceState({}, '', '/admin/settings')
   })
 
   it('opens on general settings and supports keyboard tab navigation', async () => {
@@ -92,6 +96,26 @@ describe('AdminSettingsView', () => {
     await saveBar.get('button').trigger('click')
     await flushPromises()
     expect(settings.updateAdminSettings).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('switches an installed non-demo instance to one profile and opens its workspace', async () => {
+    vi.mocked(system.updateSystemProfiles).mockResolvedValue({
+      enabled_profiles: ['relay_operator'],
+      default_profile: 'relay_operator'
+    })
+    const wrapper = mount(AdminSettingsView, { global: { plugins: [i18n] } })
+    await flushPromises()
+
+    await wrapper.get('#settings-tab-gateway').trigger('click')
+    await wrapper.get('[data-profile="relay_operator"]').trigger('click')
+    await flushPromises()
+
+    expect(system.updateSystemProfiles).toHaveBeenCalledWith(['relay_operator'], 'relay_operator')
+    expect(loadPublicSettingsMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-profile="relay_operator"]').attributes('aria-pressed')).toBe('true')
+    expect(window.location.pathname).toBe('/operator/overview')
 
     wrapper.unmount()
   })

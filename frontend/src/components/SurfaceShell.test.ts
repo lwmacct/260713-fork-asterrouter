@@ -29,13 +29,13 @@ describe('SurfaceShell', () => {
     vi.mocked(getCurrentUser).mockResolvedValue(makeAuthUser({ role: 'demo_admin' }))
   })
 
-  async function mountShell() {
+  async function mountShell(enabledProfiles = ['personal', 'relay_operator', 'enterprise']) {
     const pinia = createPinia()
     setActivePinia(pinia)
     const app = useAppStore()
     app.publicSettings = makePublicSettings({
       demo_mode: true,
-      enabled_profiles: ['personal', 'relay_operator', 'enterprise']
+      enabled_profiles: enabledProfiles
     })
     const auth = useAuthStore()
     auth.token = 'test-token'
@@ -75,6 +75,17 @@ describe('SurfaceShell', () => {
       expect.stringContaining('Admin'),
       expect.stringContaining('Portal')
     ]))
+
+    wrapper.unmount()
+  })
+
+  it('hides every other workspace when only the current deployment profile is enabled', async () => {
+    const { wrapper } = await mountShell(['personal'])
+
+    expect(wrapper.find('.sidebar-workspaces').exists()).toBe(false)
+    expect(wrapper.findAll('a').map((link) => link.text()).join(' ')).not.toContain('Operator')
+    expect(wrapper.findAll('a').map((link) => link.text()).join(' ')).not.toContain('Admin')
+    expect(wrapper.findAll('a').map((link) => link.text()).join(' ')).not.toContain('Platform')
 
     wrapper.unmount()
   })
