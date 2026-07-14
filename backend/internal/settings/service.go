@@ -157,15 +157,24 @@ func (s *Service) ApplyProfiles(ctx context.Context, profiles []string, defaultP
 	if !containsString(enabledProfiles, defaultProfile) {
 		return AdminSettings{}, fmt.Errorf("default profile %q is not enabled", defaultProfile)
 	}
-	raw, err := s.repo.GetAll(ctx)
-	if err != nil {
-		return AdminSettings{}, err
-	}
-	if !s.demoMode && parseBool(raw[KeySetupCompleted]) {
-		current := normalizeProfiles(parseStringList(raw[KeyEnabledProfiles], nil))
-		if len(current) > 0 && (!sameProfiles(current, enabledProfiles) || strings.TrimSpace(raw[KeyDefaultProfile]) != defaultProfile) {
-			return AdminSettings{}, errors.New("deployment profile is fixed after installation; use a separate instance for a different business model")
+	if !s.demoMode {
+		if err := s.repo.InitializeDeploymentProfile(ctx, defaultProfile); err == nil {
+			return s.Admin(ctx)
+		} else if !errors.Is(err, ErrDeploymentProfileInitialized) {
+			return AdminSettings{}, err
 		}
+		raw, err := s.repo.GetAll(ctx)
+		if err != nil {
+			return AdminSettings{}, err
+		}
+		persistedProfile, err := persistedDeploymentProfile(raw)
+		if err != nil {
+			return AdminSettings{}, err
+		}
+		if persistedProfile != defaultProfile {
+			return AdminSettings{}, ErrDeploymentProfileInitialized
+		}
+		return s.Admin(ctx)
 	}
 	encodedProfiles, _ := json.Marshal(enabledProfiles)
 	if err := s.repo.SetMultiple(ctx, map[string]string{
@@ -196,49 +205,57 @@ func sameProfiles(left, right []string) bool {
 func (s *Service) ApplyInitialProfile(ctx context.Context, profile string) (AdminSettings, error) {
 	profile = strings.TrimSpace(profile)
 	if !isProfile(profile) {
-		return AdminSettings{}, fmt.Errorf("unsupported profile %q", profile)
+		return AdminSettings{}, fmt.Errorf("%w %q", ErrUnsupportedDeploymentProfile, profile)
 	}
-	raw, err := s.repo.GetAll(ctx)
-	if err != nil {
+	if err := s.repo.InitializeDeploymentProfile(ctx, profile); err != nil {
 		return AdminSettings{}, err
 	}
-	if parseBool(raw[KeySetupCompleted]) || raw[KeyEnabledProfiles] != "" || raw[KeyDefaultProfile] != "" {
-		return AdminSettings{}, errors.New("setup is already completed; create a separate instance for a different business model")
-	}
-	return s.ApplyProfiles(ctx, []string{profile}, profile)
+	return s.Admin(ctx)
 }
 
 // BootstrapProfile persists the configured non-interactive installation
 // profile exactly once. Environment configuration is bootstrap input only;
 // PostgreSQL becomes the source of truth immediately afterwards.
 func (s *Service) BootstrapProfile(ctx context.Context) error {
+	if s.defaultProfile != "" && !isProfile(s.defaultProfile) {
+		return fmt.Errorf("%w %q", ErrUnsupportedDeploymentProfile, s.defaultProfile)
+	}
 	if len(s.enabledProfiles) == 0 {
 		return nil
 	}
 	if len(s.enabledProfiles) != 1 {
 		return errors.New("exactly one bootstrap profile is required")
 	}
-	raw, err := s.repo.GetAll(ctx)
-	if err != nil {
-		return err
-	}
-	if parseBool(raw[KeySetupCompleted]) || raw[KeyEnabledProfiles] != "" || raw[KeyDefaultProfile] != "" {
-		persistedProfiles := normalizeProfiles(parseStringList(raw[KeyEnabledProfiles], nil))
-		persistedDefault := strings.TrimSpace(raw[KeyDefaultProfile])
-		if len(persistedProfiles) != 1 || persistedDefault == "" || !containsString(persistedProfiles, persistedDefault) {
-			return errors.New("persisted deployment profile is incomplete or invalid; do not use bootstrap environment variables to repair an existing instance")
-		}
-		if persistedProfiles[0] != s.enabledProfiles[0] || persistedDefault != s.enabledProfiles[0] {
-			return fmt.Errorf("configured deployment role %q does not match persisted deployment profile %q; deploy a separate instance for a different business model", s.enabledProfiles[0], persistedDefault)
-		}
-		return nil
-	}
 	profile := s.enabledProfiles[0]
 	if s.defaultProfile != "" && s.defaultProfile != profile {
 		return errors.New("bootstrap default profile must match the enabled profile")
 	}
-	_, err = s.ApplyProfiles(ctx, []string{profile}, profile)
-	return err
+	if err := s.repo.InitializeDeploymentProfile(ctx, profile); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrDeploymentProfileInitialized) {
+		return err
+	}
+	raw, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return err
+	}
+	persistedProfile, err := persistedDeploymentProfile(raw)
+	if err != nil {
+		return err
+	}
+	if persistedProfile != profile {
+		return fmt.Errorf("configured deployment role %q does not match persisted deployment profile %q; deploy a separate instance for a different business model", profile, persistedProfile)
+	}
+	return nil
+}
+
+func persistedDeploymentProfile(raw map[string]string) (string, error) {
+	profiles := normalizeProfiles(parseStringList(raw[KeyEnabledProfiles], nil))
+	defaultProfile := strings.TrimSpace(raw[KeyDefaultProfile])
+	if !parseBool(raw[KeySetupCompleted]) || len(profiles) != 1 || defaultProfile == "" || profiles[0] != defaultProfile {
+		return "", errors.New("persisted deployment profile is incomplete or invalid; repair the stored state explicitly instead of overwriting it")
+	}
+	return defaultProfile, nil
 }
 
 func (s *Service) Health(ctx context.Context) error {

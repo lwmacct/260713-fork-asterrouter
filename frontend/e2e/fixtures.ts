@@ -132,6 +132,7 @@ export function captureBrowserErrors(page: Page): string[] {
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   page.on('requestfailed', (request) => {
     const failure = request.failure()
+    if (failure?.errorText === 'net::ERR_ABORTED') return
     errors.push(`requestfailed: ${request.method()} ${request.url()} ${failure?.errorText || ''}`.trim())
   })
   return errors

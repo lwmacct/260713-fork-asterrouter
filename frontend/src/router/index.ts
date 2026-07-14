@@ -254,16 +254,14 @@ router.beforeEach(async (to) => {
   if (to.path === '/') {
     return entry
   }
-  if (to.path === '/login' && token) {
-    return entry
+  if (to.path === '/login') {
+    if (token && entry !== '/login') return entry
+    return true
   }
   if (to.path === '/setup') {
     if (settings?.setup_completed) {
       return entry
     }
-    return true
-  }
-  if (to.path === '/login') {
     return true
   }
 	if (to.path.startsWith('/legal/')) return true

@@ -3,15 +3,27 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
+var (
+	ErrDeploymentProfileInitialized = errors.New("setup is already completed; create a separate instance for a different business model")
+	ErrUnsupportedDeploymentProfile = errors.New("unsupported deployment profile")
+)
+
+const deploymentProfileAdvisoryLock int64 = 0x6173746572736574
+
 type Repository interface {
 	GetAll(ctx context.Context) (map[string]string, error)
 	SetMultiple(ctx context.Context, values map[string]string) error
+	InitializeDeploymentProfile(ctx context.Context, profile string) error
 	Health(ctx context.Context) error
 	Close() error
 }
@@ -51,6 +63,28 @@ func (r *MemoryRepository) SetMultiple(_ context.Context, values map[string]stri
 	defer r.mu.Unlock()
 	now := time.Now().UTC()
 	for key, value := range values {
+		r.entries[key] = Entry{Key: key, Value: value, UpdatedAt: now}
+	}
+	return nil
+}
+
+func (r *MemoryRepository) InitializeDeploymentProfile(_ context.Context, profile string) error {
+	profile = strings.TrimSpace(profile)
+	if !isProfile(profile) {
+		return fmt.Errorf("%w %q", ErrUnsupportedDeploymentProfile, profile)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	current := make(map[string]string, 3)
+	for _, key := range []string{KeySetupCompleted, KeyEnabledProfiles, KeyDefaultProfile} {
+		current[key] = r.entries[key].Value
+	}
+	if deploymentProfileInitialized(current) {
+		return ErrDeploymentProfileInitialized
+	}
+	now := time.Now().UTC()
+	for key, value := range deploymentProfileValues(profile) {
 		r.entries[key] = Entry{Key: key, Value: value, UpdatedAt: now}
 	}
 	return nil
@@ -128,6 +162,65 @@ func (r *PostgresRepository) SetMultiple(ctx context.Context, values map[string]
 		}
 	}()
 
+	if err = setMultipleTx(ctx, tx, values); err != nil {
+		return err
+	}
+	err = tx.Commit()
+	return err
+}
+
+func (r *PostgresRepository) InitializeDeploymentProfile(ctx context.Context, profile string) (err error) {
+	profile = strings.TrimSpace(profile)
+	if !isProfile(profile) {
+		return fmt.Errorf("%w %q", ErrUnsupportedDeploymentProfile, profile)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, deploymentProfileAdvisoryLock); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `
+SELECT key, value
+FROM settings
+WHERE key IN ($1, $2, $3)
+`, KeySetupCompleted, KeyEnabledProfiles, KeyDefaultProfile)
+	if err != nil {
+		return err
+	}
+	current := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		if err = rows.Scan(&key, &value); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		current[key] = value
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if deploymentProfileInitialized(current) {
+		return ErrDeploymentProfileInitialized
+	}
+	if err = setMultipleTx(ctx, tx, deploymentProfileValues(profile)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func setMultipleTx(ctx context.Context, tx *sql.Tx, values map[string]string) error {
 	stmt, err := tx.PrepareContext(ctx, `
 INSERT INTO settings(key, value, updated_at)
 VALUES($1, $2, now())
@@ -139,11 +232,24 @@ ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.upd
 	defer stmt.Close()
 
 	for key, value := range values {
-		if _, err = stmt.ExecContext(ctx, key, value); err != nil {
+		if _, err := stmt.ExecContext(ctx, key, value); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+func deploymentProfileInitialized(values map[string]string) bool {
+	return parseBool(values[KeySetupCompleted]) || values[KeyEnabledProfiles] != "" || values[KeyDefaultProfile] != ""
+}
+
+func deploymentProfileValues(profile string) map[string]string {
+	encodedProfiles, _ := json.Marshal([]string{profile})
+	return map[string]string{
+		KeyDefaultProfile:  profile,
+		KeyEnabledProfiles: string(encodedProfiles),
+		KeySetupCompleted:  "true",
+	}
 }
 
 func (r *PostgresRepository) Health(ctx context.Context) error {

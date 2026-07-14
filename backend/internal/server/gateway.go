@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
+	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 	"github.com/gin-gonic/gin"
 )
 
@@ -37,7 +38,12 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
 			return
 		}
-		models, err := control.GatewayModelsForCredential(c.Request.Context(), bearerToken(c), signedContextToken(c))
+		credential, err := gatewaycore.ExtractCredential(c.Request, gatewaycore.ProtocolOpenAIModels)
+		if err != nil {
+			writeGatewayError(c, controlplane.ErrGatewayUnauthorized)
+			return
+		}
+		models, err := control.GatewayModelsForCredential(c.Request.Context(), credential.BearerToken, credential.SignedContext)
 		if err != nil {
 			writeGatewayError(c, err)
 			return
@@ -54,7 +60,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
 			return
 		}
-		rawBody, req, err := parseChatCompletionRequest(c)
+		req, err := parseCanonicalChatCompletionRequest(c)
 		if err != nil {
 			if errors.Is(err, errGatewayRequestTooLarge) {
 				openAIError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "request body exceeds 16 MiB limit")
@@ -63,11 +69,12 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			openAIError(c, http.StatusBadRequest, "invalid_request_error", "invalid chat completion payload")
 			return
 		}
-		if strings.TrimSpace(req.Model) == "" {
-			openAIError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		credential, err := gatewaycore.ExtractCredential(c.Request, gatewaycore.ProtocolOpenAIChat)
+		if err != nil {
+			writeGatewayError(c, controlplane.ErrGatewayUnauthorized)
 			return
 		}
-		auth, err := control.AuthorizeGatewayCredential(c.Request.Context(), bearerToken(c), signedContextToken(c), req.Model)
+		auth, canonicalAuth, err := control.AuthorizeCanonicalGatewayRequest(c.Request.Context(), credential, req)
 		if err != nil {
 			writeGatewayError(c, err)
 			return
@@ -86,7 +93,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			writeGatewayError(c, err)
 			return
 		}
-		candidates, _, err := control.GatewayProviderCandidatesForModel(c.Request.Context(), req.Model)
+		plan, err := control.PlanCanonicalGatewayRequest(c.Request.Context(), canonicalAuth, req)
 		if err != nil {
 			recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
 				Model:     req.Model,
@@ -98,7 +105,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			writeGatewayError(c, err)
 			return
 		}
-		if len(candidates) == 0 {
+		if len(plan.Candidates) == 0 {
 			routeErr := controlplane.ErrGatewayRouteUnavailable
 			_ = control.RecordGatewayCall(c.Request.Context(), auth, req.Model, "policy_rejected", routeErr.Error())
 			recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
@@ -111,10 +118,9 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 			writeGatewayError(c, routeErr)
 			return
 		}
-		if len(candidates) > 0 {
-			stickyID := gatewayStickyID(c, req)
-			candidates = control.PreferStickyGatewayCandidate(auth.APIKey.ID, req.Model, "openai_chat", stickyID, candidates)
-			resp, provider, release, attempts, attemptErr := attemptGatewayCandidates(c, control, candidates, rawBody, req.Stream)
+		if len(plan.Candidates) > 0 {
+			candidates := control.PreferStickyGatewayCandidate(canonicalAuth.CredentialID, req.Model, string(req.Protocol), req.StickyKey, plan.Candidates)
+			resp, provider, release, attempts, attemptErr := attemptGatewayCandidates(c, control, candidates, req.Payload, req.Stream)
 			routeAttempts := marshalRouteAttempts(attempts)
 			if resp == nil {
 				if attemptErr == nil {
@@ -142,7 +148,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 				status = "upstream_error"
 			}
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				control.BindStickyGatewayCandidate(auth.APIKey.ID, req.Model, "openai_chat", stickyID, provider)
+				control.BindStickyGatewayCandidate(canonicalAuth.CredentialID, req.Model, string(req.Protocol), req.StickyKey, provider)
 			}
 			summary := gatewayRouteSummary(req.Model, provider)
 			if req.Stream {
@@ -220,40 +226,17 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service) {
 	})
 }
 
-type chatCompletionRequest struct {
-	Model     string           `json:"model"`
-	Messages  []map[string]any `json:"messages"`
-	Stream    bool             `json:"stream"`
-	MaxTokens int              `json:"max_tokens"`
-	User      string           `json:"user"`
-}
-
-func gatewayStickyID(c *gin.Context, req chatCompletionRequest) string {
-	value := strings.TrimSpace(c.GetHeader("X-AsterRouter-Sticky-Key"))
-	if value == "" {
-		value = strings.TrimSpace(req.User)
-	}
-	if len(value) > 256 {
-		value = value[:256]
-	}
-	return value
-}
-
-func parseChatCompletionRequest(c *gin.Context) ([]byte, chatCompletionRequest, error) {
+func parseCanonicalChatCompletionRequest(c *gin.Context) (gatewaycore.CanonicalRequest, error) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, gatewayRequestBodyLimit)
 	rawBody, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			return nil, chatCompletionRequest{}, errGatewayRequestTooLarge
+			return gatewaycore.CanonicalRequest{}, errGatewayRequestTooLarge
 		}
-		return nil, chatCompletionRequest{}, err
+		return gatewaycore.CanonicalRequest{}, err
 	}
-	var req chatCompletionRequest
-	if err := json.Unmarshal(rawBody, &req); err != nil {
-		return nil, chatCompletionRequest{}, err
-	}
-	return rawBody, req, nil
+	return gatewaycore.CanonicalizeOpenAIChat(rawBody, c.Request.Header)
 }
 
 // gatewayRouteAttempt records what happened when the gateway tried a single
@@ -426,11 +409,11 @@ func gatewayRouteSummary(model string, provider controlplane.GatewayProvider) st
 	return summary
 }
 
-func gatewayTraceInput(req chatCompletionRequest, provider controlplane.GatewayProvider, status string, httpStatus int, errorType string, latencyMS int64, inputTokens int, outputTokens int, responseSummary string, routeAttempts string) controlplane.GatewayTraceInput {
+func gatewayTraceInput(req gatewaycore.CanonicalRequest, provider controlplane.GatewayProvider, status string, httpStatus int, errorType string, latencyMS int64, inputTokens int, outputTokens int, responseSummary string, routeAttempts string) controlplane.GatewayTraceInput {
 	return controlplane.GatewayTraceInput{
 		Model:             req.Model,
 		Stream:            req.Stream,
-		MessageCount:      len(req.Messages),
+		MessageCount:      req.MessageCount,
 		ProviderID:        provider.ID,
 		ProviderAccountID: provider.AccountID,
 		GatewayModelID:    provider.GatewayModelID,
@@ -445,7 +428,7 @@ func gatewayTraceInput(req chatCompletionRequest, provider controlplane.GatewayP
 		LatencyMS:         latencyMS,
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
-		RequestSummary:    fmt.Sprintf("chat.completions stream=%t messages=%d", req.Stream, len(req.Messages)),
+		RequestSummary:    fmt.Sprintf("chat.completions stream=%t messages=%d", req.Stream, req.MessageCount),
 		ResponseSummary:   responseSummary,
 		RouteAttempts:     routeAttempts,
 	}

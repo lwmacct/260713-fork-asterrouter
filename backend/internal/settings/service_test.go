@@ -2,6 +2,8 @@ package settings
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 )
 
@@ -31,6 +33,9 @@ func TestApplyProfilesRequiresOneImmutableDeploymentProfile(t *testing.T) {
 	if !got.SetupCompleted || got.DefaultProfile != "enterprise" || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != "enterprise" {
 		t.Fatalf("profiles not applied: %+v", got)
 	}
+	if _, err := svc.ApplyProfiles(context.Background(), []string{"enterprise"}, "enterprise"); err != nil {
+		t.Fatalf("ApplyProfiles() same-profile retry error = %v", err)
+	}
 	if _, err := svc.ApplyProfiles(context.Background(), []string{"enterprise", "personal"}, "enterprise"); err == nil {
 		t.Fatal("ApplyProfiles() accepted more than one deployment profile")
 	}
@@ -40,19 +45,151 @@ func TestApplyProfilesRequiresOneImmutableDeploymentProfile(t *testing.T) {
 }
 
 func TestApplyInitialProfileRequiresOneFreshProfile(t *testing.T) {
-	svc := NewService(NewMemoryRepository(), ServiceOptions{Version: "test", StorageMode: "memory"})
-	got, err := svc.ApplyInitialProfile(context.Background(), "platform")
-	if err != nil {
-		t.Fatalf("ApplyInitialProfile() error = %v", err)
-	}
-	if !got.SetupCompleted || got.DefaultProfile != "platform" || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != "platform" {
-		t.Fatalf("initial platform profile not applied: %+v", got)
-	}
-	if _, err := svc.ApplyInitialProfile(context.Background(), "enterprise"); err == nil {
-		t.Fatal("ApplyInitialProfile() after setup = nil, want error")
+	for _, profile := range []string{"personal", "relay_operator", "enterprise", "platform"} {
+		t.Run(profile, func(t *testing.T) {
+			svc := NewService(NewMemoryRepository(), ServiceOptions{Version: "test", StorageMode: "memory"})
+			got, err := svc.ApplyInitialProfile(context.Background(), profile)
+			if err != nil {
+				t.Fatalf("ApplyInitialProfile() error = %v", err)
+			}
+			if !got.SetupCompleted || got.DefaultProfile != profile || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != profile {
+				t.Fatalf("initial deployment profile not applied: %+v", got)
+			}
+			if _, err := svc.ApplyInitialProfile(context.Background(), "platform"); err == nil {
+				t.Fatal("ApplyInitialProfile() after setup = nil, want error")
+			}
+		})
 	}
 	if _, err := NewService(NewMemoryRepository(), ServiceOptions{Version: "test", StorageMode: "memory"}).ApplyInitialProfile(context.Background(), "unknown"); err == nil {
 		t.Fatal("ApplyInitialProfile() accepted an unknown profile")
+	}
+}
+
+type coordinatedInitialProfileRepository struct {
+	*MemoryRepository
+	reads        atomic.Int32
+	initialReads chan struct{}
+	applyReads   chan struct{}
+}
+
+func newCoordinatedInitialProfileRepository() *coordinatedInitialProfileRepository {
+	return &coordinatedInitialProfileRepository{
+		MemoryRepository: NewMemoryRepository(),
+		initialReads:     make(chan struct{}),
+		applyReads:       make(chan struct{}),
+	}
+}
+
+func (r *coordinatedInitialProfileRepository) GetAll(ctx context.Context) (map[string]string, error) {
+	values, err := r.MemoryRepository.GetAll(ctx)
+	read := r.reads.Add(1)
+	var barrier chan struct{}
+	switch read {
+	case 1, 2:
+		barrier = r.initialReads
+	case 3, 4:
+		barrier = r.applyReads
+	}
+	if barrier != nil {
+		if read == 2 || read == 4 {
+			close(barrier)
+		}
+		<-barrier
+	}
+	return values, err
+}
+
+func (r *coordinatedInitialProfileRepository) InitializeDeploymentProfile(ctx context.Context, profile string) error {
+	// The atomic path bypasses both coordinated read phases used to reproduce the legacy race.
+	r.reads.Store(4)
+	return r.MemoryRepository.InitializeDeploymentProfile(ctx, profile)
+}
+
+func TestApplyInitialProfileSerializesConflictingConcurrentInstalls(t *testing.T) {
+	repo := newCoordinatedInitialProfileRepository()
+	services := []*Service{
+		NewService(repo, ServiceOptions{Version: "test", StorageMode: "memory"}),
+		NewService(repo, ServiceOptions{Version: "test", StorageMode: "memory"}),
+	}
+	profiles := []string{"enterprise", "platform"}
+	start := make(chan struct{})
+	results := make(chan error, len(services))
+	for index, service := range services {
+		go func(svc *Service, profile string) {
+			<-start
+			_, err := svc.ApplyInitialProfile(context.Background(), profile)
+			results <- err
+		}(service, profiles[index])
+	}
+	close(start)
+
+	succeeded := 0
+	conflicted := 0
+	for range services {
+		err := <-results
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrDeploymentProfileInitialized):
+			conflicted++
+		default:
+			t.Fatalf("ApplyInitialProfile() unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent install results: succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+
+	current, err := services[0].Admin(context.Background())
+	if err != nil {
+		t.Fatalf("Admin(): %v", err)
+	}
+	if !current.SetupCompleted || len(current.EnabledProfiles) != 1 || current.DefaultProfile != current.EnabledProfiles[0] {
+		t.Fatalf("persisted deployment profile is inconsistent: %+v", current.PublicSettings)
+	}
+}
+
+func TestApplyProfilesSerializesConflictingConcurrentInstalls(t *testing.T) {
+	repo := newCoordinatedInitialProfileRepository()
+	services := []*Service{
+		NewService(repo, ServiceOptions{Version: "test", StorageMode: "memory"}),
+		NewService(repo, ServiceOptions{Version: "test", StorageMode: "memory"}),
+	}
+	profiles := []string{"enterprise", "platform"}
+	start := make(chan struct{})
+	results := make(chan error, len(services))
+	for index, service := range services {
+		go func(svc *Service, profile string) {
+			<-start
+			_, err := svc.ApplyProfiles(context.Background(), []string{profile}, profile)
+			results <- err
+		}(service, profiles[index])
+	}
+	close(start)
+
+	succeeded := 0
+	conflicted := 0
+	for range services {
+		err := <-results
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrDeploymentProfileInitialized):
+			conflicted++
+		default:
+			t.Fatalf("ApplyProfiles() unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent profile results: succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+
+	current, err := services[0].Admin(context.Background())
+	if err != nil {
+		t.Fatalf("Admin(): %v", err)
+	}
+	if !current.SetupCompleted || len(current.EnabledProfiles) != 1 || current.DefaultProfile != current.EnabledProfiles[0] {
+		t.Fatalf("persisted deployment profile is inconsistent: %+v", current.PublicSettings)
 	}
 }
 
@@ -96,6 +233,37 @@ func TestBootstrapProfileRejectsConfiguredRoleThatConflictsWithPersistedRole(t *
 	}
 	if stored.DefaultProfile != "enterprise" || len(stored.EnabledProfiles) != 1 || stored.EnabledProfiles[0] != "enterprise" {
 		t.Fatalf("persisted deployment profile changed: %+v", stored.PublicSettings)
+	}
+}
+
+func TestBootstrapProfileRejectsUnsupportedConfiguredRole(t *testing.T) {
+	repo := NewMemoryRepository()
+	svc := NewService(repo, ServiceOptions{
+		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"unknown"}, DefaultProfile: "unknown",
+	})
+	if err := svc.BootstrapProfile(context.Background()); err == nil {
+		t.Fatal("BootstrapProfile() accepted an unsupported configured role")
+	}
+	values, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll(): %v", err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("unsupported bootstrap role mutated settings: %#v", values)
+	}
+}
+
+func TestMemoryRepositoryRejectsUnsupportedDeploymentProfile(t *testing.T) {
+	repo := NewMemoryRepository()
+	if err := repo.InitializeDeploymentProfile(context.Background(), "unknown"); err == nil {
+		t.Fatal("InitializeDeploymentProfile() accepted an unsupported role")
+	}
+	values, err := repo.GetAll(context.Background())
+	if err != nil {
+		t.Fatalf("GetAll(): %v", err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("unsupported role mutated settings: %#v", values)
 	}
 }
 

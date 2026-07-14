@@ -7,10 +7,12 @@ import { applySetupProfile } from '@/api/settings'
 import { ApiClientError } from '@/api/client'
 import { setPublicSettingsCache } from '@/router'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
 const router = useRouter()
 const app = useAppStore()
+const auth = useAuthStore()
 const selectedProfile = ref('')
 const currentStep = ref(0)
 const saving = ref(false)
@@ -98,7 +100,8 @@ async function submit() {
     const settings = await applySetupProfile(selectedProfile.value)
     setPublicSettingsCache(settings)
     await app.loadPublicSettings()
-    await router.push(profileRoute())
+    auth.logout()
+    await router.push({ path: '/login', query: { redirect: profileRoute() } })
   } catch (err) {
     if (err instanceof ApiClientError && (err.status === 0 || err.status === 404)) {
       error.value = t('setup.serviceUnavailable')

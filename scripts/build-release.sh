@@ -120,7 +120,7 @@ release = {
     "version": version,
     "channel": "stable",
     "name": f"AsterRouter {version}",
-    "notes": "Release hardening with expanded CI, Playwright accessibility coverage, installer/runtime checks, benchmark tooling, and secret handling improvements.",
+    "notes": "Deployment profile initialization is now transactional and fixed per instance, setup redirects through login after profile selection, and CI covers public documentation links plus profile setup journeys.",
     "published_at": build_date,
     "html_url": html_url,
     "assets": assets,

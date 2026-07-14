@@ -2,107 +2,72 @@
 
 # AsterRouter
 
-**Spend less on AI. Keep every request under control.**
+**Control AI access today. Build lower-cost operations over time.**
 
-One gateway for multiple AI providers, automatic cost optimization, enterprise governance, and managed delivery.
+A private AI gateway for teams, developer platforms, and connected products.
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/astercloud/asterrouter?style=flat-square)](https://github.com/astercloud/asterrouter/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/astercloud/asterrouter/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/astercloud/asterrouter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/astercloud/asterrouter?style=flat-square)](./LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square)](./backend/go.mod)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square)](./backend/go.mod)
 
 </div>
 
-## One gateway. Better AI economics.
+## AI access that fits the business you already run
 
-AsterRouter gives your team one controlled AI gateway today and is evolving into a single access layer for text, image, audio, and video AI. Connect the providers you already use, issue secure access to teams and products, and see where every token and dollar goes. The multimodal roadmap extends the same controls to media tasks and artifacts.
+AsterRouter sits between your applications and the AI providers you are authorized to use. It gives engineering, operations, and security teams one place to control access, routes, spend evidence, and delivery operations without exposing upstream credentials.
 
-The next stage goes beyond cost reporting: pricing plugins keep supplier rates current, and cost-aware routing chooses the lowest-cost route that still meets your policy, health, and capacity requirements.
-
-| | What you get |
+| What matters | What AsterRouter does |
 | --- | --- |
-| Lower cost | Compare eligible provider prices and route each request toward the best available economics. |
-| One integration | Keep applications on stable APIs for streaming, media, and long-running jobs while providers and routes change behind the gateway. |
-| Reliable traffic | Fail over around unhealthy, rate-limited, or capacity-constrained routes. |
-| Enterprise control | Manage team access, model permissions, budgets, alerts, audit trails, and data retention. |
-| Flexible delivery | Self-host on your infrastructure or use private deployment and managed operations. |
+| Keep product work moving | Give applications one stable OpenAI-compatible endpoint for models and Chat Completions streaming. |
+| Keep AI operations reliable | Route across authorized providers and avoid unhealthy, limited, or unavailable paths. |
+| Keep access governed | Issue and rotate keys, apply model policy, rate limits, quotas, budgets, alerts, and audit trails. |
+| Keep ownership clear | Preserve the connected product's users, sessions, subscriptions, and orders. |
+| Keep delivery practical | Start self-managed, or use private delivery and managed operations in your own environment. |
 
-## How AsterRouter saves money
+## Choose the operating model
 
-1. **Connect your providers.** Keep using authorized provider accounts and standard APIs.
-2. **Keep prices current.** Price-source plugins sync supplier rates from supported APIs, signed feeds, imports, or the optional browser extension.
-3. **Route with constraints.** AsterRouter first protects policy, availability, and capacity, then chooses the lowest expected-cost eligible route.
-4. **Prove the result.** Usage and route evidence show the selected price, alternatives, actual cost, and measurable savings.
+| You operate | Choose | First console |
+| --- | --- | --- |
+| A focused gateway for yourself or a small team | **Personal** | `/console` |
+| Customer balances, plans, risk, and resale operations | **Relay Operator** | `/operator` and `/customer` |
+| Employee, department, SSO, and internal-service governance | **Enterprise** | `/admin` and `/portal` |
+| A developer API or AI capabilities inside an existing SaaS, OEM, or client product | **AI Platform** | `/platform` |
 
-> Cost-aware quote selection, third-party price plugins, the savings ledger, and the browser extension are roadmap capabilities. The routing, governance, usage, cost allocation, audit, and plugin foundations are available today.
+Each production instance chooses one role during installation. The role is immutable because its business objects, navigation, and access boundary are different.
 
-## Built for real organizations
+## Offer AI without taking over your product
 
-**Engineering teams** get one endpoint and one key workflow across providers.
-
-**Finance and operations** get cost allocation by user, department, group, key, and model, plus budgets and alerts.
-
-**Security teams** get private deployment, encrypted secrets, scoped access, audit evidence, retention controls, and offline-capable operations.
-
-**Platform owners** get route health, fallback, capacity controls, backups, upgrades, diagnostics, and a plugin system for provider-specific extensions.
-
-## Deliver AI to your team or your customers
-
-AsterRouter can power AI access behind internal tools and customer-facing products without forcing every business service to become an AI gateway.
-
-| Scenario | How AsterRouter helps |
-| --- | --- |
-| Internal AI platform | Give employees, departments, services, and automation scoped AI access with shared governance and cost controls. |
-| SaaS and desktop products | Keep your existing customer login while AsterRouter enforces AI policy, quota, routing, and usage behind the product. |
-| Content and media products | Support immediate image/audio responses and native streams alongside queued long-running jobs, without rebuilding provider-capacity scheduling, artifact delivery, and media billing in every product. |
-| AI API and developer platforms | Issue AsterRouter API Keys for a branded, multi-model endpoint without exposing upstream credentials. |
-| Partner and OEM delivery | Isolate tenants, apply partner-specific policy, and report usage back to the system that owns the commercial relationship. |
+Use **AsterRouter API Keys** when you operate the API relationship yourself. Use **AI Platform** when another product already owns its users and commercial relationship.
 
 ```text
-Customer access
-  ├─ AsterRouter API Key
-  └─ Existing platform login and delegated credential
-                       ↓
-            AsterRouter Gateway
-                       ↓
-                AI providers
+Your product keeps users, sessions, subscriptions, and orders
+                         |
+                         v
+          AsterRouter applies AI access and routing controls
+                         |
+                         v
+            Authorized AI providers receive the request
 ```
 
-Choose the access model that fits the product. For an AI API, relay, agent platform, or trusted server integration, AsterRouter can issue and govern Bearer API Keys directly. For a SaaS or OEM product with its own users, login sessions, subscriptions, and entitlements, the product remains the source of truth and delegates only the AI access context. Both paths enter the same policy, account scheduling, streaming, usage, cost, and audit pipeline. Neither exposes provider credentials to customers.
+AI Platform is a separate deployment role, not a relay-customer feature. It has its own tenants, non-human callers, API Keys, delegated HMAC or JWT/JWKS access, and signed metering-only usage delivery. It never creates the connected product's end-user accounts, sessions, subscriptions, orders, or balances.
 
-AsterRouter API Keys, policy, routing, metering, and isolation are available today. AI Platform supports both a short-lived HMAC-signed delegated context for a trusted product backend and an RS256 JWT/JWKS delegated credential for a product that keeps its own login system. Both bind one Platform Tenant and non-human Gateway Principal, then can only narrow model, QPS, and monthly-token ceilings. Platform operators can also deliver signed, metering-only usage events to an integration-bound HTTPS endpoint: usage and the delivery event commit together, while leased background retries, dead letters, and manual requeue keep callback failures out of the gateway request. OIDC introspection, revocation events, platform-auth plugins, key-level modality scopes, and distributed concurrency limits remain roadmap capabilities.
+## What is available now
 
-## One trusted Core, extended for each scenario
+- OpenAI-compatible Models and Chat Completions, including streaming.
+- Multi-provider routing, fallback, account capacity controls, cooldowns, circuit breaking, and sticky routing.
+- API Key lifecycle, model allowlists, rate limits, token quotas, budgets, usage, cost allocation, alerts, traces, audit, and export.
+- Enterprise identity and access governance, plus Personal, Relay Operator, Enterprise, and AI Platform consoles.
+- Platform Tenant and Gateway Principal management; direct tenant-bound keys; HMAC and RS256 JWT/JWKS delegated access; signed HTTPS usage delivery with retry, dead letter, and requeue.
+- Private deployment foundations: PostgreSQL, backup and restore, diagnostics, and verified release updates.
 
-Different customers need different workflows, but they should not create different gateways. AsterRouter keeps security-critical decisions in one Core and adds optional integrations through plugins.
+## Where the product is going
 
-| Trusted Core | Scenario plugins |
-| --- | --- |
-| API Key lifecycle, canonical auth context, and tenant isolation | Platform authentication, JWT/JWKS, introspection, directory, and SSO adapters |
-| Model policy, quota, budget, and risk controls | SaaS plans, subscriptions, and entitlement sync |
-| Provider routing, fallback, and cost metering | Supplier pricing and browser-assisted collection |
-| Direct execution for sync/streaming requests, fair queues for explicit async jobs, artifact policy, usage, and billing state | Provider protocols for GPT Image, Gemini, Midjourney-compatible services, Jimeng, and others |
-| Integration-bound usage event delivery, signing, retry, dead letter, and requeue | Customer billing, entitlement, ERP, CRM, and data-warehouse mappings |
-| One Core from a single server to Kubernetes | Replaceable queue and artifact adapters for Redis, S3-compatible storage, Cloudflare R2, Alibaba Cloud OSS, and future brokers |
-| Usage, trace, audit, and data governance | Notifications, exports, branding, and customer workflows |
+The roadmap extends the same Core to price-aware provider selection, browser-assisted price collection, Responses and other public protocols, image/audio/video, long-running jobs, artifact delivery, Redis-backed coordination, and Kubernetes scaling. These are not current product claims.
 
-Every credential source converges on one gateway pipeline: protocol normalization, authorization, quota hold, candidate planning, provider-account scheduling, capacity control, protocol execution, usage settlement, and audit. Plugins contribute provider or business facts through controlled interfaces; they cannot bypass that pipeline, issue unrestricted credentials, read unrelated secrets, or choose routes outside the trusted scheduler.
-
-## Available today
-
-- OpenAI-compatible model listing and Chat Completions, including streaming.
-- Multi-provider routing with priority, weight, capacity, RPM/TPM limits, cooldown, circuit breaking, sticky routing, and fallback.
-- Workspace Keys, model allowlists, rate limits, token quotas, budgets, and overage controls.
-- Usage analytics, cost allocation, alerts, route traces, policy evidence, audit logs, and exports.
-- Enterprise sign-in and access governance with OIDC, Feishu/Lark, DingTalk, departments, groups, and scoped roles.
-- Admin Console, employee Portal, plugin center, backup and restore, diagnostics, and verified release updates.
-- Four mutually exclusive deployment roles with English and Simplified Chinese interfaces: Personal, Relay Operator, Enterprise, and AI Platform. The AI Platform provides its own control surface, Platform Tenant, Gateway Principal, tenant-bound workspace/service API Keys, HMAC and RS256 JWT/JWKS delegated-access integrations, plus reliable signed HTTPS usage delivery with retries, dead letters, and requeue. It does not create an external product's users, sessions, subscriptions, orders, or balances. OIDC introspection, entitlement adapters, media operations, and asynchronous jobs remain V4 roadmap capabilities. Each new production instance chooses one immutable deployment role; deploy a separate instance for another business model.
-
-The current gateway exposes OpenAI-compatible Models and Chat Completions. Responses, Embeddings, Anthropic Messages, Gemini, realtime sessions, image generation and editing, audio, video, media uploads, asynchronous jobs, and artifact delivery are roadmap capabilities and are not presented as available today.
-
-The multimodal roadmap separates immediate and queued work: synchronous JSON, native image/audio streams, and realtime sessions execute only when capacity is available, while explicit asynchronous jobs enter a durable fair queue. PostgreSQL and Redis form the minimum production infrastructure, with no mandatory external message broker. Start with the same Core on one server, then split API, scheduler, modality workers, reconciliation, and artifact delivery into Kubernetes workloads when traffic becomes bursty. Worker pods and optional burst nodes can scale down during quiet periods, while provider capacity, tenant budgets, and cost ceilings remain hard limits. Media can stay local, use S3-compatible storage such as AWS S3, Cloudflare R2, or MinIO, use Alibaba Cloud OSS, or be delivered to customer-owned storage.
+The roadmap is intentionally not a release promise. The public product boundary is kept in this README; private deployment planning is delivered with the engagement.
 
 ## Quick start
 
@@ -119,7 +84,7 @@ Choose one business deployment role during installation. This controls the initi
 
 AI Platform is separate from relay operations. Both can issue or accept API credentials, but a relay operator owns customer balances, plans, and risk workflows. An AI platform owns the gateway boundary for developer API Keys or delegated product access; the connected product remains the source of truth for its users, sessions, subscriptions, and orders. Enterprise owns employee and department governance; Personal owns only its workspace. These are different business roots, not four pages of one customer model.
 
-Linux Release installation requires `--deployment` (or `ASTERROUTER_DEPLOYMENT_ROLE`); Docker and source development use `/setup`, which requires an explicit choice and does not preselect a role. The selection is persisted in PostgreSQL on first start and fixed for that instance. At later starts, a configured role must match the persisted role or startup fails; an environment variable can never switch Enterprise to Platform, or any other role. This protects Provider, credential, usage, and audit data from being mixed across business models. Run another instance when a second model is needed. Existing multi-profile installations remain compatible but their profile configuration is frozen. Multi-profile operation for new deployments is a future migration capability, gated on end-to-end `profile_scope`, explicit Provider Sharing Binding, and tenant isolation. The [deployment-role guide](./docs/roadmap/v4/profile-bundles-and-installation.md) explains the boundary.
+Linux Release installation requires `--deployment` (or `ASTERROUTER_DEPLOYMENT_ROLE`); Docker and source development use `/setup`, which requires an explicit choice and does not preselect a role. Production and Docker deployments persist the selection in PostgreSQL and fix it for that instance. Source development without `DATABASE_URL` uses temporary in-memory storage, so its setup is intentionally lost when the process restarts and must not be treated as a production installation. At later PostgreSQL-backed starts, a configured role must match the persisted role or startup fails; an environment variable can never switch Enterprise to Platform, or any other role. This protects Provider, credential, usage, and audit data from being mixed across business models. Run another instance when a second model is needed. Existing multi-profile installations remain compatible but their profile configuration is frozen. Multi-profile operation for new deployments is a future migration capability, gated on end-to-end `profile_scope`, explicit Provider Sharing Binding, and tenant isolation.
 
 ### Linux release
 
@@ -135,7 +100,7 @@ Replace `enterprise` with `personal`, `relay_operator`, or `platform` as appropr
 docker compose up --build
 ```
 
-Open `http://localhost:8080/setup` to choose one deployment role and review its included and excluded business boundaries before completing setup. For non-interactive deployment, set `ASTER_DEPLOYMENT_ROLE=platform`; the older matching `ASTER_PROFILES=platform` and `ASTER_DEFAULT_PROFILE=platform` pair remains compatible. The choice is persisted on first boot and cannot be changed. Deploy another instance for another role.
+Open `http://localhost:8080/setup` to choose one deployment role and review its business boundary before completing setup. After installation, AsterRouter clears any browser session left by another deployment role and asks you to sign in again before opening the selected console. Retrying the same installation choice is safe; requesting a different role is rejected. For non-interactive deployment, set `ASTER_DEPLOYMENT_ROLE=platform`; the older matching `ASTER_PROFILES=platform` and `ASTER_DEFAULT_PROFILE=platform` pair remains compatible. The choice is persisted on first boot and cannot be changed. Deploy another instance for another role.
 
 ## Private deployment and managed delivery
 
@@ -145,7 +110,7 @@ AsterRouter supports three delivery models:
 - **Private delivery:** deploy into a customer-controlled network with installation, migration, and acceptance support.
 - **Managed operations:** ongoing upgrades, backups, health checks, diagnostics, and operational support while the customer retains control of data and provider credentials.
 
-Every delivery model can start with a low-cost single-server deployment for predictable traffic, then move the same Core and data model to role-based Kubernetes workloads. Kubernetes scales AsterRouter pods and optional worker nodes around bursts; it never treats upstream provider concurrency as unlimited capacity.
+Every delivery model can start with a low-cost single-server deployment for predictable traffic. The current release runs with the AsterRouter application and PostgreSQL; Redis and Kubernetes are not current installation requirements. The V4 roadmap keeps a 4 vCPU / 4 GiB single-node acceptance target for modest workloads, then adds a role-based Kubernetes topology for bursty multimodal workloads without treating upstream provider concurrency as unlimited capacity.
 
 The Core remains usable when official online services are unavailable. Prompts, responses, Provider Secrets, Workspace Keys, detailed gateway usage, and browser-captured supplier sessions are not uploaded by the official Feed synchronization path.
 

@@ -139,12 +139,20 @@ func defaultString(value string, fallback string) string {
 func ValidateRuntime(cfg Config) error {
 	if strings.TrimSpace(cfg.DeploymentRole) != "" {
 		deploymentRole := normalizeProfile(cfg.DeploymentRole)
-		if deploymentRole == "" {
+		if !isDeploymentProfile(deploymentRole) {
 			return errors.New("ASTER_DEPLOYMENT_ROLE must be one of personal, relay_operator, enterprise, or platform")
 		}
 		if len(cfg.Profiles) != 1 || cfg.Profiles[0] != deploymentRole || cfg.DefaultProfile != deploymentRole {
 			return errors.New("ASTER_DEPLOYMENT_ROLE must match the legacy ASTER_PROFILES and ASTER_DEFAULT_PROFILE values when they are also set")
 		}
+	}
+	for _, profile := range cfg.Profiles {
+		if !isDeploymentProfile(profile) {
+			return errors.New("ASTER_PROFILES must contain only personal, relay_operator, enterprise, or platform")
+		}
+	}
+	if cfg.DefaultProfile != "" && !isDeploymentProfile(cfg.DefaultProfile) {
+		return errors.New("ASTER_DEFAULT_PROFILE must be one of personal, relay_operator, enterprise, or platform")
 	}
 	if len(cfg.Profiles) > 1 {
 		return errors.New("ASTER_PROFILES accepts one bootstrap profile; deploy a separate instance for a different business model")
@@ -194,11 +202,15 @@ func getEnv(key, fallback string) string {
 }
 
 func normalizeProfile(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func isDeploymentProfile(value string) bool {
 	switch strings.TrimSpace(value) {
 	case "personal", "relay_operator", "enterprise", "platform":
-		return strings.TrimSpace(value)
+		return true
 	default:
-		return ""
+		return false
 	}
 }
 
@@ -210,7 +222,7 @@ func normalizeProfiles(value string) []string {
 	seen := map[string]bool{}
 	for _, field := range fields {
 		profile := normalizeProfile(field)
-		if profile == "" || seen[profile] {
+		if seen[profile] {
 			continue
 		}
 		seen[profile] = true

@@ -43,8 +43,8 @@ export async function testEmailTemplate(recipient: string, subject: string, html
   await apiClient.post('/admin/settings/email-templates/test', { recipient, subject, html })
 }
 
-export async function applySetupProfile(profile: string): Promise<AdminSettings> {
-  const response = await apiClient.post<AdminSettings>('/setup/profiles', {
+export async function applySetupProfile(profile: string): Promise<PublicSettings> {
+  const response = await apiClient.post<PublicSettings>('/setup/profiles', {
     profile
   })
   return response.data

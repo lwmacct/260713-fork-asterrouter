@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -281,13 +282,17 @@ func TestSetupProfileEndpoint(t *testing.T) {
 	}
 	systemService := system.NewService(system.Config{Version: "test", BuildType: "source"})
 	handler := New(Options{Config: config.Config{}, SettingsService: svc, ControlService: controlService, PluginService: pluginService, SystemService: systemService})
+	postProfile := func(profile string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := bytes.NewBufferString(fmt.Sprintf(`{"profile":%q}`, profile))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
 
-	body := bytes.NewBufferString(`{"profile":"platform"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", body)
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	rec := postProfile("platform")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -297,6 +302,201 @@ func TestSetupProfileEndpoint(t *testing.T) {
 	}
 	if got.DefaultProfile != "platform" || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != "platform" || !got.SetupCompleted {
 		t.Fatalf("setup not persisted: %+v", got)
+	}
+
+	retry := postProfile("platform")
+	if retry.Code != http.StatusOK {
+		t.Fatalf("same-profile retry status = %d body=%s", retry.Code, retry.Body.String())
+	}
+	var retryResponse struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(retry.Body.Bytes(), &retryResponse); err != nil {
+		t.Fatalf("decode same-profile retry: %v", err)
+	}
+	if _, exposed := retryResponse.Data["invitation_codes"]; exposed {
+		t.Fatalf("same-profile retry exposed admin-only settings: %s", retry.Body.String())
+	}
+
+	conflict := postProfile("enterprise")
+	if conflict.Code != http.StatusBadRequest {
+		t.Fatalf("different-profile retry status = %d, want %d body=%s", conflict.Code, http.StatusBadRequest, conflict.Body.String())
+	}
+	got, err = svc.Admin(context.Background())
+	if err != nil {
+		t.Fatalf("Admin() after conflict: %v", err)
+	}
+	if got.DefaultProfile != "platform" || len(got.EnabledProfiles) != 1 || got.EnabledProfiles[0] != "platform" {
+		t.Fatalf("conflicting retry mutated setup: %+v", got)
+	}
+}
+
+func TestSetupProfileEndpointSerializesConcurrentInstalls(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		profiles      []string
+		wantSucceeded int
+	}{
+		{name: "same profile retries are idempotent", profiles: []string{"platform", "platform"}, wantSucceeded: 2},
+		{name: "different profiles conflict", profiles: []string{"platform", "enterprise"}, wantSucceeded: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{Version: "test", StorageMode: "memory"})
+			controlService := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
+			handler := New(Options{
+				SettingsService: svc,
+				ControlService:  controlService,
+				SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
+			})
+			start := make(chan struct{})
+			responses := make(chan *httptest.ResponseRecorder, len(test.profiles))
+			for _, profile := range test.profiles {
+				go func(profile string) {
+					<-start
+					body := bytes.NewBufferString(fmt.Sprintf(`{"profile":%q}`, profile))
+					req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", body)
+					req.Header.Set("Content-Type", "application/json")
+					rec := httptest.NewRecorder()
+					handler.ServeHTTP(rec, req)
+					responses <- rec
+				}(profile)
+			}
+			close(start)
+
+			succeeded := 0
+			for range test.profiles {
+				rec := <-responses
+				if rec.Code == http.StatusOK {
+					succeeded++
+					continue
+				}
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("unexpected status = %d body=%s", rec.Code, rec.Body.String())
+				}
+			}
+			if succeeded != test.wantSucceeded {
+				t.Fatalf("successful requests = %d, want %d", succeeded, test.wantSucceeded)
+			}
+
+			current, err := svc.Admin(context.Background())
+			if err != nil {
+				t.Fatalf("Admin(): %v", err)
+			}
+			if !current.SetupCompleted || len(current.EnabledProfiles) != 1 || current.DefaultProfile != current.EnabledProfiles[0] {
+				t.Fatalf("persisted deployment profile is inconsistent: %+v", current.PublicSettings)
+			}
+			tenants, err := controlService.ListPlatformTenants(context.Background())
+			if err != nil {
+				t.Fatalf("ListPlatformTenants(): %v", err)
+			}
+			if current.DefaultProfile == "platform" && len(tenants) == 0 {
+				t.Fatal("platform installation did not create its bootstrap tenant")
+			}
+			if current.DefaultProfile != "platform" && len(tenants) != 0 {
+				t.Fatalf("losing platform request created bootstrap tenants: %+v", tenants)
+			}
+		})
+	}
+}
+
+type enterpriseFirstSetupRepository struct {
+	*settings.MemoryRepository
+	enterpriseInstalled chan struct{}
+}
+
+func newEnterpriseFirstSetupRepository() *enterpriseFirstSetupRepository {
+	return &enterpriseFirstSetupRepository{
+		MemoryRepository:    settings.NewMemoryRepository(),
+		enterpriseInstalled: make(chan struct{}),
+	}
+}
+
+func (r *enterpriseFirstSetupRepository) InitializeDeploymentProfile(ctx context.Context, profile string) error {
+	if profile == controlplane.ProfileScopePlatform {
+		<-r.enterpriseInstalled
+	}
+	err := r.MemoryRepository.InitializeDeploymentProfile(ctx, profile)
+	if profile == "enterprise" {
+		close(r.enterpriseInstalled)
+	}
+	return err
+}
+
+func TestSetupProfileEndpointDoesNotBootstrapLosingPlatformInstall(t *testing.T) {
+	repo := newEnterpriseFirstSetupRepository()
+	svc := settings.NewService(repo, settings.ServiceOptions{Version: "test", StorageMode: "memory"})
+	controlService := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
+	handler := New(Options{
+		SettingsService: svc,
+		ControlService:  controlService,
+		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
+	})
+	type response struct {
+		profile string
+		record  *httptest.ResponseRecorder
+	}
+	start := make(chan struct{})
+	responses := make(chan response, 2)
+	for _, profile := range []string{"platform", "enterprise"} {
+		go func(profile string) {
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", bytes.NewBufferString(fmt.Sprintf(`{"profile":%q}`, profile)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			responses <- response{profile: profile, record: rec}
+		}(profile)
+	}
+	close(start)
+
+	for range 2 {
+		result := <-responses
+		want := http.StatusBadRequest
+		if result.profile == "enterprise" {
+			want = http.StatusOK
+		}
+		if result.record.Code != want {
+			t.Fatalf("%s status = %d, want %d body=%s", result.profile, result.record.Code, want, result.record.Body.String())
+		}
+	}
+	tenants, err := controlService.ListPlatformTenants(context.Background())
+	if err != nil {
+		t.Fatalf("ListPlatformTenants(): %v", err)
+	}
+	if len(tenants) != 0 {
+		t.Fatalf("losing platform request created bootstrap tenants: %+v", tenants)
+	}
+}
+
+type failingDeploymentProfileRepository struct {
+	*settings.MemoryRepository
+}
+
+func (r *failingDeploymentProfileRepository) InitializeDeploymentProfile(context.Context, string) error {
+	return errors.New("database secret detail")
+}
+
+func TestSetupProfileEndpointReturnsSanitizedServerErrorWhenPersistenceFails(t *testing.T) {
+	svc := settings.NewService(&failingDeploymentProfileRepository{MemoryRepository: settings.NewMemoryRepository()}, settings.ServiceOptions{
+		Version: "test", StorageMode: "memory",
+	})
+	handler := New(Options{
+		SettingsService: svc,
+		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/profiles", bytes.NewBufferString(`{"profile":"enterprise"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("database secret detail")) {
+		t.Fatalf("setup response exposed repository error: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("failed to initialize deployment profile")) {
+		t.Fatalf("setup response did not include the public error category: %s", rec.Body.String())
 	}
 }
 

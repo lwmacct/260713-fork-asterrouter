@@ -101,9 +101,9 @@ func TestDefaultPluginHostURLUsesLoopbackForWildcardListenAddress(t *testing.T) 
 	}
 }
 
-func TestNormalizeProfilesRecognizesPlatform(t *testing.T) {
+func TestNormalizeProfilesPreservesUnknownValuesForValidation(t *testing.T) {
 	profiles := normalizeProfiles("platform, enterprise, platform, unknown")
-	want := []string{"platform", "enterprise"}
+	want := []string{"platform", "enterprise", "unknown"}
 	if len(profiles) != len(want) {
 		t.Fatalf("normalizeProfiles() = %v, want %v", profiles, want)
 	}
@@ -111,6 +111,31 @@ func TestNormalizeProfilesRecognizesPlatform(t *testing.T) {
 		if profiles[index] != profile {
 			t.Fatalf("normalizeProfiles() = %v, want %v", profiles, want)
 		}
+	}
+}
+
+func TestValidateRuntimeRejectsUnknownLegacyProfiles(t *testing.T) {
+	for _, cfg := range []Config{
+		{BuildType: "source", Profiles: []string{"unknown"}, DefaultProfile: "unknown"},
+		{BuildType: "source", DefaultProfile: "unknown"},
+	} {
+		if err := ValidateRuntime(cfg); err == nil {
+			t.Fatalf("ValidateRuntime(%+v) accepted an unknown legacy profile", cfg)
+		}
+	}
+}
+
+func TestLoadPreservesUnknownLegacyProfileForValidation(t *testing.T) {
+	t.Setenv("ASTER_DEPLOYMENT_ROLE", "")
+	t.Setenv("ASTER_PROFILES", "unknown")
+	t.Setenv("ASTER_DEFAULT_PROFILE", "")
+
+	cfg := Load()
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0] != "unknown" || cfg.DefaultProfile != "unknown" {
+		t.Fatalf("Load() silently discarded an unknown legacy profile: %+v", cfg)
+	}
+	if err := ValidateRuntime(cfg); err == nil {
+		t.Fatal("ValidateRuntime() accepted the unknown legacy profile loaded from the environment")
 	}
 }
 

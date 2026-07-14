@@ -152,27 +152,37 @@ func New(opts Options) http.Handler {
 			httpx.Error(c, http.StatusBadRequest, 1400, "invalid request")
 			return
 		}
-		current, err := opts.SettingsService.Admin(c.Request.Context())
+		profile := strings.TrimSpace(req.Profile)
+		data, err := opts.SettingsService.ApplyInitialProfile(c.Request.Context(), profile)
 		if err != nil {
-			httpx.Error(c, http.StatusInternalServerError, 1401, err.Error())
-			return
-		}
-		if current.SetupCompleted || len(current.EnabledProfiles) > 0 || current.DefaultProfile != "" {
-			httpx.Error(c, http.StatusBadRequest, 1401, "setup is already completed; create a separate instance for a different business model")
-			return
-		}
-		if req.Profile == controlplane.ProfileScopePlatform && opts.ControlService != nil {
-			if err := opts.ControlService.EnsurePlatformBootstrap(c.Request.Context()); err != nil {
-				httpx.Error(c, http.StatusInternalServerError, 1402, err.Error())
+			if errors.Is(err, settings.ErrUnsupportedDeploymentProfile) {
+				httpx.Error(c, http.StatusBadRequest, 1401, err.Error())
+				return
+			}
+			if !errors.Is(err, settings.ErrDeploymentProfileInitialized) {
+				_ = c.Error(err)
+				httpx.Error(c, http.StatusInternalServerError, 1401, "failed to initialize deployment profile")
+				return
+			}
+			data, err = opts.SettingsService.Admin(c.Request.Context())
+			if err != nil {
+				_ = c.Error(err)
+				httpx.Error(c, http.StatusInternalServerError, 1401, "failed to load deployment profile")
+				return
+			}
+			if !data.SetupCompleted || len(data.EnabledProfiles) != 1 || data.EnabledProfiles[0] != profile || data.DefaultProfile != profile {
+				httpx.Error(c, http.StatusBadRequest, 1401, settings.ErrDeploymentProfileInitialized.Error())
 				return
 			}
 		}
-		data, err := opts.SettingsService.ApplyInitialProfile(c.Request.Context(), req.Profile)
-		if err != nil {
-			httpx.Error(c, http.StatusBadRequest, 1401, err.Error())
-			return
+		if profile == controlplane.ProfileScopePlatform && opts.ControlService != nil {
+			if err := opts.ControlService.EnsurePlatformBootstrap(c.Request.Context()); err != nil {
+				_ = c.Error(err)
+				httpx.Error(c, http.StatusInternalServerError, 1402, "failed to initialize platform domain")
+				return
+			}
 		}
-		httpx.OK(c, data)
+		httpx.OK(c, data.PublicSettings)
 	})
 	api.POST("/auth/login", func(c *gin.Context) {
 		if !authLimiter.Allow(c.ClientIP(), time.Now().UTC()) {
