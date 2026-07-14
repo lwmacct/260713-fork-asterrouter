@@ -9,6 +9,13 @@ const controlSurfaceForProfile: Record<string, string> = {
   platform: 'platform'
 }
 
+const demoEntryForProfile: Record<string, { path: string; heading: string }> = {
+  enterprise: { path: '/admin/dashboard', heading: 'Overview' },
+  personal: { path: '/console/overview', heading: 'Personal Console' },
+  relay_operator: { path: '/operator/overview', heading: 'Relay Operator Console' },
+  platform: { path: '/platform/overview', heading: 'Platform overview' }
+}
+
 export function controlAPI(path = ''): string {
   const surface = process.env.ASTER_E2E_CONTROL_SURFACE || controlSurfaceForProfile[process.env.ASTER_E2E_EXPECT_PROFILE || ''] || 'admin'
   return `/api/v1/${surface}${path}`
@@ -144,8 +151,9 @@ export async function loginDemo(page: Page): Promise<void> {
   const demoButton = page.getByRole('button', { name: 'Enter demo mode' })
   await expect(demoButton).toBeVisible()
   await demoButton.click()
-  await expect(page).toHaveURL(/\/console\/overview$/)
-  await expect(page.getByRole('heading', { level: 1, name: 'Personal Console' })).toBeVisible()
+  const entry = demoEntryForProfile[process.env.ASTER_E2E_EXPECT_PROFILE || ''] || demoEntryForProfile.personal
+  await expect(page).toHaveURL(new RegExp(`${entry.path}$`))
+  await expect(page.getByRole('heading', { level: 1, name: entry.heading })).toBeVisible()
 }
 
 export async function expectNoHorizontalOverflow(page: Page): Promise<void> {

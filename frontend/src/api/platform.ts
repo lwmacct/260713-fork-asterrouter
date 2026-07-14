@@ -1,13 +1,14 @@
 import { apiClient } from './client'
+import { listOrEmpty, normalizeDashboard, type DashboardPayload } from './normalizers'
 import type { APIKeyCreateRequest, APIKeyCreateResponse, APIKeyRecord, APIKeyUpdateRequest, Dashboard, ExternalAuthIntegration, ExternalAuthIntegrationCreateResponse, ExternalAuthIntegrationRequest, GatewayPrincipal, GatewayPrincipalRequest, PlatformTenant, PlatformTenantRequest, PlatformUsageDeliveryEvent, PlatformUsageSink, PlatformUsageSinkCreateResponse, PlatformUsageSinkRequest } from '@/types'
 
 export async function getPlatformDashboard(): Promise<Dashboard> {
-  const response = await apiClient.get<Dashboard>('/platform/dashboard')
-  return response.data
+  const response = await apiClient.get<DashboardPayload>('/platform/dashboard')
+  return normalizeDashboard(response.data)
 }
 
 export async function getPlatformAPIKeys(): Promise<APIKeyRecord[]> {
-  return (await apiClient.get<APIKeyRecord[]>('/platform/api-keys')).data
+  return listOrEmpty((await apiClient.get<APIKeyRecord[] | null>('/platform/api-keys')).data)
 }
 
 export async function createPlatformAPIKey(payload: APIKeyCreateRequest): Promise<APIKeyCreateResponse> {
@@ -27,7 +28,7 @@ export async function disablePlatformAPIKey(id: string): Promise<void> {
 }
 
 export async function getPlatformTenants(): Promise<PlatformTenant[]> {
-  return (await apiClient.get<PlatformTenant[]>('/platform/tenants')).data
+  return listOrEmpty((await apiClient.get<PlatformTenant[] | null>('/platform/tenants')).data)
 }
 
 export async function createPlatformTenant(payload: PlatformTenantRequest): Promise<PlatformTenant> {
@@ -39,7 +40,7 @@ export async function updatePlatformTenant(id: string, payload: PlatformTenantRe
 }
 
 export async function getGatewayPrincipals(): Promise<GatewayPrincipal[]> {
-  return (await apiClient.get<GatewayPrincipal[]>('/platform/gateway-principals')).data
+  return listOrEmpty((await apiClient.get<GatewayPrincipal[] | null>('/platform/gateway-principals')).data)
 }
 
 export async function createGatewayPrincipal(payload: GatewayPrincipalRequest): Promise<GatewayPrincipal> {
@@ -51,7 +52,7 @@ export async function updateGatewayPrincipal(id: string, payload: GatewayPrincip
 }
 
 export async function getExternalAuthIntegrations(): Promise<ExternalAuthIntegration[]> {
-  return (await apiClient.get<ExternalAuthIntegration[]>('/platform/external-auth-integrations')).data
+  return listOrEmpty((await apiClient.get<ExternalAuthIntegration[] | null>('/platform/external-auth-integrations')).data)
 }
 
 export async function createExternalAuthIntegration(payload: ExternalAuthIntegrationRequest): Promise<ExternalAuthIntegrationCreateResponse> {
@@ -67,7 +68,7 @@ export async function rotateExternalAuthIntegrationSecret(id: string): Promise<E
 }
 
 export async function getPlatformUsageSinks(): Promise<PlatformUsageSink[]> {
-  return (await apiClient.get<PlatformUsageSink[]>('/platform/usage-sinks')).data
+  return listOrEmpty((await apiClient.get<PlatformUsageSink[] | null>('/platform/usage-sinks')).data)
 }
 
 export async function createPlatformUsageSink(payload: PlatformUsageSinkRequest): Promise<PlatformUsageSinkCreateResponse> {
@@ -86,7 +87,7 @@ export async function rotatePlatformUsageSinkEndpoint(id: string, endpointURL: s
 }
 
 export async function getPlatformUsageDeliveries(sinkID: string, status = ''): Promise<PlatformUsageDeliveryEvent[]> {
-  return (await apiClient.get<PlatformUsageDeliveryEvent[]>(`/platform/usage-sinks/${encodeURIComponent(sinkID)}/deliveries`, { params: status ? { status } : undefined })).data
+  return listOrEmpty((await apiClient.get<PlatformUsageDeliveryEvent[] | null>(`/platform/usage-sinks/${encodeURIComponent(sinkID)}/deliveries`, { params: status ? { status } : undefined })).data)
 }
 
 export async function requeuePlatformUsageDelivery(sinkID: string, deliveryID: string): Promise<void> {

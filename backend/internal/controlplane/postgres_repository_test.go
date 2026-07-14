@@ -98,9 +98,9 @@ func TestUsageMonthlyBoundaryContract(t *testing.T) {
 			t.Cleanup(func() { _ = repo.Close() })
 			boundary := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
 			records := []UsageRecord{
-				{ID: "before", APIKeyID: "key-boundary", InputTokens: 40, CostCents: 4, CreatedAt: boundary.Add(-time.Nanosecond)},
+				{ID: "before", APIKeyID: "key-boundary", InputTokens: 40, CostCents: 4, CreatedAt: boundary.Add(-time.Microsecond)},
 				{ID: "at", APIKeyID: "key-boundary", InputTokens: 50, CostCents: 5, CreatedAt: boundary},
-				{ID: "after", APIKeyID: "key-boundary", OutputTokens: 60, CostCents: 6, CreatedAt: boundary.Add(time.Nanosecond)},
+				{ID: "after", APIKeyID: "key-boundary", OutputTokens: 60, CostCents: 6, CreatedAt: boundary.Add(time.Microsecond)},
 			}
 			for _, record := range records {
 				if err := repo.SaveUsageRecord(ctx, record); err != nil {

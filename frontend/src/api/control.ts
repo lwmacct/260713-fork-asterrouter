@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { listOrEmpty, normalizeDashboard, type DashboardPayload, type NullableList } from './normalizers'
 import type {
   APIKeyCreateRequest,
   APIKeyCreateResponse,
@@ -45,7 +46,6 @@ import type {
   WorkspaceUserRequest
 } from '@/types'
 
-type NullableList<T> = T[] | null | undefined
 type ProviderConnectionPayload = Omit<ProviderConnection, 'models'> & { models?: string[] | null }
 type ProviderHealthCheckPayload = Omit<ProviderHealthCheck, 'models'> & { models?: string[] | null }
 type ProviderAccountPayload = Omit<ProviderAccount, 'models' | 'group_ids' | 'temp_unschedulable_rules'> & {
@@ -54,10 +54,6 @@ type ProviderAccountPayload = Omit<ProviderAccount, 'models' | 'group_ids' | 'te
   temp_unschedulable_rules?: ProviderAccount['temp_unschedulable_rules'] | null
 }
 type ProviderAccountHealthCheckPayload = Omit<ProviderAccountHealthCheck, 'models'> & { models?: string[] | null }
-
-function listOrEmpty<T>(value: NullableList<T>): T[] {
-  return Array.isArray(value) ? value : []
-}
 
 function stringListOrEmpty(value: NullableList<string>): string[] {
   return listOrEmpty(value).filter((item): item is string => typeof item === 'string')
@@ -94,8 +90,8 @@ function normalizeProviderAccountHealthCheck(check: ProviderAccountHealthCheckPa
 }
 
 export async function getDashboard(): Promise<Dashboard> {
-  const response = await apiClient.get<Dashboard>('/admin/dashboard')
-  return response.data
+  const response = await apiClient.get<DashboardPayload>('/admin/dashboard')
+  return normalizeDashboard(response.data)
 }
 
 export async function getProviders(): Promise<ProviderConnection[]> {
@@ -155,8 +151,8 @@ export async function updateDepartment(id: string, payload: DepartmentRequest): 
 }
 
 export async function getGovernancePolicies(): Promise<GovernancePolicy[]> {
-  const response = await apiClient.get<GovernancePolicy[]>('/admin/policies')
-  return response.data
+  const response = await apiClient.get<GovernancePolicy[] | null>('/admin/policies')
+  return listOrEmpty(response.data)
 }
 
 export async function createGovernancePolicy(payload: GovernancePolicyRequest): Promise<GovernancePolicy> {

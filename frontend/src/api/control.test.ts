@@ -23,6 +23,8 @@ describe('control API contracts', () => {
   })
 
   it('normalizes nullable provider and routing collections', async () => {
+    client.get.mockResolvedValueOnce({ data: { provider_count: 0, active_provider_count: 0, api_key_count: 0, active_api_key_count: 0, models: null, recent_audit: null } })
+    expect(await control.getDashboard()).toMatchObject({ models: [], recent_audit: [] })
     client.get.mockResolvedValueOnce({ data: [{ id: 'provider-1', models: null }] })
     expect(await control.getProviders()).toEqual([{ id: 'provider-1', models: [] }])
     client.get.mockResolvedValueOnce({ data: [{ id: 'check-1', models: ['model', 1, null] }] })
@@ -39,6 +41,8 @@ describe('control API contracts', () => {
     expect(await control.getModelRoutes()).toEqual([])
     client.get.mockResolvedValueOnce({ data: null })
     expect(await control.getAPIKeys()).toEqual([])
+    client.get.mockResolvedValueOnce({ data: null })
+    expect(await control.getGovernancePolicies()).toEqual([])
   })
 
   it('uses admin CRUD endpoint contracts', async () => {

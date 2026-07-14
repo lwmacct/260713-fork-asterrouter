@@ -130,6 +130,24 @@ describe('API module contracts', () => {
     expect(client.post).toHaveBeenLastCalledWith('/platform/usage-sinks/sink%20%2F%201/deliveries/delivery%20%2F%201/requeue')
   })
 
+  it('normalizes nullable platform collections', async () => {
+    client.get.mockResolvedValueOnce({ data: { provider_count: 0, active_provider_count: 0, api_key_count: 0, active_api_key_count: 0, models: null, recent_audit: null } })
+    expect(await platform.getPlatformDashboard()).toMatchObject({ models: [], recent_audit: [] })
+
+    for (const load of [
+      platform.getPlatformAPIKeys,
+      platform.getPlatformTenants,
+      platform.getGatewayPrincipals,
+      platform.getExternalAuthIntegrations,
+      platform.getPlatformUsageSinks
+    ]) {
+      client.get.mockResolvedValueOnce({ data: null })
+      expect(await load()).toEqual([])
+    }
+    client.get.mockResolvedValueOnce({ data: null })
+    expect(await platform.getPlatformUsageDeliveries('sink-1')).toEqual([])
+  })
+
   it('uses customer billing and notification endpoint contracts', async () => {
     await customer.getCustomerBilling()
     expect(client.get).toHaveBeenLastCalledWith('/customer/billing')

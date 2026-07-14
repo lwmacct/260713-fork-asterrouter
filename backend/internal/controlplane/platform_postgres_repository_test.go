@@ -91,8 +91,18 @@ func TestPostgresRepositoryPersistsPlatformDomainAndEvidenceSnapshots(t *testing
 		t.Fatalf("platform key=%+v found=%t err=%v", foundKey, found, err)
 	}
 	usageRecords, err := reopened.QueryUsageRecords(ctx, UsageQuery{ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, GatewayPrincipalID: principal.ID, ExternalAuthIntegrationID: integration.ID})
-	if err != nil || len(usageRecords) != 1 || usageRecords[0].PlatformTenantName != tenant.Name || usageRecords[0].GatewayPrincipalName != principal.Name || usageRecords[0].ExternalSubjectReference != "opaque-subject" {
+	if err != nil || len(usageRecords) != 2 {
 		t.Fatalf("platform usage=%+v err=%v", usageRecords, err)
+	}
+	var persistedUsage UsageRecord
+	for _, record := range usageRecords {
+		if record.ID == usage.ID {
+			persistedUsage = record
+			break
+		}
+	}
+	if persistedUsage.ID == "" || persistedUsage.PlatformTenantName != tenant.Name || persistedUsage.GatewayPrincipalName != principal.Name || persistedUsage.ExternalSubjectReference != "opaque-subject" {
+		t.Fatalf("persisted platform usage=%+v all=%+v", persistedUsage, usageRecords)
 	}
 	traces, err := reopened.QueryGatewayTraces(ctx, GatewayTraceQuery{ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, GatewayPrincipalID: principal.ID, ExternalAuthIntegrationID: integration.ID})
 	if err != nil || len(traces) != 1 || traces[0].PlatformTenantName != tenant.Name || traces[0].GatewayPrincipalName != principal.Name || traces[0].ExternalSubjectReference != "opaque-subject" {

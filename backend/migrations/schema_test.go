@@ -97,17 +97,24 @@ func TestV030LegacySchemaUpgradesWithCandidateRuntime(t *testing.T) {
 
 	ctx := context.Background()
 	createdAt := time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC)
-	if _, err := legacyDB.ExecContext(ctx, `
-INSERT INTO provider_connections(id,name,type,base_url,status,models,priority,secret_configured,secret_hint,secret_ciphertext,created_at,updated_at)
-VALUES('provider-v030','v0.3 provider','openai_compatible','https://provider.example/v1','active','["legacy-model"]',10,TRUE,'...legacy','ciphertext', $1, $1);
-INSERT INTO workspace_users(id,email,display_name,status,role,balance_cents,concurrency_limit,rpm_limit,created_at,updated_at)
-VALUES('user-v030','v030@example.test','v0.3 user','active','developer',700,5,0,$1,$1);
-INSERT INTO api_keys(id,name,key_hash,fingerprint,prefix,status,key_type,customer_id,owner_user_id,policy_id,model_allowlist,qps_limit,monthly_token_limit,created_at,updated_at)
-VALUES('key-v030','v0.3 key','v030-key-hash','v030fingerprint','ast_v030','active','user','','user-v030','','["legacy-model"]',10,1000,$1,$1);
-INSERT INTO usage_records(id,api_key_id,customer_id,api_fingerprint,model,upstream_model,provider_id,provider_account_id,status,error_type,latency_ms,input_tokens,output_tokens,cost_cents,created_at)
-VALUES('usage-v030','key-v030','','v030fingerprint','legacy-model','legacy-model','provider-v030','','forwarded','',12,7,11,9,$1);
-`, createdAt); err != nil {
-		t.Fatalf("seed v0.3.0 fixture: %v", err)
+	seedStatements := []string{
+		`
+	INSERT INTO provider_connections(id,name,type,base_url,status,models,priority,secret_configured,secret_hint,secret_ciphertext,created_at,updated_at)
+	VALUES('provider-v030','v0.3 provider','openai_compatible','https://provider.example/v1','active','["legacy-model"]',10,TRUE,'...legacy','ciphertext', $1, $1)`,
+		`
+	INSERT INTO workspace_users(id,email,display_name,status,role,balance_cents,concurrency_limit,rpm_limit,created_at,updated_at)
+	VALUES('user-v030','v030@example.test','v0.3 user','active','developer',700,5,0,$1,$1)`,
+		`
+	INSERT INTO api_keys(id,name,key_hash,fingerprint,prefix,status,key_type,customer_id,owner_user_id,policy_id,model_allowlist,qps_limit,monthly_token_limit,created_at,updated_at)
+	VALUES('key-v030','v0.3 key','v030-key-hash','v030fingerprint','ast_v030','active','user','','user-v030','','["legacy-model"]',10,1000,$1,$1)`,
+		`
+	INSERT INTO usage_records(id,api_key_id,customer_id,api_fingerprint,model,upstream_model,provider_id,provider_account_id,status,error_type,latency_ms,input_tokens,output_tokens,cost_cents,created_at)
+	VALUES('usage-v030','key-v030','','v030fingerprint','legacy-model','legacy-model','provider-v030','','forwarded','',12,7,11,9,$1)`,
+	}
+	for _, statement := range seedStatements {
+		if _, err := legacyDB.ExecContext(ctx, statement, createdAt); err != nil {
+			t.Fatalf("seed v0.3.0 fixture: %v", err)
+		}
 	}
 
 	// Opening the current repository is the candidate upgrade step. The v0.3.0
