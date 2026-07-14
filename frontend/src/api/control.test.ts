@@ -37,6 +37,8 @@ describe('control API contracts', () => {
     expect(await control.getGatewayModels()).toEqual([])
     client.get.mockResolvedValueOnce({ data: null })
     expect(await control.getModelRoutes()).toEqual([])
+    client.get.mockResolvedValueOnce({ data: null })
+    expect(await control.getAPIKeys()).toEqual([])
   })
 
   it('uses admin CRUD endpoint contracts', async () => {

@@ -107,7 +107,11 @@ CREATE TABLE IF NOT EXISTS csv_export_jobs (
   id TEXT PRIMARY KEY, owner TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, status TEXT NOT NULL, filename TEXT NOT NULL,
   content_type TEXT NOT NULL, row_count INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
   parameters TEXT NOT NULL DEFAULT '{}', body BYTEA, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL
-);
+)
+`); err != nil {
+		t.Fatalf("create recovery export table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
 INSERT INTO csv_export_jobs(id, owner, kind, status, filename, content_type, row_count, size_bytes, parameters, body, created_at, updated_at, expires_at)
 VALUES('export-recovery', $1, 'usage', 'succeeded', 'recovery.csv', 'text/csv', 1, 17, '{"run":"recovery"}', $2, $3, $3, $4)
 ON CONFLICT(id) DO UPDATE SET body = EXCLUDED.body, updated_at = EXCLUDED.updated_at

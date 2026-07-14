@@ -305,8 +305,8 @@ export async function updateModelPricing(id: string, payload: ModelPricingReques
 }
 
 export async function getAPIKeys(): Promise<APIKeyRecord[]> {
-  const response = await apiClient.get<APIKeyRecord[]>('/admin/api-keys')
-  return response.data
+  const response = await apiClient.get<APIKeyRecord[] | null>('/admin/api-keys')
+  return listOrEmpty(response.data)
 }
 
 export async function getAPIKeyPolicyExplanation(id: string): Promise<GatewayPolicyExplanation> {

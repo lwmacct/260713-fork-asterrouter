@@ -20,46 +20,46 @@ const (
 )
 
 type AlertEvent struct {
-	ID                   string            `json:"id"`
-	Type                 string            `json:"type"`
-	Severity             string            `json:"severity"`
-	Status               string            `json:"status"`
-	Title                string            `json:"title"`
-	Summary              string            `json:"summary"`
-	ResourceType         string            `json:"resource_type"`
-	ResourceID           string            `json:"resource_id"`
-	ProfileScope         string            `json:"profile_scope"`
-	PlatformTenantID     string            `json:"platform_tenant_id"`
-	PlatformTenantName   string            `json:"platform_tenant_name"`
-	GatewayPrincipalID   string            `json:"gateway_principal_id"`
-	GatewayPrincipalName string            `json:"gateway_principal_name"`
-	ExternalAuthIntegrationID string       `json:"external_auth_integration_id"`
-	ExternalSubjectReference  string       `json:"external_subject_reference"`
-	DedupeKey            string            `json:"dedupe_key"`
-	Metadata             map[string]string `json:"metadata"`
-	FirstSeenAt          time.Time         `json:"first_seen_at"`
-	LastSeenAt           time.Time         `json:"last_seen_at"`
-	AcknowledgedAt       *time.Time        `json:"acknowledged_at,omitempty"`
-	AcknowledgedBy       string            `json:"acknowledged_by"`
-	ResolvedAt           *time.Time        `json:"resolved_at,omitempty"`
-	ResolvedBy           string            `json:"resolved_by"`
+	ID                        string            `json:"id"`
+	Type                      string            `json:"type"`
+	Severity                  string            `json:"severity"`
+	Status                    string            `json:"status"`
+	Title                     string            `json:"title"`
+	Summary                   string            `json:"summary"`
+	ResourceType              string            `json:"resource_type"`
+	ResourceID                string            `json:"resource_id"`
+	ProfileScope              string            `json:"profile_scope"`
+	PlatformTenantID          string            `json:"platform_tenant_id"`
+	PlatformTenantName        string            `json:"platform_tenant_name"`
+	GatewayPrincipalID        string            `json:"gateway_principal_id"`
+	GatewayPrincipalName      string            `json:"gateway_principal_name"`
+	ExternalAuthIntegrationID string            `json:"external_auth_integration_id"`
+	ExternalSubjectReference  string            `json:"external_subject_reference"`
+	DedupeKey                 string            `json:"dedupe_key"`
+	Metadata                  map[string]string `json:"metadata"`
+	FirstSeenAt               time.Time         `json:"first_seen_at"`
+	LastSeenAt                time.Time         `json:"last_seen_at"`
+	AcknowledgedAt            *time.Time        `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy            string            `json:"acknowledged_by"`
+	ResolvedAt                *time.Time        `json:"resolved_at,omitempty"`
+	ResolvedBy                string            `json:"resolved_by"`
 }
 
 type AlertQuery struct {
-	Limit              int
-	Offset             int
-	Search             string
-	Type               string
-	Severity           string
-	Status             string
-	ResourceType       string
-	ResourceIDs        []string
-	ProfileScope       string
-	PlatformTenantID   string
-	GatewayPrincipalID string
+	Limit                     int
+	Offset                    int
+	Search                    string
+	Type                      string
+	Severity                  string
+	Status                    string
+	ResourceType              string
+	ResourceIDs               []string
+	ProfileScope              string
+	PlatformTenantID          string
+	GatewayPrincipalID        string
 	ExternalAuthIntegrationID string
-	CreatedFrom        time.Time
-	CreatedTo          time.Time
+	CreatedFrom               time.Time
+	CreatedTo                 time.Time
 }
 
 type AlertSummary struct {
