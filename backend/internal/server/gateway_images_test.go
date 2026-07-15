@@ -261,7 +261,7 @@ func TestGatewayMediaDirectStreamUsesCoreArtifactAndUsagePipeline(t *testing.T) 
 		t.Fatal(err)
 	}
 	provider, err := fixture.control.CreateProvider(context.Background(), "test", controlplane.ProviderRequest{
-		Name: "Video provider", Type: "video_sidecar", BaseURL: "https://provider.invalid/v1",
+		Name: "Video provider", Type: "openai_compatible", BaseURL: "https://provider.invalid/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"provider-video"}, APIKey: "provider-secret",
 	})
 	if err != nil {

@@ -501,7 +501,13 @@ func writeDirectImageResponse(c *gin.Context, request gatewaycore.CanonicalReque
 		eventPrefix = "media"
 	}
 	for _, item := range response.Data {
-		payload, _ := json.Marshal(gin.H{"type": eventPrefix + ".final", "operation_id": response.OperationID, "media": item})
+		eventPayload := gin.H{"type": eventPrefix + ".final", "operation_id": response.OperationID}
+		if request.Modality == controlplane.GatewayModalityImage {
+			eventPayload["image"] = item
+		} else {
+			eventPayload["media"] = item
+		}
+		payload, _ := json.Marshal(eventPayload)
 		_, _ = fmt.Fprintf(c.Writer, "id: %d\nevent: %s.final\ndata: %s\n\n", item.Index+1, eventPrefix, payload)
 	}
 	usage := gin.H{"type": "usage.finalized", "operation_id": response.OperationID}
