@@ -1847,9 +1847,13 @@ func (s *Service) rankedProviderAccountCandidates(ctx context.Context, model str
 	}
 	providersByID := providerByIDMap(providers)
 	now := time.Now().UTC()
+	billingHealthByAccount, _ := s.providerBillingRoutingHealthByAccount(ctx, now)
 	candidates := make([]rankedProviderAccountCandidate, 0, len(accounts))
 	for _, account := range accounts {
 		if !accountEligibleForRouting(account, model, now) {
+			continue
+		}
+		if health, found := billingHealthByAccount[account.ID]; found && health.HardBlocked {
 			continue
 		}
 		provider, ok := providersByID[account.ProviderID]

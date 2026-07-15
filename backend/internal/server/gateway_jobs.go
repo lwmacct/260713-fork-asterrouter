@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -40,11 +41,63 @@ type DurableAIJobAdmission interface {
 	SupportsDurableAIJob(context.Context, gatewaycore.CanonicalAuthContext, gatewaycore.CanonicalRequest) (bool, error)
 }
 
+type DurableAIJobAdmissionEvaluator interface {
+	EvaluateDurableAIJobSupport(context.Context, gatewaycore.CanonicalAuthContext, gatewaycore.CanonicalRequest) (controlplane.DurableAIJobSupportEvaluation, error)
+}
+
+func evaluateDurableAIJobAdmission(ctx context.Context, admission DurableAIJobAdmission, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (controlplane.DurableAIJobSupportEvaluation, error) {
+	if admission == nil {
+		return controlplane.DurableAIJobSupportEvaluation{
+			RejectionReason: controlplane.DurableAIJobCapabilityRuntimeUnavailable,
+			Exclusions:      []controlplane.GatewayCandidateExclusion{{Reason: controlplane.DurableAIJobCapabilityRuntimeUnavailable}},
+		}, nil
+	}
+	if evaluator, ok := admission.(DurableAIJobAdmissionEvaluator); ok {
+		evaluation, err := evaluator.EvaluateDurableAIJobSupport(ctx, auth, request)
+		if err == nil && !evaluation.Supported && evaluation.RejectionReason == "" {
+			evaluation.RejectionReason = controlplane.DurableAIJobCapabilityAdapterUnsupported
+			evaluation.Exclusions = append(evaluation.Exclusions, controlplane.GatewayCandidateExclusion{Reason: evaluation.RejectionReason})
+		}
+		return evaluation, err
+	}
+	supported, err := admission.SupportsDurableAIJob(ctx, auth, request)
+	evaluation := controlplane.DurableAIJobSupportEvaluation{Supported: supported}
+	if !supported && err == nil {
+		evaluation.RejectionReason = controlplane.DurableAIJobCapabilityAdapterUnsupported
+		evaluation.Exclusions = []controlplane.GatewayCandidateExclusion{{Reason: evaluation.RejectionReason}}
+	}
+	return evaluation, err
+}
+
+func recordDurableAIJobCapabilityRejection(control *controlplane.Service, c *gin.Context, auth controlplane.GatewayAuthContext, request gatewaycore.CanonicalRequest, evaluation controlplane.DurableAIJobSupportEvaluation, startedAt time.Time) {
+	reason := evaluation.RejectionReason
+	if reason == "" {
+		reason = controlplane.DurableAIJobCapabilityEvaluationError
+	}
+	exclusions := evaluation.Exclusions
+	if len(exclusions) == 0 {
+		exclusions = []controlplane.GatewayCandidateExclusion{{Reason: reason}}
+	}
+	errorType := "unsupported_capability"
+	if reason == controlplane.DurableAIJobCapabilityEvaluationError {
+		errorType = controlplane.DurableAIJobCapabilityEvaluationError
+	}
+	recordGatewayTrace(control, c, auth, controlplane.GatewayTraceInput{
+		RequestFingerprint: request.Fingerprint, Model: request.Model, Stream: request.Stream,
+		GatewayModelID: evaluation.GatewayModelID, RouteGroup: evaluation.RouteGroup, RouteReason: reason,
+		Status: "error", HTTPStatus: http.StatusServiceUnavailable, ErrorType: errorType,
+		LatencyMS:       time.Since(startedAt).Milliseconds(),
+		RequestSummary:  fmt.Sprintf("durable job modality=%s operation=%s", request.Modality, request.Operation),
+		ResponseSummary: "durable capability admission rejected", RouteAttempts: marshalRouteEvidence(exclusions, nil),
+	})
+}
+
 func registerGatewayJobRoutes(r *gin.Engine, control *controlplane.Service, durableJobs DurableAIJobAdmission) {
 	registerGatewayJobEventRoute(r, control)
 	registerGatewayArtifactRoutes(r, control)
 
 	r.POST("/v1/jobs", func(c *gin.Context) {
+		startedAt := time.Now()
 		if control == nil {
 			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
 			return
@@ -72,16 +125,14 @@ func registerGatewayJobRoutes(r *gin.Engine, control *controlplane.Service, dura
 			writeGatewayError(c, err)
 			return
 		}
-		if durableJobs == nil {
-			openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this durable job")
-			return
-		}
-		supported, err := durableJobs.SupportsDurableAIJob(c.Request.Context(), canonicalAuth, request)
+		evaluation, err := evaluateDurableAIJobAdmission(c.Request.Context(), durableJobs, canonicalAuth, request)
 		if err != nil {
+			recordDurableAIJobCapabilityRejection(control, c, auth, request, controlplane.DurableAIJobSupportEvaluation{RejectionReason: controlplane.DurableAIJobCapabilityEvaluationError}, startedAt)
 			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "durable job runtime capability check failed")
 			return
 		}
-		if !supported {
+		if !evaluation.Supported {
+			recordDurableAIJobCapabilityRejection(control, c, auth, request, evaluation, startedAt)
 			openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this durable job")
 			return
 		}

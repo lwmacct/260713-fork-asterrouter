@@ -82,6 +82,9 @@ type Repository interface {
 	ListDirectAIAttemptsForReconciliation(ctx context.Context, now time.Time, limit int) ([]AIAttempt, error)
 	ListDurableAIAttemptsForReconciliation(ctx context.Context, now time.Time, limit int) ([]AIAttempt, error)
 	CompleteAIAttempt(ctx context.Context, id, status, errorType string, completedAt time.Time) (bool, error)
+	FindProviderCallbackReceipt(ctx context.Context, eventID string) (ProviderCallbackReceipt, bool, error)
+	CreateOrGetProviderCallbackReceipt(ctx context.Context, receipt ProviderCallbackReceipt) (ProviderCallbackReceipt, bool, error)
+	CompleteProviderCallbackReceipt(ctx context.Context, eventID, status, errorType string, processedAt time.Time) error
 	FindBillingHoldByOperationID(ctx context.Context, operationID string) (BillingHold, bool, error)
 	TransitionBillingHold(ctx context.Context, operationID string, expectedVersion int, toStatus string, settledAmount int, reason string, transitionedAt time.Time) (BillingHold, bool, error)
 	ListBillingHolds(ctx context.Context) ([]BillingHold, error)
@@ -137,6 +140,7 @@ type Repository interface {
 	CommitProviderBillingSync(ctx context.Context, commit ProviderBillingSyncCommit) (bool, error)
 	ListProviderBillingSyncRuns(ctx context.Context, sourceID string, limit int) ([]ProviderBillingSyncRun, error)
 	ListProviderBalanceSnapshots(ctx context.Context, sourceID string, limit int) ([]ProviderBalanceSnapshotRecord, error)
+	ListLatestProviderBalanceSnapshots(ctx context.Context) ([]ProviderBalanceSnapshotRecord, error)
 	ListProviderUsageAggregateSnapshots(ctx context.Context, sourceID string, limit int) ([]ProviderUsageAggregateSnapshot, error)
 	ListProviderCacheCapabilities(ctx context.Context) ([]ProviderCacheCapability, error)
 	FindProviderCacheCapability(ctx context.Context, providerAccountID, upstreamModel, protocol string) (ProviderCacheCapability, bool, error)
@@ -254,6 +258,7 @@ type MemoryRepository struct {
 	artifacts                       map[string]Artifact
 	artifactEvents                  map[string]ArtifactEvent
 	aiAttempts                      map[string]AIAttempt
+	providerCallbackReceipts        map[string]ProviderCallbackReceipt
 	billingHolds                    map[string]BillingHold
 	billingLedgerEntries            map[string]BillingLedgerEntry
 	transactionalOutboxEvents       map[string]TransactionalOutboxEvent
@@ -316,6 +321,7 @@ func NewMemoryRepository() *MemoryRepository {
 		artifacts:                       map[string]Artifact{},
 		artifactEvents:                  map[string]ArtifactEvent{},
 		aiAttempts:                      map[string]AIAttempt{},
+		providerCallbackReceipts:        map[string]ProviderCallbackReceipt{},
 		billingHolds:                    map[string]BillingHold{},
 		billingLedgerEntries:            map[string]BillingLedgerEntry{},
 		transactionalOutboxEvents:       map[string]TransactionalOutboxEvent{},
@@ -1912,6 +1918,23 @@ CREATE TABLE IF NOT EXISTS ai_job_progress_events (
 
 CREATE INDEX IF NOT EXISTS ai_job_progress_events_job_created_idx
   ON ai_job_progress_events(job_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS provider_callback_receipts (
+  event_id TEXT PRIMARY KEY,
+  adapter_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL REFERENCES ai_attempts(id) ON DELETE CASCADE,
+  provider_id TEXT NOT NULL,
+  provider_account_id TEXT NOT NULL,
+  provider_task_id TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_type TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  processed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS provider_callback_receipts_attempt_idx
+  ON provider_callback_receipts(attempt_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,

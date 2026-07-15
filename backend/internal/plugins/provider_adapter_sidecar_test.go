@@ -45,6 +45,8 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 			_, _ = response.Write([]byte(`{"outcome":"accepted","task":{"provider_task_id":"task-1","provider_request_id":"request-1","status":"running"}}`))
 		case "/v1/provider-adapter/reconcile":
 			_, _ = response.Write([]byte(`{"outcome":"accepted","task":{"provider_task_id":"task-1","provider_request_id":"request-1","status":"succeeded"},"progress":{"sequence":2,"percent":100,"stage":"completed"},"outputs":[{"output_id":"final-image","role":"final","media_type":"image/png","expected_size_bytes":12,"provider_reference":"provider://task-1/final"}]}`))
+		case "/v1/provider-adapter/cancel":
+			_, _ = response.Write([]byte(`{"outcome":"accepted","task":{"provider_task_id":"task-1","provider_request_id":"request-1","status":"canceled"}}`))
 		case "/v1/provider-adapter/output":
 			response.Header().Set("Content-Type", "image/png")
 			_, _ = response.Write([]byte("image-output"))
@@ -80,6 +82,8 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 		ID: pluginID, Version: version, Runtime: "sidecar",
 		ProviderAdapters: []providerAdapterManifestCapability{{
 			ProviderTypes: []string{"test_media"}, Modalities: []string{"image"}, Operations: []string{"image_generation"},
+			ArtifactPolicies:     []string{controlplane.GatewayArtifactPolicyTemporary},
+			SupportsCancellation: true, SupportsCallbacks: true,
 		}},
 	})
 	if err != nil {
@@ -95,6 +99,9 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 	}
 	service.supervisors[pluginID] = &sidecarSupervisor{wake: make(chan struct{}, 1)}
 	t.Cleanup(func() { close(done) })
+	if err := service.AuthorizeSidecarProviderCallback(context.Background(), pluginID, token); err != nil {
+		t.Fatalf("AuthorizeSidecarProviderCallback(): %v", err)
+	}
 
 	provider := controlplane.GatewayProvider{
 		ID: "provider-1", Type: "test_media", BaseURL: "https://provider.example/v1", APIKey: apiKey,
@@ -107,6 +114,11 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 	selected, supported, err := service.SelectDurableAIJobAdapter(context.Background(), provider, job)
 	if err != nil || !supported || selected != pluginID {
 		t.Fatalf("SelectDurableAIJobAdapter() selected=%q supported=%t err=%v", selected, supported, err)
+	}
+	unsupportedJob := job
+	unsupportedJob.ArtifactPolicy = controlplane.GatewayArtifactPolicyMetadataOnly
+	if selected, supported, reason, err := service.ExplainDurableAIJobAdapterSelection(context.Background(), provider, unsupportedJob); err != nil || supported || selected != "" || reason != controlplane.DurableAIJobCapabilityArtifactPolicyUnsupported {
+		t.Fatalf("unsupported selection=%q supported=%t reason=%q err=%v", selected, supported, reason, err)
 	}
 	provider.AdapterID = selected
 	attempt := controlplane.AIAttempt{ID: "attempt-1", AttemptNumber: 1, ProviderAdapterID: selected}
@@ -128,6 +140,14 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 	attempt.ProviderTaskID = reconciled.Task.ProviderTaskID
 	attempt.ProviderRequestID = reconciled.Task.ProviderRequestID
 	attempt.ProviderTaskStatus = reconciled.Task.Status
+	canCancel, err := service.SupportsDurableAIJobCancellation(context.Background(), provider, job, attempt)
+	if err != nil || !canCancel {
+		t.Fatalf("cancellation capability=%t err=%v", canCancel, err)
+	}
+	cancelled, err := service.CancelProviderTask(context.Background(), provider, job, attempt, intent, reconciled.Task)
+	if err != nil || cancelled.Task.Status != "canceled" || cancelled.Outcome != controlplane.ProviderDispatchOutcomeAccepted {
+		t.Fatalf("cancelled=%+v err=%v", cancelled, err)
+	}
 	output, err := service.OpenProviderOutput(context.Background(), provider, job, attempt, reconciled.Outputs[0])
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +176,9 @@ func TestProviderAdapterSidecarCapabilityAndLifecycleContract(t *testing.T) {
 	}
 	if selected, supported, err := service.SelectDurableAIJobAdapter(context.Background(), provider, job); err != nil || supported || selected != "" {
 		t.Fatalf("disabled adapter selected=%q supported=%t err=%v", selected, supported, err)
+	}
+	if _, supported, reason, err := service.ExplainDurableAIJobAdapterSelection(context.Background(), provider, job); err != nil || supported || reason != controlplane.DurableAIJobCapabilityAdapterUnavailable {
+		t.Fatalf("disabled adapter supported=%t reason=%q err=%v", supported, reason, err)
 	}
 }
 
@@ -192,5 +215,30 @@ func TestManifestSupportsProviderJobEnforcesDeclaredArtifactPolicies(t *testing.
 	manifest.ProviderAdapters[0].ArtifactPolicies = nil
 	if !manifestSupportsProviderJob(manifest, provider, job) {
 		t.Fatal("legacy manifest without artifact policy declaration should remain compatible")
+	}
+}
+
+func TestManifestProviderJobSupportExplainsMostSpecificMismatch(t *testing.T) {
+	manifest := sidecarManifest{ProviderAdapters: []providerAdapterManifestCapability{{
+		ProviderTypes: []string{"media_provider"}, Modalities: []string{"video"}, Operations: []string{"video_generation"},
+		ArtifactPolicies: []string{controlplane.GatewayArtifactPolicyTemporary},
+	}}}
+	tests := []struct {
+		name     string
+		provider controlplane.GatewayProvider
+		job      controlplane.AIJob
+		reason   string
+	}{
+		{name: "provider type", provider: controlplane.GatewayProvider{Type: "other"}, job: controlplane.AIJob{Modality: "video", Operation: "video_generation", ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary}, reason: controlplane.DurableAIJobCapabilityProviderTypeUnsupported},
+		{name: "modality", provider: controlplane.GatewayProvider{Type: "media_provider"}, job: controlplane.AIJob{Modality: "audio", Operation: "video_generation", ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary}, reason: controlplane.DurableAIJobCapabilityModalityUnsupported},
+		{name: "operation", provider: controlplane.GatewayProvider{Type: "media_provider"}, job: controlplane.AIJob{Modality: "video", Operation: "video_edit", ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary}, reason: controlplane.DurableAIJobCapabilityOperationUnsupported},
+		{name: "artifact policy", provider: controlplane.GatewayProvider{Type: "media_provider"}, job: controlplane.AIJob{Modality: "video", Operation: "video_generation", ArtifactPolicy: controlplane.GatewayArtifactPolicyManaged}, reason: controlplane.DurableAIJobCapabilityArtifactPolicyUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if supported, reason := manifestProviderJobSupport(manifest, test.provider, test.job); supported || reason != test.reason {
+				t.Fatalf("supported=%t reason=%q want=%q", supported, reason, test.reason)
+			}
+		})
 	}
 }

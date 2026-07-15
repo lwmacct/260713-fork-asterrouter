@@ -33,7 +33,8 @@ test('@effective-pricing billing source inspection keeps aggregate evidence dist
     next_sync_at: '2026-07-15T09:00:00Z', last_sync_started_at: '2026-07-15T08:00:00Z',
     last_sync_completed_at: '2026-07-15T08:00:01Z', last_success_at: '2026-07-15T08:00:01Z',
     consecutive_failures: 0, last_error_code: '', version: 3, created_by: 'admin', updated_by: 'admin',
-    created_at: '2026-07-15T07:00:00Z', updated_at: '2026-07-15T08:00:01Z'
+    created_at: '2026-07-15T07:00:00Z', updated_at: '2026-07-15T08:00:01Z',
+    routing_health: { source_status: 'observe_only', status: 'observe_only', hard_blocked: false, economic_switch_eligible: false, reason_codes: ['provider_billing_source_observe_only'], evaluated_at: '2026-07-15T08:00:01Z', evidence_observed_at: '2026-07-15T08:00:01Z', evidence_stale_after_seconds: 21600 }
   }
   const run = {
     id: 'run-e2e', source_id: source.id, provider_id: source.provider_id, provider_account_id: source.provider_account_id,
@@ -109,6 +110,8 @@ test('@effective-pricing billing source inspection keeps aggregate evidence dist
   await page.getByRole('button', { name: 'Billing source' }).click()
   await expect(page.getByRole('heading', { name: 'Third-party billing source inspection' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Sync run history' })).toBeVisible()
+  await expect(page.locator('.routing-health-summary')).toContainText('Routing health')
+  await expect(page.locator('.routing-health-summary')).toContainText('Automatic economic switch')
   await expect(page.getByText('succeeded', { exact: true })).toBeVisible()
   await expect(page.getByText('$7.50', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Auto-detect' }).click()

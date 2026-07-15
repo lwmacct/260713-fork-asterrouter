@@ -53,6 +53,10 @@ func (s *Service) PlanCanonicalGatewayRequest(ctx context.Context, auth gatewayc
 	if strings.TrimSpace(auth.CredentialID) == "" || strings.TrimSpace(request.Model) == "" {
 		return GatewayExecutionPlan{}, ErrGatewayUnauthorized
 	}
+	return s.planCanonicalGatewayRequest(ctx, auth, request)
+}
+
+func (s *Service) planCanonicalGatewayRequest(ctx context.Context, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (GatewayExecutionPlan, error) {
 	resolved, found, err := s.ResolveGatewayModel(ctx, request.Model)
 	if err != nil {
 		return GatewayExecutionPlan{}, err
@@ -202,6 +206,10 @@ func gatewayModelSupportsCanonicalRequest(model GatewayModel, request gatewaycor
 		return model.Modality == "chat" || model.Modality == "multimodal"
 	case gatewaycore.ProtocolOpenAIImages:
 		return model.Modality == GatewayModalityImage || model.Modality == "multimodal"
+	case gatewaycore.ProtocolOpenAIMedia:
+		return model.Modality == request.Modality || model.Modality == "multimodal"
+	case gatewaycore.ProtocolAsterJobs:
+		return model.Modality == request.Modality || model.Modality == "multimodal"
 	default:
 		return false
 	}

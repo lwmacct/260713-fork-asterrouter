@@ -110,6 +110,34 @@ func TestProviderBillingSourceRepositoryCASContract(t *testing.T) {
 	}
 }
 
+func TestProviderBillingSourceRepositoryListsLatestBalancePerSource(t *testing.T) {
+	for _, test := range providerBillingRepositoryFactories() {
+		t.Run(test.name, func(t *testing.T) {
+			repo := test.open(t)
+			t.Cleanup(func() { _ = repo.Close() })
+			ctx := context.Background()
+			now := time.Date(2026, time.July, 15, 17, 30, 0, 0, time.UTC)
+			first := seedProviderBillingSourceRepository(t, repo, now, "latest-a")
+			second := seedProviderBillingSourceRepository(t, repo, now, "latest-b")
+			commitProviderBillingBalance(t, repo, first, now, "latest-a-old", 100)
+			commitProviderBillingBalance(t, repo, first, now.Add(time.Minute), "latest-a-new", 200)
+			commitProviderBillingBalance(t, repo, second, now, "latest-b-only", 300)
+
+			balances, err := repo.ListLatestProviderBalanceSnapshots(ctx)
+			if err != nil || len(balances) != 2 {
+				t.Fatalf("latest balances=%+v err=%v", balances, err)
+			}
+			amountBySource := map[string]int64{}
+			for _, balance := range balances {
+				amountBySource[balance.SourceID] = balance.AmountMicros
+			}
+			if amountBySource[first.ID] != 200 || amountBySource[second.ID] != 300 {
+				t.Fatalf("latest amounts=%v", amountBySource)
+			}
+		})
+	}
+}
+
 func TestProviderBillingSourceRepositoryConcurrentClaimContract(t *testing.T) {
 	for _, test := range providerBillingRepositoryFactories() {
 		t.Run(test.name, func(t *testing.T) {
@@ -287,4 +315,18 @@ func claimProviderBillingSource(t *testing.T, repo Repository, sourceID string, 
 		t.Fatalf("claim source=%s claims=%+v err=%v", sourceID, claims, err)
 	}
 	return claims[0]
+}
+
+func commitProviderBillingBalance(t *testing.T, repo Repository, source ProviderBillingSource, now time.Time, id string, amount int64) {
+	t.Helper()
+	claim := claimProviderBillingSource(t, repo, source.ID, now, time.Minute)
+	applied, err := repo.CommitProviderBillingSync(context.Background(), ProviderBillingSyncCommit{
+		SourceID: source.ID, LeaseToken: claim.Source.LeaseToken,
+		Run:        ProviderBillingSyncRun{ID: claim.Run.ID, Status: ProviderBillingSyncSucceeded},
+		Balance:    &ProviderBalanceSnapshotRecord{ID: id, Kind: ProviderBalanceKindWallet, AmountMicros: amount, Currency: "USD", ObservedAt: now, CreatedAt: now},
+		NextSyncAt: timePointer(now.Add(time.Hour)), CompletedAt: now.Add(time.Second),
+	})
+	if err != nil || !applied {
+		t.Fatalf("commit balance %s applied=%t err=%v", id, applied, err)
+	}
 }

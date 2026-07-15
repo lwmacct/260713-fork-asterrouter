@@ -303,9 +303,10 @@ func CanonicalizeDurableJob(raw []byte, header http.Header) (CanonicalRequest, e
 }
 
 // CanonicalizeOpenAIMediaJob adapts the public video/audio generation entry
-// points to the same durable job contract used by /v1/jobs. The provider
-// adapter still receives the canonical payload; the HTTP surface does not
-// create a second queue or billing path.
+// points to the same operation contract used by /v1/jobs. Blocking and stream
+// requests stay on the direct lane; async requests are the only ones that
+// enter the durable job lane. The provider adapter receives only input data,
+// while response and delivery controls remain core-owned.
 func CanonicalizeOpenAIMediaJob(raw []byte, header http.Header, modality, operation string) (CanonicalRequest, error) {
 	modality = strings.ToLower(strings.TrimSpace(modality))
 	operation = strings.ToLower(strings.TrimSpace(operation))
@@ -321,24 +322,55 @@ func CanonicalizeOpenAIMediaJob(raw []byte, header http.Header, modality, operat
 	if model == "" {
 		return CanonicalRequest{}, fmt.Errorf("%w: model is required", ErrInvalidCanonicalRequest)
 	}
+	stream := false
 	if value, exists := payload["stream"]; exists {
-		stream, ok := value.(bool)
-		if !ok || stream {
-			return CanonicalRequest{}, fmt.Errorf("%w: streaming media requests must use the job event endpoint", ErrInvalidCanonicalRequest)
+		var ok bool
+		stream, ok = value.(bool)
+		if !ok {
+			return CanonicalRequest{}, fmt.Errorf("%w: stream must be a boolean", ErrInvalidCanonicalRequest)
 		}
 	}
-	if value, exists := payload["response_mode"]; exists {
-		responseMode, ok := value.(string)
-		if !ok || (strings.TrimSpace(responseMode) != "" && strings.ToLower(strings.TrimSpace(responseMode)) != "async") {
-			return CanonicalRequest{}, fmt.Errorf("%w: media generation entry points only support response_mode=async", ErrInvalidCanonicalRequest)
+	responseMode := strings.ToLower(strings.TrimSpace(stringValue(payload["response_mode"])))
+	if responseMode == "" {
+		if stream {
+			responseMode = "stream"
+		} else {
+			// Media generation remains asynchronous by default. Callers that
+			// need a request-bound response must opt into blocking explicitly.
+			responseMode = "async"
 		}
+	}
+	if responseMode != "blocking" && responseMode != "stream" && responseMode != "async" {
+		return CanonicalRequest{}, fmt.Errorf("%w: response_mode must be blocking, stream, or async", ErrInvalidCanonicalRequest)
+	}
+	if responseMode == "stream" && !stream && payload["stream"] != nil {
+		return CanonicalRequest{}, fmt.Errorf("%w: response_mode=stream requires stream=true", ErrInvalidCanonicalRequest)
+	}
+	if responseMode == "blocking" && stream {
+		return CanonicalRequest{}, fmt.Errorf("%w: response_mode=blocking cannot use stream=true", ErrInvalidCanonicalRequest)
+	}
+	if responseMode == "async" && stream {
+		return CanonicalRequest{}, fmt.Errorf("%w: response_mode=async cannot use stream=true", ErrInvalidCanonicalRequest)
+	}
+	deliveryMode := strings.ToLower(strings.TrimSpace(stringValue(payload["delivery_mode"])))
+	if deliveryMode == "" {
+		deliveryMode = "inline"
+		if responseMode == "async" {
+			deliveryMode = "artifact"
+		}
+	}
+	if deliveryMode != "inline" && deliveryMode != "artifact" && deliveryMode != "customer_sink" {
+		return CanonicalRequest{}, fmt.Errorf("%w: invalid delivery_mode", ErrInvalidCanonicalRequest)
+	}
+	if responseMode == "async" && deliveryMode == "inline" {
+		return CanonicalRequest{}, fmt.Errorf("%w: async media requests require artifact delivery", ErrInvalidCanonicalRequest)
 	}
 	input, ok := payload["input"].(map[string]any)
 	if !ok {
 		input = make(map[string]any, len(payload))
 		for key, value := range payload {
 			switch key {
-			case "model", "stream", "response_mode", "delivery_mode":
+			case "model", "stream", "response_mode", "delivery_mode", "preview_mode":
 				continue
 			default:
 				input[key] = value
@@ -362,15 +394,21 @@ func CanonicalizeOpenAIMediaJob(raw []byte, header http.Header, modality, operat
 	}
 	canonicalPayload, err := json.Marshal(map[string]any{
 		"model": model, "operation": operation, "modality": modality, "input": input,
+		"response_mode": responseMode, "delivery_mode": deliveryMode,
 	})
 	if err != nil {
 		return CanonicalRequest{}, ErrInvalidCanonicalRequest
 	}
 	fingerprint := sha256.Sum256(canonicalPayload)
+	lane := LaneDirect
+	if responseMode == "async" {
+		lane = LaneDurable
+	}
 	return CanonicalRequest{
 		ID: "op_" + requestID, ClientRequestID: requestID, Fingerprint: hex.EncodeToString(fingerprint[:]),
-		Protocol: ProtocolAsterJobs, Operation: operation, Modality: modality, Lane: LaneDurable,
-		Model: model, IdempotencyKey: idempotencyKey, OutputCount: outputCount,
+		Protocol: ProtocolOpenAIMedia, Operation: operation, Modality: modality, Lane: lane,
+		Model: model, Stream: responseMode == "stream", ResponseMode: responseMode, DeliveryMode: deliveryMode,
+		IdempotencyKey: idempotencyKey, OutputCount: outputCount,
 		VideoDurationMS: videoDurationMS, AudioDurationMS: audioDurationMS, Payload: canonicalPayload,
 	}, nil
 }
@@ -381,8 +419,12 @@ func oneOfCanonicalMedia(modality, operation string) bool {
 
 func canonicalDurableMediaEstimate(operation, modality string, input map[string]any) (int, int64, int64, error) {
 	outputCount := 0
-	if modality == "image" && operation == "image_generation" {
+	if (modality == "image" && operation == "image_generation") ||
+		(modality == "video" && operation == "video_generation") ||
+		(modality == "audio" && operation == "audio_generation") {
 		outputCount = 1
+	}
+	if modality == "image" && operation == "image_generation" {
 		countSeen := false
 		for _, key := range []string{"n", "count"} {
 			value, exists := input[key]

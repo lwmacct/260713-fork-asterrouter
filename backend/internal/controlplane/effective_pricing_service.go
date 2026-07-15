@@ -537,6 +537,7 @@ func (s *Service) effectivePricingReportForWindow(ctx context.Context, query Eff
 	if err != nil {
 		return EffectivePricingReport{}, err
 	}
+	billingHealthByAccount, _ := s.providerBillingRoutingHealthByAccount(ctx, windowEnd)
 	providerNames := map[string]string{}
 	for _, provider := range providers {
 		providerNames[provider.ID] = provider.Name
@@ -623,6 +624,10 @@ func (s *Service) effectivePricingReportForWindow(ctx context.Context, query Eff
 			CacheSupportStatus: capability.SupportStatus, PoolAffinityGrade: capability.PoolAffinityGrade,
 			CostConfidence: confidence, PriceID: price.ID,
 		}
+		if health, found := billingHealthByAccount[aggregate.ProviderAccountID]; found {
+			copy := health
+			row.ProviderBillingRoutingHealth = &copy
+		}
 		if row.Currency == "" {
 			row.Currency = "USD"
 		}
@@ -669,6 +674,12 @@ func (s *Service) effectivePricingReportForWindow(ctx context.Context, query Eff
 
 func effectivePricingRecommendation(row EffectivePricingReportRow, policy EffectivePricingPolicy) (string, []string) {
 	reasons := []string{}
+	if health := row.ProviderBillingRoutingHealth; health != nil && !health.EconomicSwitchEligible {
+		reasons = append(reasons, health.ReasonCodes...)
+		if health.HardBlocked {
+			return "reduce_weight", cleanStringList(reasons)
+		}
+	}
 	if row.RequestCount < policy.MinSampleCount {
 		reasons = append(reasons, "insufficient_sample")
 	}
@@ -683,7 +694,7 @@ func effectivePricingRecommendation(row EffectivePricingReportRow, policy Effect
 		return "reduce_weight", reasons
 	}
 	if len(reasons) > 0 {
-		return "observe", reasons
+		return "observe", cleanStringList(reasons)
 	}
 	return "eligible", reasons
 }

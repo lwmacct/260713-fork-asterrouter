@@ -25,10 +25,12 @@ type sidecarManifest struct {
 }
 
 type providerAdapterManifestCapability struct {
-	ProviderTypes    []string `json:"provider_types"`
-	Modalities       []string `json:"modalities"`
-	Operations       []string `json:"operations"`
-	ArtifactPolicies []string `json:"artifact_policies,omitempty"`
+	ProviderTypes        []string `json:"provider_types"`
+	Modalities           []string `json:"modalities"`
+	Operations           []string `json:"operations"`
+	ArtifactPolicies     []string `json:"artifact_policies,omitempty"`
+	SupportsCancellation bool     `json:"supports_cancellation,omitempty"`
+	SupportsCallbacks    bool     `json:"supports_callbacks,omitempty"`
 }
 
 func inspectPackageRuntime(cachePath string) (string, bool, error) {

@@ -1,6 +1,16 @@
 package server
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
 
 func TestParseGatewayUsageNormalizesCacheSchemas(t *testing.T) {
 	tests := []struct {
@@ -83,6 +93,9 @@ func TestGatewaySSEUsageCollectorMergesUsageEvents(t *testing.T) {
 		t.Fatalf("merged observation = %+v", got)
 	}
 	assertOptionalInt(t, "read", got.CacheReadTokens, testIntPointer(90))
+	if !collector.Completed() {
+		t.Fatal("collector did not recognize [DONE]")
+	}
 }
 
 func TestGatewaySSEUsageCollectorMergesGeminiFinalUsage(t *testing.T) {
@@ -92,6 +105,67 @@ func TestGatewaySSEUsageCollectorMergesGeminiFinalUsage(t *testing.T) {
 	got := collector.Observation()
 	if got.InputTokens != 100 || got.OutputTokens != 25 || got.CacheReadTokens == nil || *got.CacheReadTokens != 60 || got.UsageNormalizationStatus != usageNormalizationGemini {
 		t.Fatalf("merged Gemini observation = %+v", got)
+	}
+	if !collector.Completed() {
+		t.Fatal("collector did not recognize Gemini [DONE]")
+	}
+}
+
+func TestGatewaySSEUsageCollectorRecognizesProtocolTerminalEvents(t *testing.T) {
+	tests := []string{
+		"data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n",
+		"event: message_stop\ndata: {}\n\n",
+		"data: {\"type\":\"response.completed\"}\n\n",
+	}
+	for _, payload := range tests {
+		collector := gatewaySSEUsageCollector{}
+		collector.Write([]byte(payload))
+		if !collector.Completed() {
+			t.Fatalf("terminal payload was not recognized: %q", payload)
+		}
+	}
+}
+
+func TestGatewaySSEUsageCollectorDoesNotTreatEOFAsTerminal(t *testing.T) {
+	collector := gatewaySSEUsageCollector{}
+	collector.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"))
+	if collector.Completed() {
+		t.Fatal("partial SSE payload was treated as terminal")
+	}
+}
+
+func TestStreamUpstreamResponseRejectsEOFWithoutTerminalEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name       string
+		body       string
+		wantErr    error
+		wantStatus int
+	}{
+		{name: "incomplete", body: "data: {\"choices\":[{\"delta\":{}}]}\n\n", wantErr: errGatewaySSEIncomplete, wantStatus: http.StatusOK},
+		{name: "done", body: "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", wantStatus: http.StatusOK},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(bytes.NewBufferString(test.body)),
+			}
+			_, _, err := streamUpstreamResponse(context, response, time.Now().Add(-time.Millisecond))
+			if test.wantErr != nil {
+				if err != test.wantErr {
+					t.Fatalf("stream error=%v, want %v", err, test.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("stream error=%v", err)
+			}
+			if recorder.Code != test.wantStatus || !strings.Contains(recorder.Body.String(), "data:") {
+				t.Fatalf("response status=%d body=%q", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 

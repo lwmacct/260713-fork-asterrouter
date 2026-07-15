@@ -63,6 +63,12 @@ func cloneProviderBillingSource(source ProviderBillingSource) ProviderBillingSou
 	source.LastSyncCompletedAt = cloneTimePointer(source.LastSyncCompletedAt)
 	source.LastSuccessAt = cloneTimePointer(source.LastSuccessAt)
 	source.LeaseExpiresAt = cloneTimePointer(source.LeaseExpiresAt)
+	if source.RoutingHealth != nil {
+		health := *source.RoutingHealth
+		health.ReasonCodes = append([]string(nil), health.ReasonCodes...)
+		health.EvidenceObservedAt = cloneTimePointer(health.EvidenceObservedAt)
+		source.RoutingHealth = &health
+	}
 	return source
 }
 
@@ -393,6 +399,24 @@ func (r *MemoryRepository) ListProviderBalanceSnapshots(_ context.Context, sourc
 	return out, nil
 }
 
+func (r *MemoryRepository) ListLatestProviderBalanceSnapshots(_ context.Context) ([]ProviderBalanceSnapshotRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	latestBySource := make(map[string]ProviderBalanceSnapshotRecord)
+	for _, snapshot := range r.providerBalanceSnapshots {
+		current, found := latestBySource[snapshot.SourceID]
+		if !found || snapshot.ObservedAt.After(current.ObservedAt) || snapshot.ObservedAt.Equal(current.ObservedAt) && snapshot.ID > current.ID {
+			latestBySource[snapshot.SourceID] = snapshot
+		}
+	}
+	out := make([]ProviderBalanceSnapshotRecord, 0, len(latestBySource))
+	for _, snapshot := range latestBySource {
+		out = append(out, snapshot)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SourceID < out[j].SourceID })
+	return out, nil
+}
+
 func (r *MemoryRepository) ListProviderUsageAggregateSnapshots(_ context.Context, sourceID string, limit int) ([]ProviderUsageAggregateSnapshot, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -671,6 +695,23 @@ func scanProviderBillingSyncRun(scanner providerBillingSourceScanner) (ProviderB
 
 func (r *PostgresRepository) ListProviderBalanceSnapshots(ctx context.Context, sourceID string, limit int) ([]ProviderBalanceSnapshotRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id,source_id,sync_run_id,provider_account_id,kind,amount_micros,unlimited,currency,evidence_hash,observed_at,created_at FROM provider_balance_snapshots WHERE ($1='' OR source_id=$1) ORDER BY observed_at DESC LIMIT $2`, strings.TrimSpace(sourceID), limitOrDefault(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProviderBalanceSnapshotRecord{}
+	for rows.Next() {
+		var v ProviderBalanceSnapshotRecord
+		if err := rows.Scan(&v.ID, &v.SourceID, &v.SyncRunID, &v.ProviderAccountID, &v.Kind, &v.AmountMicros, &v.Unlimited, &v.Currency, &v.EvidenceHash, &v.ObservedAt, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) ListLatestProviderBalanceSnapshots(ctx context.Context) ([]ProviderBalanceSnapshotRecord, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT ON (source_id) id,source_id,sync_run_id,provider_account_id,kind,amount_micros,unlimited,currency,evidence_hash,observed_at,created_at FROM provider_balance_snapshots ORDER BY source_id,observed_at DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}

@@ -87,6 +87,10 @@ func newDirectImageHTTPFixture(t *testing.T, adapter *directImageAdapterStub, ro
 }
 
 func newDirectImageHTTPFixtureWithLimit(t *testing.T, adapter *directImageAdapterStub, routes, concurrency int, withStore bool, monthlyImageLimit int) directImageHTTPFixture {
+	return newDirectImageHTTPFixtureWithAdmission(t, adapter, routes, concurrency, withStore, monthlyImageLimit, allowDurableAIJobs{})
+}
+
+func newDirectImageHTTPFixtureWithAdmission(t *testing.T, adapter *directImageAdapterStub, routes, concurrency int, withStore bool, monthlyImageLimit int, durableJobs DurableAIJobAdmission) directImageHTTPFixture {
 	t.Helper()
 	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
 	if withStore {
@@ -129,7 +133,7 @@ func newDirectImageHTTPFixtureWithLimit(t *testing.T, adapter *directImageAdapte
 	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	registerGatewayRoutes(router, control, allowDurableAIJobs{}, adapter)
+	registerGatewayRoutes(router, control, durableJobs, adapter)
 	candidates, _, err := control.GatewayProviderCandidatesForModel(context.Background(), "public-image")
 	if err != nil {
 		t.Fatal(err)
@@ -246,12 +250,78 @@ func TestGatewayImageStreamEmitsFinalUsageAndDoneOnly(t *testing.T) {
 	}
 }
 
+func TestGatewayMediaDirectStreamUsesCoreArtifactAndUsagePipeline(t *testing.T) {
+	adapter := successfulDirectImageAdapter([]byte("synthetic-video"))
+	fixture := newDirectImageHTTPFixture(t, adapter, 0, 2, true)
+	model, err := fixture.control.CreateGatewayModel(context.Background(), "public-video-direct", controlplane.GatewayModelRequest{
+		ModelID: "public-video-direct", Name: "Public video direct", Modality: controlplane.GatewayModalityVideo,
+		DefaultRouteGroup: "default", Status: controlplane.GatewayModelStatusActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := fixture.control.CreateProvider(context.Background(), "test", controlplane.ProviderRequest{
+		Name: "Video provider", Type: "video_sidecar", BaseURL: "https://provider.invalid/v1",
+		Status: controlplane.ProviderStatusActive, Models: []string{"provider-video"}, APIKey: "provider-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := createGatewayTestAccount(t, fixture.control, provider, "provider-video", "provider-secret", 10, 2)
+	if _, err := fixture.control.CreateModelRoute(context.Background(), "test", controlplane.ModelRouteRequest{
+		GatewayModelID: model.ID, RouteGroup: "default", ProviderAccountID: account.ID,
+		UpstreamModel: "provider-video", Priority: 10, Weight: 100, Status: controlplane.ModelRouteStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := fixture.control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "video caller", ModelAllowlist: []string{"public-video-direct"},
+		Scopes:            []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeArtifactsRead},
+		AllowedModalities: []string{controlplane.GatewayModalityVideo}, AllowedOperations: []string{controlplane.GatewayOperationVideoGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDirectOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := performGatewayJobRequest(fixture.handler, http.MethodPost, "/v1/videos/generations", key.Key, "video-direct-stream", `{"model":"public-video-direct","prompt":"synthetic","duration_seconds":1.5,"response_mode":"stream","delivery_mode":"artifact"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	body := response.Body.String()
+	for _, event := range []string{"event: video.final", "event: usage.finalized", "event: done", "/v1/artifacts/"} {
+		if !strings.Contains(body, event) {
+			t.Fatalf("missing %q in %s", event, body)
+		}
+	}
+	usage, err := fixture.control.UsageReport(context.Background(), 10)
+	if err != nil || len(usage.Recent) != 1 || usage.Recent[0].UsageDimensions[controlplane.UsageDimensionOutputVideoMilliseconds].Quantity != 1500 {
+		t.Fatalf("usage=%+v err=%v", usage, err)
+	}
+}
+
 func TestGatewayImageRequiredPreviewFailsClosedBeforeDispatch(t *testing.T) {
 	adapter := successfulDirectImageAdapter([]byte("unused"))
 	fixture := newDirectImageHTTPFixture(t, adapter, 1, 2, true)
 	response := performImageGeneration(fixture.handler, fixture.key, "image-preview-idem", `{"model":"public-image","prompt":"synthetic","response_mode":"stream","preview_mode":"required","delivery_mode":"artifact"}`)
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "unsupported_capability") || adapter.dispatched() != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", response.Code, adapter.dispatched(), response.Body.String())
+	}
+}
+
+func TestGatewayImageAsyncCapabilityRejectionPersistsTrace(t *testing.T) {
+	adapter := successfulDirectImageAdapter([]byte("unused"))
+	fixture := newDirectImageHTTPFixtureWithAdmission(t, adapter, 1, 2, true, 0, nil)
+	response := performImageGeneration(fixture.handler, fixture.key, "image-async-unavailable", `{"model":"public-image","prompt":"synthetic","response_mode":"async","delivery_mode":"artifact"}`)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "unsupported_capability") || adapter.selected() != 0 || adapter.dispatched() != 0 {
+		t.Fatalf("status=%d select=%d dispatch=%d body=%s", response.Code, adapter.selected(), adapter.dispatched(), response.Body.String())
+	}
+	traces, err := fixture.control.ListGatewayTraces(context.Background(), 10)
+	if err != nil || len(traces) != 1 || traces[0].RouteReason != controlplane.DurableAIJobCapabilityRuntimeUnavailable || traces[0].RequestFingerprint == "" {
+		t.Fatalf("traces=%+v err=%v", traces, err)
+	}
+	jobs, err := fixture.control.ListAIJobsAdmin(context.Background(), controlplane.AIJobQuery{Limit: 10})
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("jobs=%+v err=%v", jobs, err)
 	}
 }
 

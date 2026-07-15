@@ -208,6 +208,9 @@ func (s *Service) BindAIAttemptProviderTask(ctx context.Context, attemptID strin
 		if attempt.ProviderTaskID != reference.ProviderTaskID || attempt.ProviderRequestID != reference.ProviderRequestID {
 			return attempt, false, ErrAIAttemptDispatchConflict
 		}
+		if providerTaskStatusStale(attempt.ProviderTaskStatus, reference.Status) {
+			return attempt, false, nil
+		}
 		if attempt.DispatchState != AIAttemptDispatchUnknown {
 			return attempt, false, nil
 		}
@@ -278,6 +281,9 @@ func (s *Service) RecordAIAttemptReconciliation(ctx context.Context, attemptID s
 	now := s.nowUTC()
 	if reconcileAfter.IsZero() {
 		reconcileAfter = now
+	}
+	if providerTaskStatusStale(attempt.ProviderTaskStatus, providerStatus) {
+		return attempt, false, nil
 	}
 	requested := attempt
 	requested.ProviderTaskStatus = strings.TrimSpace(providerStatus)

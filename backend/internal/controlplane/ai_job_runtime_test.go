@@ -112,6 +112,68 @@ func TestDurableAIJobRuntimeRejectsIncompleteConfiguration(t *testing.T) {
 	}
 }
 
+func TestDurableAIJobRuntimeExplainsAdapterCapabilityExclusions(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(NewMemoryRepository(), "/v1", "runtime-capability-secret")
+	setupDurableWorkerRoutes(t, service)
+	queue, err := NewMemoryAIJobDeliveryQueue(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &runtimeSelectingAdapter{
+		adapterID: "com.asterrouter.test.rejecting-adapter", selectionReason: DurableAIJobCapabilityModalityUnsupported,
+		durableAIJobAdapterStub: &durableAIJobAdapterStub{},
+	}
+	runtime, err := NewDurableAIJobRuntime(service, queue, adapter, DurableAIJobRuntimeConfig{
+		SchedulerInterval: time.Second, DeliveryWait: time.Second, ReconcileInterval: time.Second, RebuildInterval: time.Second, BatchSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(runCtx, func(string, error) {}) }()
+	waitForCondition(t, time.Second, func() bool { return runtime.Status().Running })
+
+	evaluation, err := runtime.EvaluateDurableAIJobSupport(ctx, gatewaycore.CanonicalAuthContext{ArtifactPolicy: GatewayArtifactPolicyTemporary}, gatewaycore.CanonicalRequest{
+		Protocol: gatewaycore.ProtocolAsterJobs, Operation: GatewayOperationImageGeneration,
+		Modality: GatewayModalityImage, Lane: gatewaycore.LaneDurable, Model: "worker-image",
+	})
+	if err != nil || evaluation.Supported || !evaluation.HasRoutes || evaluation.RejectionReason != DurableAIJobCapabilityAllAdaptersExcluded || len(evaluation.Exclusions) != 2 {
+		t.Fatalf("evaluation=%+v err=%v", evaluation, err)
+	}
+	for _, exclusion := range evaluation.Exclusions {
+		if exclusion.RouteID == "" || exclusion.ProviderAccountID == "" || exclusion.Reason != DurableAIJobCapabilityModalityUnsupported {
+			t.Fatalf("exclusion=%+v", exclusion)
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not stop after capability evaluation")
+	}
+	stopped, err := runtime.EvaluateDurableAIJobSupport(ctx, gatewaycore.CanonicalAuthContext{}, gatewaycore.CanonicalRequest{})
+	if err != nil || stopped.RejectionReason != DurableAIJobCapabilityRuntimeUnavailable || len(stopped.Exclusions) != 1 {
+		t.Fatalf("stopped evaluation=%+v err=%v", stopped, err)
+	}
+}
+
+func TestDurableAIJobAdapterEvidenceRejectsUntrustedReasonText(t *testing.T) {
+	adapter := &runtimeSelectingAdapter{
+		adapterID: "unused", selectionReason: "provider secret\nleak",
+		durableAIJobAdapterStub: &durableAIJobAdapterStub{},
+	}
+	_, supported, reason, err := selectDurableAIJobAdapterWithEvidence(context.Background(), adapter, GatewayProvider{}, AIJob{})
+	if err != nil || supported || reason != DurableAIJobCapabilityAdapterUnsupported {
+		t.Fatalf("supported=%t reason=%q err=%v", supported, reason, err)
+	}
+}
+
 func TestDurableAIJobRuntimeBacksOffWhenDeliveryQueueIsUnavailable(t *testing.T) {
 	service := NewService(NewMemoryRepository(), "/v1")
 	queue := &unavailableAIJobDeliveryQueue{received: make(chan struct{})}
@@ -148,11 +210,22 @@ func TestDurableAIJobRuntimeBacksOffWhenDeliveryQueueIsUnavailable(t *testing.T)
 
 type runtimeSelectingAdapter struct {
 	*durableAIJobAdapterStub
-	adapterID string
+	adapterID       string
+	selectionReason string
 }
 
 func (adapter *runtimeSelectingAdapter) SelectDurableAIJobAdapter(context.Context, GatewayProvider, AIJob) (string, bool, error) {
+	if adapter.selectionReason != "" {
+		return "", false, nil
+	}
 	return adapter.adapterID, true, nil
+}
+
+func (adapter *runtimeSelectingAdapter) ExplainDurableAIJobAdapterSelection(context.Context, GatewayProvider, AIJob) (string, bool, string, error) {
+	if adapter.selectionReason != "" {
+		return "", false, adapter.selectionReason, nil
+	}
+	return adapter.adapterID, true, "", nil
 }
 
 func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool) {

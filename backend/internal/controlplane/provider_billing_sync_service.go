@@ -22,7 +22,11 @@ var (
 )
 
 func (s *Service) ListProviderBillingSources(ctx context.Context) ([]ProviderBillingSource, error) {
-	return s.repo.ListProviderBillingSources(ctx)
+	sources, err := s.repo.ListProviderBillingSources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichProviderBillingSources(ctx, sources)
 }
 
 func (s *Service) UpsertProviderBillingSource(ctx context.Context, actor string, request ProviderBillingSourceRequest) (ProviderBillingSource, error) {
@@ -108,6 +112,10 @@ func (s *Service) UpsertProviderBillingSource(ctx context.Context, actor string,
 	if !ok {
 		return ProviderBillingSource{}, errors.New("provider billing source was not persisted")
 	}
+	stored, err = s.enrichProviderBillingSource(ctx, stored)
+	if err != nil {
+		return ProviderBillingSource{}, err
+	}
 	if err := s.audit(ctx, actor, action, "provider_billing_source", stored.ID, fmt.Sprintf("Provider billing source %s for account %s", action, account.ID)); err != nil {
 		return ProviderBillingSource{}, err
 	}
@@ -135,6 +143,10 @@ func (s *Service) ProviderBillingSourceEvidence(ctx context.Context, sourceID st
 		return ProviderBillingSourceEvidence{}, err
 	}
 	aggregates, err := s.repo.ListProviderUsageAggregateSnapshots(ctx, source.ID, limit)
+	if err != nil {
+		return ProviderBillingSourceEvidence{}, err
+	}
+	source, err = s.enrichProviderBillingSource(ctx, source)
 	if err != nil {
 		return ProviderBillingSourceEvidence{}, err
 	}
@@ -268,6 +280,10 @@ func (s *Service) syncClaimedProviderBillingSource(ctx context.Context, actor st
 	}
 	if !found {
 		return ProviderBillingSyncResult{}, errors.New("provider billing source not found after sync")
+	}
+	stored, err = s.enrichProviderBillingSource(ctx, stored)
+	if err != nil {
+		return ProviderBillingSyncResult{}, err
 	}
 	result = ProviderBillingSyncResult{Source: stored, Run: run, Balance: commit.Balance, Aggregates: commit.Aggregates}
 	if err := s.audit(ctx, actor, action, "provider_billing_source", stored.ID, fmt.Sprintf("Provider billing sync %s with code %s", run.Status, run.ErrorCode)); err != nil {

@@ -168,9 +168,9 @@ func TestCanonicalizeDurableJobCapturesMediaUsageEstimate(t *testing.T) {
 		audioMS int64
 	}{
 		{name: "images", body: `{"model":"image-model","operation":"image_generation","modality":"image","input":{"prompt":"synthetic","n":3,"count":3}}`, images: 3},
-		{name: "video milliseconds", body: `{"model":"video-model","operation":"video_generation","modality":"video","input":{"prompt":"synthetic","duration_ms":1250}}`, videoMS: 1250},
-		{name: "video seconds", body: `{"model":"video-model","operation":"video_generation","modality":"video","input":{"prompt":"synthetic","duration_seconds":1.25}}`, videoMS: 1250},
-		{name: "audio", body: `{"model":"audio-model","operation":"audio_generation","modality":"audio","input":{"prompt":"synthetic","duration_seconds":2}}`, audioMS: 2000},
+		{name: "video milliseconds", body: `{"model":"video-model","operation":"video_generation","modality":"video","input":{"prompt":"synthetic","duration_ms":1250}}`, images: 1, videoMS: 1250},
+		{name: "video seconds", body: `{"model":"video-model","operation":"video_generation","modality":"video","input":{"prompt":"synthetic","duration_seconds":1.25}}`, images: 1, videoMS: 1250},
+		{name: "audio", body: `{"model":"audio-model","operation":"audio_generation","modality":"audio","input":{"prompt":"synthetic","duration_seconds":2}}`, images: 1, audioMS: 2000},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -226,31 +226,55 @@ func TestCanonicalizeOpenAIMediaJobUsesDurableContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CanonicalizeOpenAIMediaJob(): %v", err)
 	}
-	if request.Protocol != ProtocolAsterJobs || request.Lane != LaneDurable || request.Modality != "video" || request.Operation != "video_generation" || request.VideoDurationMS != 1500 || request.IdempotencyKey != "video-idem-1" {
+	if request.Protocol != ProtocolOpenAIMedia || request.Lane != LaneDurable || request.Modality != "video" || request.Operation != "video_generation" || request.VideoDurationMS != 1500 || request.IdempotencyKey != "video-idem-1" {
 		t.Fatalf("request=%+v", request)
 	}
-	if !strings.Contains(string(request.Payload), `"input":{"duration_seconds":1.5,"prompt":"synthetic"}`) {
+	if request.ResponseMode != "async" || request.DeliveryMode != "artifact" || request.Stream {
+		t.Fatalf("async interaction contract=%+v", request)
+	}
+	if !strings.Contains(string(request.Payload), `"input":{"duration_seconds":1.5,"prompt":"synthetic"}`) || !strings.Contains(string(request.Payload), `"response_mode":"async"`) {
 		t.Fatalf("canonical payload=%s", request.Payload)
 	}
 }
 
-func TestCanonicalizeOpenAIMediaJobRejectsStreamingAndWrongShape(t *testing.T) {
+func TestCanonicalizeOpenAIMediaJobSupportsExplicitInteractionModes(t *testing.T) {
 	header := http.Header{"Idempotency-Key": []string{"media-idem"}}
 	tests := []struct {
-		body      string
-		modality  string
-		operation string
+		name         string
+		body         string
+		wantLane     Lane
+		wantMode     string
+		wantDelivery string
+		wantStream   bool
 	}{
-		{body: `{"model":"video-model","prompt":"synthetic","stream":true}`, modality: "video", operation: "video_generation"},
-		{body: `{"model":"video-model","prompt":"synthetic","stream":"false"}`, modality: "video", operation: "video_generation"},
-		{body: `{"model":"video-model","prompt":"synthetic","response_mode":"blocking"}`, modality: "video", operation: "video_generation"},
-		{body: `{"model":"video-model"}`, modality: "video", operation: "video_generation"},
-		{body: `{"model":"video-model","prompt":"synthetic"}`, modality: "image", operation: "video_generation"},
+		{name: "async default", body: `{"model":"video-model","prompt":"synthetic","duration_seconds":1}`, wantLane: LaneDurable, wantMode: "async", wantDelivery: "artifact"},
+		{name: "blocking", body: `{"model":"video-model","prompt":"synthetic","duration_seconds":1,"response_mode":"blocking"}`, wantLane: LaneDirect, wantMode: "blocking", wantDelivery: "inline"},
+		{name: "stream", body: `{"model":"video-model","prompt":"synthetic","duration_seconds":1,"response_mode":"stream","stream":true,"delivery_mode":"artifact"}`, wantLane: LaneDirect, wantMode: "stream", wantDelivery: "artifact", wantStream: true},
 	}
 	for _, test := range tests {
-		if _, err := CanonicalizeOpenAIMediaJob([]byte(test.body), header, test.modality, test.operation); !errors.Is(err, ErrInvalidCanonicalRequest) {
-			t.Fatalf("body=%s error=%v", test.body, err)
+		t.Run(test.name, func(t *testing.T) {
+			request, err := CanonicalizeOpenAIMediaJob([]byte(test.body), header, "video", "video_generation")
+			if err != nil {
+				t.Fatalf("error=%v", err)
+			}
+			if request.Protocol != ProtocolOpenAIMedia || request.Lane != test.wantLane || request.ResponseMode != test.wantMode || request.DeliveryMode != test.wantDelivery || request.Stream != test.wantStream {
+				t.Fatalf("request=%+v", request)
+			}
+		})
+	}
+	for _, test := range []string{
+		`{"model":"video-model","prompt":"synthetic","stream":"false"}`,
+		`{"model":"video-model","prompt":"synthetic","response_mode":"blocking","stream":true}`,
+		`{"model":"video-model","prompt":"synthetic","response_mode":"async","stream":true}`,
+		`{"model":"video-model","prompt":"synthetic","response_mode":"async","delivery_mode":"inline"}`,
+		`{"model":"video-model"}`,
+	} {
+		if _, err := CanonicalizeOpenAIMediaJob([]byte(test), header, "video", "video_generation"); !errors.Is(err, ErrInvalidCanonicalRequest) {
+			t.Fatalf("body=%s error=%v", test, err)
 		}
+	}
+	if _, err := CanonicalizeOpenAIMediaJob([]byte(`{"model":"video-model","prompt":"synthetic"}`), header, "image", "video_generation"); !errors.Is(err, ErrInvalidCanonicalRequest) {
+		t.Fatalf("wrong modality error=%v", err)
 	}
 }
 

@@ -162,6 +162,15 @@ func (s *Service) ActOnEffectivePricingDecision(ctx context.Context, actor, id s
 	expectedStatus := decision.Status
 	expectedUpdatedAt := decision.UpdatedAt
 	action := strings.TrimSpace(request.Action)
+	if oneOf(action, "approve_canary", "activate") {
+		healthByAccount, healthErr := s.providerBillingRoutingHealthByAccount(ctx, s.nowUTC())
+		if healthErr != nil {
+			return EffectivePricingDecision{}, fmt.Errorf("provider billing health is unavailable: %w", healthErr)
+		}
+		if health, found := healthByAccount[decision.CandidateProviderAccountID]; found && !health.EconomicSwitchEligible {
+			return EffectivePricingDecision{}, fmt.Errorf("candidate provider billing health does not allow economic switching: %s", strings.Join(health.ReasonCodes, ","))
+		}
+	}
 	switch action {
 	case "approve_canary":
 		if decision.Status != EffectivePricingDecisionRecommended {
@@ -224,6 +233,10 @@ func (s *Service) OrderGatewayCandidatesByEffectivePricing(ctx context.Context, 
 	if err != nil {
 		return candidates
 	}
+	healthByAccount, err := s.providerBillingRoutingHealthByAccount(ctx, s.nowUTC())
+	if err != nil {
+		return candidates
+	}
 	for _, decision := range decisions {
 		if decision.Model != model || decision.Protocol != protocol || !oneOf(decision.Status, EffectivePricingDecisionCanary, EffectivePricingDecisionActive) {
 			continue
@@ -233,6 +246,9 @@ func (s *Service) OrderGatewayCandidatesByEffectivePricing(ctx context.Context, 
 		}
 		for index, candidate := range candidates {
 			if candidate.AccountID != decision.CandidateProviderAccountID {
+				continue
+			}
+			if health, found := healthByAccount[candidate.AccountID]; found && !health.EconomicSwitchEligible {
 				continue
 			}
 			out := append([]GatewayProvider(nil), candidates...)

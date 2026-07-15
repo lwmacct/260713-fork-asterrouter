@@ -75,7 +75,7 @@ func (s *Service) BeginDurableAIJob(ctx context.Context, auth gatewaycore.Canoni
 }
 
 func durableAIJobProtocolSupported(protocol gatewaycore.Protocol) bool {
-	return protocol == gatewaycore.ProtocolAsterJobs || protocol == gatewaycore.ProtocolOpenAIImages
+	return protocol == gatewaycore.ProtocolAsterJobs || protocol == gatewaycore.ProtocolOpenAIImages || protocol == gatewaycore.ProtocolOpenAIMedia
 }
 
 func (s *Service) SetAIJobReadyIndex(index AIJobReadyIndex) {

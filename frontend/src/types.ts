@@ -727,6 +727,17 @@ export interface ProviderBillingSourceInspection {
   observed_at: string
 }
 
+export interface ProviderBillingRoutingHealth {
+  source_status: string
+  status: string
+  hard_blocked: boolean
+  economic_switch_eligible: boolean
+  reason_codes: string[]
+  evaluated_at: string
+  evidence_observed_at?: string
+  evidence_stale_after_seconds: number
+}
+
 export interface ProviderBillingSource {
   id: string
   provider_id: string
@@ -751,6 +762,7 @@ export interface ProviderBillingSource {
   updated_by: string
   created_at: string
   updated_at: string
+  routing_health?: ProviderBillingRoutingHealth
 }
 
 export interface ProviderBillingSourceRequest {
@@ -1024,6 +1036,7 @@ export interface EffectivePricingReportRow {
   pool_affinity_grade: string
   cost_confidence: string
   price_id: string
+  provider_billing_routing_health?: ProviderBillingRoutingHealth
   recommendation: string
   reason_codes: string[]
 }

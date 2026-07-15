@@ -12,6 +12,7 @@ import (
 
 	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
+	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 )
 
 func TestGatewayDurableJobLifecycleAndIdempotency(t *testing.T) {
@@ -124,6 +125,42 @@ func TestGatewayMediaGenerationRoutesUseDurableJobContract(t *testing.T) {
 	}
 }
 
+func TestGatewayMediaDirectModesFailClosedWithoutCreatingJobs(t *testing.T) {
+	handler, control := newTestRuntime(t, config.Config{})
+	if _, err := control.CreateGatewayModel(context.Background(), "direct-video", controlplane.GatewayModelRequest{
+		ModelID: "direct-video", Name: "Direct video", Modality: controlplane.GatewayModalityVideo, Status: controlplane.GatewayModelStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "direct video", ModelAllowlist: []string{"direct-video"},
+		Scopes:            []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeJobsRead},
+		AllowedModalities: []string{controlplane.GatewayModalityVideo}, AllowedOperations: []string{controlplane.GatewayOperationVideoGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDirectOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "blocking", body: `{"model":"direct-video","prompt":"synthetic","duration_seconds":1,"response_mode":"blocking"}`},
+		{name: "stream", body: `{"model":"direct-video","prompt":"synthetic","duration_seconds":1,"response_mode":"stream"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := performGatewayJobRequest(handler, http.MethodPost, "/v1/videos/generations", key.Key, "direct-"+test.name, test.body)
+			if response.Code != http.StatusServiceUnavailable || (!strings.Contains(response.Body.String(), "unsupported_capability") && !strings.Contains(response.Body.String(), "route_unavailable")) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			jobs, listErr := control.ListAIJobsAdmin(context.Background(), controlplane.AIJobQuery{Limit: 10})
+			if listErr != nil || len(jobs) != 0 {
+				t.Fatalf("direct mode created jobs=%+v err=%v", jobs, listErr)
+			}
+		})
+	}
+}
+
 func TestGatewayMediaGenerationRouteFailsClosedWithoutAdapter(t *testing.T) {
 	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{}, nil)
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
@@ -140,12 +177,16 @@ func TestGatewayMediaGenerationRouteFailsClosedWithoutAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := performGatewayJobRequest(handler, http.MethodPost, "/v1/videos/generations", key.Key, "unavailable-video-idem", `{"model":"unavailable-video","prompt":"synthetic"}`)
-	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "unsupported_capability") {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	jobs, err := control.ClaimReadyAIJobs(context.Background(), "media-fail-closed", time.Minute, 1)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("jobs=%+v err=%v", jobs, err)
+	}
+	traces, err := control.ListGatewayTraces(context.Background(), 10)
+	if err != nil || len(traces) != 1 || traces[0].RouteReason != controlplane.DurableAIJobCapabilityRuntimeUnavailable || !strings.Contains(traces[0].RouteAttempts, controlplane.DurableAIJobCapabilityRuntimeUnavailable) {
+		t.Fatalf("traces=%+v err=%v", traces, err)
 	}
 }
 
@@ -196,6 +237,53 @@ func TestGatewayDurableJobFailsClosedWithoutExecutableAdapter(t *testing.T) {
 	jobs, err := control.ClaimReadyAIJobs(context.Background(), "fail-closed-test", time.Minute, 1)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("jobs=%+v err=%v", jobs, err)
+	}
+}
+
+func TestGatewayDurableJobCapabilityRejectionPersistsInternalTraceEvidence(t *testing.T) {
+	evaluation := controlplane.DurableAIJobSupportEvaluation{
+		GatewayModelID: "gateway-model-internal", RouteGroup: "default", HasRoutes: true,
+		RejectionReason: controlplane.DurableAIJobCapabilityAllAdaptersExcluded,
+		Exclusions: []controlplane.GatewayCandidateExclusion{{
+			RouteID: "route-internal", ProviderID: "provider-internal", ProviderAccountID: "account-internal",
+			UpstreamModel: "upstream-internal", Reason: controlplane.DurableAIJobCapabilityModalityUnsupported,
+		}},
+	}
+	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{}, rejectingDurableAIJobAdmission{evaluation: evaluation})
+	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
+		ModelID: "trace-video-job", Name: "Trace video job", Modality: controlplane.GatewayModalityVideo, Status: controlplane.GatewayModelStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "trace video owner", ModelAllowlist: []string{"trace-video-job"}, Scopes: []string{controlplane.GatewayScopeInvoke},
+		AllowedModalities: []string{controlplane.GatewayModalityVideo}, AllowedOperations: []string{controlplane.GatewayOperationVideoGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDurableOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs", key.Key, "trace-capability-idem", `{"model":"trace-video-job","operation":"video_generation","modality":"video","input":{"prompt":"synthetic"}}`)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "unsupported_capability") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, internal := range []string{"provider-internal", "account-internal", "route-internal", controlplane.DurableAIJobCapabilityModalityUnsupported} {
+		if strings.Contains(response.Body.String(), internal) {
+			t.Fatalf("public response leaked %q: %s", internal, response.Body.String())
+		}
+	}
+	traces, err := control.ListGatewayTraces(context.Background(), 10)
+	if err != nil || len(traces) != 1 {
+		t.Fatalf("traces=%+v err=%v", traces, err)
+	}
+	trace := traces[0]
+	if trace.APIKeyID != key.Record.ID || trace.ErrorType != "unsupported_capability" || trace.RouteReason != controlplane.DurableAIJobCapabilityAllAdaptersExcluded || trace.RequestFingerprint == "" || trace.GatewayModelID != evaluation.GatewayModelID {
+		t.Fatalf("trace=%+v", trace)
+	}
+	for _, evidence := range []string{"provider-internal", "account-internal", "route-internal", controlplane.DurableAIJobCapabilityModalityUnsupported} {
+		if !strings.Contains(trace.RouteAttempts, evidence) {
+			t.Fatalf("trace evidence missing %q: %s", evidence, trace.RouteAttempts)
+		}
 	}
 }
 
@@ -283,4 +371,17 @@ func performGatewayJobRequest(handler http.Handler, method, target, key, idempot
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+type rejectingDurableAIJobAdmission struct {
+	evaluation controlplane.DurableAIJobSupportEvaluation
+	err        error
+}
+
+func (admission rejectingDurableAIJobAdmission) SupportsDurableAIJob(context.Context, gatewaycore.CanonicalAuthContext, gatewaycore.CanonicalRequest) (bool, error) {
+	return admission.evaluation.Supported, admission.err
+}
+
+func (admission rejectingDurableAIJobAdmission) EvaluateDurableAIJobSupport(context.Context, gatewaycore.CanonicalAuthContext, gatewaycore.CanonicalRequest) (controlplane.DurableAIJobSupportEvaluation, error) {
+	return admission.evaluation, admission.err
 }

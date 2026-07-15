@@ -221,9 +221,19 @@ func (s *Service) reconcileAIAttempt(ctx context.Context, attempt AIAttempt, ada
 		return err
 	}
 	capacityErr := s.restoreProviderCapacityForAttempt(ctx, attempt)
-	executor := durableAIJobReconcileExecutor{adapter: adapter, provider: provider, job: job, attempt: attempt}
+	var executor ProviderTaskReconciler = durableAIJobReconcileExecutor{adapter: adapter, provider: provider, job: job, attempt: attempt}
+	if job.Status == AIJobStatusCanceling {
+		if canceler, ok := adapter.(DurableAIJobAdapterCanceler); ok {
+			if supported, selectErr := selectDurableAIJobCancellation(ctx, adapter, provider, job, attempt); selectErr == nil && supported {
+				executor = durableAIJobCancelExecutor{adapter: canceler, provider: provider, job: job, attempt: attempt}
+			}
+		}
+	}
 	updatedAttempt, dispatchResult, reconcileErr := s.ReconcileAIAttemptDispatch(ctx, attempt.ID, executor)
 	reconcileErr = errors.Join(reconcileErr, capacityErr, s.syncProviderCapacityForAttempt(ctx, updatedAttempt))
+	if providerTaskStatusStale(updatedAttempt.ProviderTaskStatus, dispatchResult.Task.Status) {
+		return reconcileErr
+	}
 	if reconcileErr != nil && updatedAttempt.DispatchState != AIAttemptDispatchAccepted && updatedAttempt.DispatchState != AIAttemptDispatchProvenNotCreated {
 		billingErr := s.DisputeBillingHold(ctx, operation.ID, "provider_status_unknown")
 		if job.Status != AIJobStatusUnknown && oneOf(job.Status, AIJobStatusDispatching, AIJobStatusRunning) {
@@ -475,22 +485,8 @@ func (s *Service) providerForAttempt(ctx context.Context, requestedModel string,
 }
 
 func selectDurableAIJobAdapter(ctx context.Context, adapter DurableAIJobAdapter, provider GatewayProvider, job AIJob) (string, bool, error) {
-	if adapter == nil {
-		return "", false, ErrDurableAIJobAdapterRequired
-	}
-	selector, ok := adapter.(DurableAIJobAdapterSelector)
-	if !ok {
-		return "", true, nil
-	}
-	adapterID, supported, err := selector.SelectDurableAIJobAdapter(ctx, provider, job)
-	if err != nil || !supported {
-		return "", supported, err
-	}
-	adapterID = strings.TrimSpace(adapterID)
-	if adapterID == "" {
-		return "", false, errors.New("durable ai job adapter selector returned an empty adapter id")
-	}
-	return adapterID, true, nil
+	adapterID, supported, _, err := selectDurableAIJobAdapterWithEvidence(ctx, adapter, provider, job)
+	return adapterID, supported, err
 }
 
 func durableProviderCandidateKey(provider GatewayProvider) string {

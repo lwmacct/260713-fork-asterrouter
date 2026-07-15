@@ -59,6 +59,50 @@ func TestPlanCanonicalGatewayRequestRejectsCapabilityMismatch(t *testing.T) {
 	}
 }
 
+func TestPlanCanonicalGatewayRequestSupportsAsterJobsByModality(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryRepository(), "/v1")
+	model, err := svc.CreateGatewayModel(ctx, "tester", GatewayModelRequest{
+		ModelID: "video-job-model", Name: "Video job", Modality: GatewayModalityVideo, Status: GatewayModelStatusActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := gatewaycore.CanonicalAuthContext{CredentialID: "job-planner-key"}
+	plan, err := svc.PlanCanonicalGatewayRequest(ctx, auth, gatewaycore.CanonicalRequest{
+		Protocol: gatewaycore.ProtocolAsterJobs, Operation: GatewayOperationVideoGeneration,
+		Modality: GatewayModalityVideo, Lane: gatewaycore.LaneDurable, Model: "video-job-model",
+	})
+	if err != nil || plan.GatewayModelID != model.ID || plan.RejectionReason != "" {
+		t.Fatalf("matching plan=%+v err=%v", plan, err)
+	}
+	mismatch, err := svc.PlanCanonicalGatewayRequest(ctx, auth, gatewaycore.CanonicalRequest{
+		Protocol: gatewaycore.ProtocolAsterJobs, Operation: GatewayOperationAudioGeneration,
+		Modality: GatewayModalityAudio, Lane: gatewaycore.LaneDurable, Model: "video-job-model",
+	})
+	if err != nil || mismatch.RejectionReason != "capability_mismatch" || len(mismatch.Candidates) != 0 {
+		t.Fatalf("mismatch plan=%+v err=%v", mismatch, err)
+	}
+}
+
+func TestPlanCanonicalGatewayRequestSupportsOpenAIMediaByModality(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryRepository(), "/v1")
+	model, err := svc.CreateGatewayModel(ctx, "tester", GatewayModelRequest{
+		ModelID: "openai-video-model", Name: "OpenAI video", Modality: GatewayModalityVideo, Status: GatewayModelStatusActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := svc.PlanCanonicalGatewayRequest(ctx, gatewaycore.CanonicalAuthContext{CredentialID: "media-key"}, gatewaycore.CanonicalRequest{
+		Protocol: gatewaycore.ProtocolOpenAIMedia, Operation: GatewayOperationVideoGeneration,
+		Modality: GatewayModalityVideo, Lane: gatewaycore.LaneDurable, Model: "openai-video-model",
+	})
+	if err != nil || plan.GatewayModelID != model.ID || plan.RejectionReason != "" {
+		t.Fatalf("matching plan=%+v err=%v", plan, err)
+	}
+}
+
 func TestCanonicalAuthContextKeepsExternalSubjectsCredentialScoped(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), "/v1")
 	integration := ExternalAuthIntegration{ID: "integration-1", Protocol: ExternalAuthIntegrationProtocolHMAC}

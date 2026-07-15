@@ -367,6 +367,7 @@ func (s *Service) rankedModelRouteCandidates(ctx context.Context, resolved Resol
 	}
 	providersByID := providerByIDMap(providers)
 	now := time.Now().UTC()
+	billingHealthByAccount, _ := s.providerBillingRoutingHealthByAccount(ctx, now)
 	candidates := make([]rankedModelRouteCandidate, 0, len(matchingRoutes))
 	for _, route := range matchingRoutes {
 		if route.Status != ModelRouteStatusActive {
@@ -374,6 +375,9 @@ func (s *Service) rankedModelRouteCandidates(ctx context.Context, resolved Resol
 		}
 		account, ok := accountsByID[route.ProviderAccountID]
 		if !ok || !accountEligibleForRouting(account, route.UpstreamModel, now) {
+			continue
+		}
+		if health, found := billingHealthByAccount[account.ID]; found && health.HardBlocked {
 			continue
 		}
 		provider, ok := providersByID[account.ProviderID]

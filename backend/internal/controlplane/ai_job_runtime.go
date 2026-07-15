@@ -100,27 +100,8 @@ func normalizeDurableAIJobRuntimeConfig(config DurableAIJobRuntimeConfig) Durabl
 // persisted. Authorization and policy checks happen first; this method then
 // proves that at least one current route has a matching executable adapter.
 func (runtime *DurableAIJobRuntime) SupportsDurableAIJob(ctx context.Context, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (bool, error) {
-	if runtime == nil || runtime.service == nil || runtime.adapter == nil || !runtime.isRunning() {
-		return false, nil
-	}
-	candidates, _, err := runtime.service.GatewayProviderCandidatesForModel(ctx, request.Model)
-	if err != nil {
-		return false, err
-	}
-	job := AIJob{
-		Protocol: string(request.Protocol), Operation: request.Operation, Modality: request.Modality, Model: request.Model,
-		ArtifactPolicy: artifactPolicySnapshot(auth.ArtifactPolicy), ArtifactSinkID: artifactSinkSnapshot(auth.ArtifactPolicy, auth.ArtifactSinkID),
-	}
-	for _, provider := range candidates {
-		_, supported, selectErr := selectDurableAIJobAdapter(ctx, runtime.adapter, provider, job)
-		if selectErr != nil {
-			return false, selectErr
-		}
-		if supported {
-			return true, nil
-		}
-	}
-	return false, nil
+	evaluation, err := runtime.EvaluateDurableAIJobSupport(ctx, auth, request)
+	return evaluation.Supported, err
 }
 
 func (runtime *DurableAIJobRuntime) isRunning() bool {

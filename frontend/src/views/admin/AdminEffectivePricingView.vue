@@ -179,7 +179,7 @@ function formatPriceRatio(value: number, uncached: number, available: boolean): 
 function formatDate(value?: string): string { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '-' }
 function statusClass(value: string): string {
   if (['exact', 'derived', 'matched', 'preferred', 'active', 'billed_verified', 'succeeded', 'verified', 'healthy', 'schema_match'].includes(value)) return 'status-success'
-  if (['degraded', 'fragmented', 'rolled_back', 'failed', 'lease_expired', 'reduce_weight'].includes(value)) return 'status-danger'
+  if (['blocked', 'degraded', 'fragmented', 'rolled_back', 'failed', 'lease_expired', 'reduce_weight'].includes(value)) return 'status-danger'
   if (['estimated', 'pending', 'canary', 'recommended', 'observe', 'observe_only', 'ambiguous', 'inconclusive'].includes(value)) return 'status-warning'
   return ''
 }
@@ -200,6 +200,30 @@ function billingWarningLabel(code: string): string {
     account_key_reported_invalid: t('effectivePricing.accountKeyInvalidWarning')
   }
   return labels[code] || code
+}
+function billingHealthReasonLabel(code: string): string {
+  const labels: Record<string, string> = {
+    provider_billing_key_invalid: t('effectivePricing.routingHealthReasons.keyInvalid'),
+    provider_billing_auth_rejected: t('effectivePricing.routingHealthReasons.authRejected'),
+    provider_billing_key_quota_exhausted: t('effectivePricing.routingHealthReasons.keyQuotaExhausted'),
+    provider_billing_subscription_exhausted: t('effectivePricing.routingHealthReasons.subscriptionExhausted'),
+    provider_billing_sync_unhealthy: t('effectivePricing.routingHealthReasons.syncUnhealthy'),
+    provider_billing_evidence_stale: t('effectivePricing.routingHealthReasons.evidenceStale'),
+    provider_billing_evidence_missing: t('effectivePricing.routingHealthReasons.evidenceMissing'),
+    provider_billing_source_observe_only: t('effectivePricing.routingHealthReasons.sourceObserveOnly'),
+    provider_billing_source_disabled: t('effectivePricing.routingHealthReasons.sourceDisabled')
+  }
+  return labels[code] || code
+}
+function billingHealthStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    healthy: t('effectivePricing.routingHealthStatus.healthy'),
+    degraded: t('effectivePricing.routingHealthStatus.degraded'),
+    blocked: t('effectivePricing.routingHealthStatus.blocked'),
+    observe_only: t('effectivePricing.routingHealthStatus.observeOnly'),
+    disabled: t('effectivePricing.routingHealthStatus.disabled')
+  }
+  return labels[status] || status || '-'
 }
 function balanceKindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -588,6 +612,13 @@ onMounted(load)
           </div>
           <div v-if="billingSourceEvidence" class="billing-source-evidence">
             <div class="source-state-summary"><span><small>{{ t('effectivePricing.sourceStatus') }}</small><strong class="pill" :class="statusClass(billingSourceEvidence.source.status)">{{ billingSourceEvidence.source.status }}</strong></span><span><small>{{ t('effectivePricing.lastSuccess') }}</small><strong>{{ formatDate(billingSourceEvidence.source.last_success_at) }}</strong></span><span><small>{{ t('effectivePricing.nextSync') }}</small><strong>{{ formatDate(billingSourceEvidence.source.next_sync_at) }}</strong></span><span><small>{{ t('effectivePricing.consecutiveFailures') }}</small><strong>{{ billingSourceEvidence.source.consecutive_failures }}</strong></span></div>
+            <div v-if="billingSourceEvidence.source.routing_health" class="routing-health-summary">
+              <span><small>{{ t('effectivePricing.routingHealth') }}</small><strong class="pill" :class="statusClass(billingSourceEvidence.source.routing_health.status)">{{ billingHealthStatusLabel(billingSourceEvidence.source.routing_health.status) }}</strong></span>
+              <span><small>{{ t('effectivePricing.hardBlocked') }}</small><strong>{{ billingSourceEvidence.source.routing_health.hard_blocked ? t('common.yes') : t('common.no') }}</strong></span>
+              <span><small>{{ t('effectivePricing.economicSwitchEligible') }}</small><strong>{{ billingSourceEvidence.source.routing_health.economic_switch_eligible ? t('common.yes') : t('common.no') }}</strong></span>
+              <span><small>{{ t('effectivePricing.evidenceObservedAt') }}</small><strong>{{ formatDate(billingSourceEvidence.source.routing_health.evidence_observed_at) }}</strong></span>
+              <p v-if="billingSourceEvidence.source.routing_health.reason_codes.length">{{ t('effectivePricing.routingReasons') }}: {{ billingSourceEvidence.source.routing_health.reason_codes.map(billingHealthReasonLabel).join(' · ') }}</p>
+            </div>
             <section class="source-history-section"><h3>{{ t('effectivePricing.syncHistory') }}</h3><div class="table-scroll"><table class="data-table source-history-table"><thead><tr><th>{{ t('effectivePricing.sourceStatus') }}</th><th>{{ t('effectivePricing.syncTrigger') }}</th><th>{{ t('effectivePricing.adapter') }}</th><th>{{ t('effectivePricing.errorCode') }}</th><th>{{ t('effectivePricing.startedAt') }}</th><th>{{ t('effectivePricing.finishedAt') }}</th></tr></thead><tbody><tr v-for="run in billingSourceEvidence.runs" :key="run.id"><td :data-label="t('effectivePricing.sourceStatus')"><span class="pill" :class="statusClass(run.status)">{{ run.status }}</span></td><td :data-label="t('effectivePricing.syncTrigger')">{{ run.trigger }}</td><td :data-label="t('effectivePricing.adapter')">{{ run.adapter_id }}</td><td :data-label="t('effectivePricing.errorCode')">{{ run.error_code || '-' }}</td><td :data-label="t('effectivePricing.startedAt')">{{ formatDate(run.started_at) }}</td><td :data-label="t('effectivePricing.finishedAt')">{{ formatDate(run.finished_at) }}</td></tr><tr v-if="!billingSourceEvidence.runs.length"><td colspan="6" class="empty-cell">{{ t('effectivePricing.noSyncHistory') }}</td></tr></tbody></table></div></section>
             <section v-if="billingSourceEvidence.balances.length" class="source-history-section"><h3>{{ t('effectivePricing.balanceHistory') }}</h3><div class="table-scroll"><table class="data-table source-history-table"><thead><tr><th>{{ t('effectivePricing.balanceCapability') }}</th><th>{{ t('usage.cost') }}</th><th>{{ t('effectivePricing.observedAt') }}</th><th>{{ t('effectivePricing.evidenceHash') }}</th></tr></thead><tbody><tr v-for="balance in billingSourceEvidence.balances" :key="balance.id"><td :data-label="t('effectivePricing.balanceCapability')">{{ balanceKindLabel(balance.kind) }}</td><td :data-label="t('usage.cost')"><strong>{{ balance.unlimited ? t('effectivePricing.unlimited') : formatMoneyMicros(balance.amount_micros, balance.currency) }}</strong></td><td :data-label="t('effectivePricing.observedAt')">{{ formatDate(balance.observed_at) }}</td><td :data-label="t('effectivePricing.evidenceHash')"><code>{{ balance.evidence_hash.slice(0, 16) }}</code></td></tr></tbody></table></div></section>
             <section v-if="billingSourceEvidence.aggregates.length" class="source-history-section"><h3>{{ t('effectivePricing.aggregateHistory') }}</h3><div class="table-scroll"><table class="data-table source-aggregate-table"><thead><tr><th>{{ t('effectivePricing.aggregateScope') }}</th><th>{{ t('usage.requests') }}</th><th>{{ t('effectivePricing.cacheReadTokens') }}</th><th>{{ t('effectivePricing.listCost') }}</th><th>{{ t('effectivePricing.actualCost') }}</th><th>{{ t('effectivePricing.observedAt') }}</th></tr></thead><tbody><tr v-for="aggregate in billingSourceEvidence.aggregates" :key="aggregate.id"><td :data-label="t('effectivePricing.aggregateScope')">{{ aggregateScopeLabel(aggregate) }}</td><td :data-label="t('usage.requests')">{{ formatNumber(aggregate.request_count) }}</td><td :data-label="t('effectivePricing.cacheReadTokens')">{{ formatNumber(aggregate.cache_read_tokens) }}</td><td :data-label="t('effectivePricing.listCost')">{{ formatMoneyMicros(aggregate.list_cost_micros || 0, aggregate.currency, aggregate.list_cost_micros !== undefined) }}</td><td :data-label="t('effectivePricing.actualCost')">{{ formatMoneyMicros(aggregate.actual_cost_micros || 0, aggregate.currency, aggregate.actual_cost_micros !== undefined) }}</td><td :data-label="t('effectivePricing.observedAt')">{{ formatDate(aggregate.observed_at) }}</td></tr></tbody></table></div></section>
@@ -699,6 +730,11 @@ onMounted(load)
 .source-state-summary > span { display: grid; min-width: 0; gap: 5px; padding: 12px; background: var(--surface); }
 .source-state-summary small { color: var(--text-muted); font-size: 11px; }
 .source-state-summary strong { overflow-wrap: anywhere; font-size: 12px; }
+.routing-health-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1px; border: 1px solid var(--border); background: var(--border); }
+.routing-health-summary > span { display: grid; min-width: 0; gap: 5px; padding: 12px; background: var(--surface); }
+.routing-health-summary small { color: var(--text-muted); font-size: 11px; }
+.routing-health-summary strong { overflow-wrap: anywhere; font-size: 12px; }
+.routing-health-summary p { grid-column: 1 / -1; margin: 0; padding: 10px 12px; background: var(--surface-subtle); color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .source-history-section { min-width: 0; }
 .source-history-section h3 { margin: 0 0 10px; font-size: 14px; }
 .source-history-table code { color: var(--text-muted); font-size: 11px; }
@@ -770,6 +806,7 @@ onMounted(load)
   .source-capabilities > div { border-bottom: 1px solid var(--border); }
   .source-balance { grid-template-columns: 1fr; gap: 4px; }
   .source-state-summary { grid-template-columns: 1fr 1fr; }
+  .routing-health-summary { grid-template-columns: 1fr 1fr; }
   .effective-filters { display: grid; grid-template-columns: 1fr 1fr; }
   .effective-filters label:first-child { grid-column: 1 / -1; }
   .effective-filters > .pill { margin-left: 0; }

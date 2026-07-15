@@ -2,9 +2,11 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
@@ -12,11 +14,11 @@ import (
 )
 
 // registerGatewayMediaJobRoutes exposes protocol-friendly video/audio entry
-// points while reusing the durable Job admission, queue, artifact and billing
-// pipeline. The endpoint is intentionally asynchronous: providers may expose
-// streaming progress, but the public contract remains the resumable Job event
-// stream instead of holding an HTTP request open through provider polling.
-func registerGatewayMediaJobRoutes(r *gin.Engine, control *controlplane.Service, durableJobs DurableAIJobAdmission) {
+// points. Async is the default and reuses the durable Job admission, queue,
+// artifact and billing pipeline. Direct modes are recognized by the canonical
+// contract, but fail closed here until a media-capable direct adapter is wired
+// in; they must never create a Job.
+func registerGatewayMediaJobRoutes(r *gin.Engine, control *controlplane.Service, durableJobs DurableAIJobAdmission, directAI controlplane.DirectAIProviderAdapter) {
 	for _, route := range []struct {
 		path      string
 		modality  string
@@ -27,6 +29,7 @@ func registerGatewayMediaJobRoutes(r *gin.Engine, control *controlplane.Service,
 	} {
 		route := route
 		r.POST(route.path, func(c *gin.Context) {
+			startedAt := time.Now()
 			if control == nil {
 				openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
 				return
@@ -48,7 +51,7 @@ func registerGatewayMediaJobRoutes(r *gin.Engine, control *controlplane.Service,
 				return
 			}
 			request.SourceIP = gatewaySourceIP(c.Request)
-			credential, err := gatewaycore.ExtractCredential(c.Request, gatewaycore.ProtocolAsterJobs)
+			credential, err := gatewaycore.ExtractCredential(c.Request, gatewaycore.ProtocolOpenAIMedia)
 			if err != nil {
 				writeGatewayError(c, controlplane.ErrGatewayUnauthorized)
 				return
@@ -62,16 +65,33 @@ func registerGatewayMediaJobRoutes(r *gin.Engine, control *controlplane.Service,
 				writeGatewayError(c, err)
 				return
 			}
-			if durableJobs == nil {
-				openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this media job")
+			if request.Lane == gatewaycore.LaneDirect {
+				if directAI != nil {
+					if err := validateImageDeliveryContract(request, auth); err != nil {
+						writeGatewayError(c, err)
+						return
+					}
+					executeDirectImage(c, control, directAI, legacyAuth, auth, request)
+					return
+				}
+				recordGatewayTrace(control, c, legacyAuth, controlplane.GatewayTraceInput{
+					RequestFingerprint: request.Fingerprint, Model: request.Model, Stream: request.Stream,
+					Status: "error", HTTPStatus: http.StatusServiceUnavailable, ErrorType: "unsupported_capability",
+					LatencyMS:       time.Since(startedAt).Milliseconds(),
+					RequestSummary:  fmt.Sprintf("media.generate modality=%s operation=%s response_mode=%s", request.Modality, request.Operation, request.ResponseMode),
+					ResponseSummary: "direct media adapter is not configured; no durable job was created",
+				})
+				openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no direct provider adapter is available for this media response mode")
 				return
 			}
-			supported, err := durableJobs.SupportsDurableAIJob(c.Request.Context(), auth, request)
+			evaluation, err := evaluateDurableAIJobAdmission(c.Request.Context(), durableJobs, auth, request)
 			if err != nil {
+				recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, controlplane.DurableAIJobSupportEvaluation{RejectionReason: controlplane.DurableAIJobCapabilityEvaluationError}, startedAt)
 				openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "media job runtime capability check failed")
 				return
 			}
-			if !supported {
+			if !evaluation.Supported {
+				recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, evaluation, startedAt)
 				openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this media job")
 				return
 			}

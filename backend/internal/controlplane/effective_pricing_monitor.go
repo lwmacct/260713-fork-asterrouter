@@ -189,6 +189,9 @@ func effectivePricingReasonsProveDegradation(reasons []string) bool {
 			"automatic_switch_confidence_low", "p95_latency_evidence_missing",
 			"cache_economics_evidence_missing", "current_usage_evidence_missing",
 			"candidate_usage_evidence_missing", "effective_cost_evidence_missing",
+			ProviderBillingReasonSyncUnhealthy, ProviderBillingReasonEvidenceStale,
+			ProviderBillingReasonEvidenceMissing, ProviderBillingReasonSourceObserveOnly,
+			ProviderBillingReasonSourceDisabled,
 		) {
 			return true
 		}

@@ -69,6 +69,9 @@ func (s *Service) reconcileDirectAIAttempt(ctx context.Context, attempt AIAttemp
 	executor := directAIReconcileExecutor{adapter: adapter, provider: provider, operation: operation, attempt: attempt}
 	updatedAttempt, result, reconcileErr := s.ReconcileAIAttemptDispatch(ctx, attempt.ID, executor)
 	reconcileErr = errors.Join(reconcileErr, capacityErr, s.syncProviderCapacityForAttempt(ctx, updatedAttempt))
+	if providerTaskStatusStale(updatedAttempt.ProviderTaskStatus, result.Task.Status) {
+		return reconcileErr
+	}
 	if reconcileErr != nil && updatedAttempt.DispatchState != AIAttemptDispatchAccepted && updatedAttempt.DispatchState != AIAttemptDispatchProvenNotCreated {
 		_ = s.DisputeBillingHold(ctx, operation.ID, "provider_status_unknown")
 		return reconcileErr

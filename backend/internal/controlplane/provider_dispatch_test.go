@@ -74,6 +74,30 @@ func TestProviderDispatchCoordinatorPersistsBeforeSideEffectAndRecoversUnknown(t
 	}
 }
 
+func TestProviderTaskStatusStalePreventsLifecycleRegression(t *testing.T) {
+	tests := []struct {
+		current string
+		next    string
+		stale   bool
+	}{
+		{current: "queued", next: "running", stale: false},
+		{current: "running", next: "queued", stale: true},
+		{current: "processing", next: "running", stale: true},
+		{current: "unknown", next: "running", stale: false},
+		{current: "succeeded", next: "running", stale: true},
+		{current: "completed", next: "succeeded", stale: false},
+		{current: "failed", next: "error", stale: false},
+		{current: "canceled", next: "failed", stale: true},
+	}
+	for _, test := range tests {
+		t.Run(test.current+"_to_"+test.next, func(t *testing.T) {
+			if got := providerTaskStatusStale(test.current, test.next); got != test.stale {
+				t.Fatalf("providerTaskStatusStale(%q,%q)=%t, want %t", test.current, test.next, got, test.stale)
+			}
+		})
+	}
+}
+
 type providerDispatchExecutorStub struct {
 	calls   int
 	command ProviderDispatchCommand

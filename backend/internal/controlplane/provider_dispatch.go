@@ -159,6 +159,57 @@ func (s *Service) resolveProviderDispatchResult(ctx context.Context, attempt AIA
 	}
 }
 
+// providerTaskStatusStale rejects a provider observation that would move a
+// task backwards. Provider adapters may use different labels, so aliases are
+// compared by their normalized lifecycle class rather than raw strings.
+func providerTaskStatusStale(current, next string) bool {
+	current = canonicalProviderTaskStatus(current)
+	next = canonicalProviderTaskStatus(next)
+	if current == "" || next == "" || current == next {
+		return false
+	}
+	if current == "unknown" {
+		return false
+	}
+	if next == "unknown" {
+		return true
+	}
+	currentRank := providerTaskStatusRank(current)
+	nextRank := providerTaskStatusRank(next)
+	if currentRank == 4 {
+		return true
+	}
+	return nextRank < currentRank
+}
+
+func canonicalProviderTaskStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return "succeeded"
+	case "error":
+		return "failed"
+	case "cancelled":
+		return "canceled"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func providerTaskStatusRank(status string) int {
+	switch canonicalProviderTaskStatus(status) {
+	case "succeeded", "failed", "canceled":
+		return 4
+	case "processing":
+		return 3
+	case "running":
+		return 2
+	case "queued", "accepted":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func providerDispatchIntentFromAttempt(attempt AIAttempt) (ProviderDispatchIntent, error) {
 	var intent ProviderDispatchIntent
 	if err := json.Unmarshal([]byte(attempt.DispatchIntentJSON), &intent); err != nil {

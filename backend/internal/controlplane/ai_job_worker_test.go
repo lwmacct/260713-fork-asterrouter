@@ -195,6 +195,54 @@ func TestDurableAIJobWorkerRejectsInvalidProviderProgress(t *testing.T) {
 	}
 }
 
+func TestDurableAIJobReconcilerUsesProviderCancellationWhenJobIsCanceling(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryRepository()
+	svc := NewService(repo, "/v1", "cancellation-secret")
+	base := time.Date(2026, time.July, 16, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return base }
+	if err := svc.SetArtifactStore(NewMemoryArtifactStore()); err != nil {
+		t.Fatal(err)
+	}
+	setupDurableWorkerRoutes(t, svc)
+	job := beginDurableWorkerJob(t, svc, "provider-cancellation")
+	adapter := &durableCancellationAdapter{
+		durableAIJobAdapterStub: &durableAIJobAdapterStub{dispatchSteps: []durableDispatchStep{{result: ProviderDispatchResult{
+			Outcome:        ProviderDispatchOutcomeAccepted,
+			Task:           ProviderTaskReference{ProviderTaskID: "cancel-task", ProviderRequestID: "cancel-request", Status: "running"},
+			ReconcileAfter: base.Add(-time.Minute),
+		}}}},
+		cancelResult: ProviderDispatchResult{
+			Outcome: ProviderDispatchOutcomeAccepted,
+			Task:    ProviderTaskReference{ProviderTaskID: "cancel-task", ProviderRequestID: "cancel-request", Status: "canceled"},
+			Billing: ProviderBillingObservation{Status: ProviderBillingStatusNotCharged},
+		},
+	}
+	if report, err := svc.RunDurableAIJobWorkerOnce(ctx, "cancel-worker", time.Minute, 1, adapter); err != nil || report.Accepted != 1 {
+		t.Fatalf("worker report=%+v err=%v", report, err)
+	}
+	auth := gatewaycore.CanonicalAuthContext{
+		CredentialSource: gatewaycore.CredentialSourceAPIKey, CredentialID: "worker-key", ProfileScope: ProfileScopePlatform,
+		TenantID: "worker-tenant", PrincipalType: APIKeyTypeService, PrincipalID: "worker-principal", ArtifactPolicy: GatewayArtifactPolicyTemporary,
+	}
+	canceling, found, err := svc.CancelAIJobForAuth(ctx, auth, job.ID)
+	if err != nil || !found || canceling.Status != AIJobStatusCanceling {
+		t.Fatalf("canceling=%+v found=%t err=%v", canceling, found, err)
+	}
+	svc.now = func() time.Time { return base.Add(2 * time.Minute) }
+	if report, err := svc.RunDurableAIJobReconcilerOnce(ctx, 1, adapter); err != nil || report.Completed != 1 || report.Errors != 0 {
+		t.Fatalf("reconcile report=%+v err=%v", report, err)
+	}
+	current, found, err := repo.FindAIJob(ctx, job.ID)
+	if err != nil || !found || current.Status != AIJobStatusCanceled {
+		t.Fatalf("current job=%+v found=%t err=%v", current, found, err)
+	}
+	if adapter.cancelCalls != 1 || adapter.ReconcileCalls() != 0 {
+		t.Fatalf("cancel calls=%d reconcile calls=%d", adapter.cancelCalls, adapter.ReconcileCalls())
+	}
+	assertBillingHoldStatus(t, svc, job.OperationID, BillingHoldStatusSettled)
+}
+
 func TestDurableAIJobProviderBillingResolutionAfterFailure(t *testing.T) {
 	ctx := context.Background()
 	repo := NewMemoryRepository()
@@ -491,6 +539,21 @@ func assertBillingHoldStatus(t *testing.T, svc *Service, operationID, status str
 type durableDispatchStep struct {
 	result ProviderDispatchResult
 	err    error
+}
+
+type durableCancellationAdapter struct {
+	*durableAIJobAdapterStub
+	cancelResult ProviderDispatchResult
+	cancelCalls  int
+}
+
+func (adapter *durableCancellationAdapter) SupportsDurableAIJobCancellation(context.Context, GatewayProvider, AIJob, AIAttempt) (bool, error) {
+	return true, nil
+}
+
+func (adapter *durableCancellationAdapter) CancelProviderTask(context.Context, GatewayProvider, AIJob, AIAttempt, ProviderDispatchIntent, ProviderTaskReference) (ProviderDispatchResult, error) {
+	adapter.cancelCalls++
+	return adapter.cancelResult, nil
 }
 
 type durableAIJobAdapterStub struct {

@@ -238,7 +238,8 @@ describe('AdminEffectivePricingView', () => {
       next_sync_at: '2026-07-15T09:00:00Z', last_sync_started_at: '2026-07-15T08:00:00Z',
       last_sync_completed_at: '2026-07-15T08:00:01Z', last_success_at: '2026-07-15T08:00:01Z',
       consecutive_failures: 0, last_error_code: '', version: 3, created_by: 'admin', updated_by: 'admin',
-      created_at: '2026-07-15T07:00:00Z', updated_at: '2026-07-15T08:00:01Z'
+      created_at: '2026-07-15T07:00:00Z', updated_at: '2026-07-15T08:00:01Z',
+      routing_health: { source_status: 'observe_only', status: 'observe_only', hard_blocked: false, economic_switch_eligible: false, reason_codes: ['provider_billing_source_observe_only'], evaluated_at: '2026-07-15T08:00:01Z', evidence_observed_at: '2026-07-15T08:00:01Z', evidence_stale_after_seconds: 21600 }
     }
     const evidence = {
       source,
@@ -276,6 +277,8 @@ describe('AdminEffectivePricingView', () => {
     expect(wrapper.get('.source-history-table').text()).toContain('succeeded')
     expect(wrapper.get('.billing-source-evidence').text()).toContain('$12.50')
     expect(wrapper.get('.billing-source-evidence').text()).toContain('model-a · Last 30 days')
+    expect(wrapper.get('.routing-health-summary').text()).toContain('Routing health')
+    expect(wrapper.get('.routing-health-summary').text()).toContain('Automatic economic switch')
 
     await wrapper.get('.source-auto-sync input').setValue(false)
     await wrapper.findAll('.billing-source-config button')[0].trigger('click')

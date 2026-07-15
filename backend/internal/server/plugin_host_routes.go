@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -36,6 +37,42 @@ func registerPluginHostRoutes(group *gin.RouterGroup, svc *plugins.Service, cont
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 	})
+
+	providerCallbackHandler := func(c *gin.Context) {
+		if !requestFromLoopback(c.Request) {
+			httpx.Error(c, http.StatusForbidden, 1790, "plugin host API is only available on loopback")
+			return
+		}
+		if svc == nil || control == nil {
+			httpx.Error(c, http.StatusServiceUnavailable, 1700, "plugin callback service is not available")
+			return
+		}
+		pluginID := strings.TrimSpace(c.Param("plugin_id"))
+		if err := svc.AuthorizeSidecarProviderCallback(c.Request.Context(), pluginID, bearerToken(c)); err != nil {
+			writePluginHostError(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		var callback controlplane.ProviderCallback
+		if err := json.NewDecoder(c.Request.Body).Decode(&callback); err != nil {
+			httpx.Error(c, http.StatusBadRequest, 1796, "invalid provider callback")
+			return
+		}
+		if strings.TrimSpace(callback.AdapterID) != pluginID {
+			// The runtime token identifies the adapter; accepting a different ID
+			// would let one sidecar submit events for another adapter.
+			httpx.Error(c, http.StatusForbidden, 1797, "provider callback adapter binding failed")
+			return
+		}
+		result, err := control.ProcessProviderCallback(c.Request.Context(), callback, svc)
+		if err != nil {
+			writeProviderCallbackError(c, err)
+			return
+		}
+		httpx.OK(c, result)
+	}
+	group.POST("/:plugin_id/provider-callback", providerCallbackHandler)
+	group.POST("/:plugin_id/provider-callbacks", providerCallbackHandler)
 }
 
 func writePluginHostError(c *gin.Context, err error) {
@@ -50,6 +87,20 @@ func writePluginHostError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusConflict, 1794, err.Error())
 	default:
 		httpx.Error(c, http.StatusInternalServerError, 1795, err.Error())
+	}
+}
+
+func writeProviderCallbackError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, controlplane.ErrProviderCallbackInvalid):
+		httpx.Error(c, http.StatusBadRequest, 1796, "invalid provider callback")
+	case errors.Is(err, controlplane.ErrProviderCallbackBinding):
+		// Do not disclose whether another tenant's attempt or task exists.
+		httpx.Error(c, http.StatusNotFound, 1798, "provider callback target was not found")
+	case errors.Is(err, controlplane.ErrProviderCallbackReplayConflict):
+		httpx.Error(c, http.StatusConflict, 1799, "provider callback event conflicts with a previous event")
+	default:
+		httpx.Error(c, http.StatusInternalServerError, 1800, "provider callback processing failed")
 	}
 }
 

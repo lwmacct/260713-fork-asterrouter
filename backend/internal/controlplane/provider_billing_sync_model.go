@@ -43,6 +43,26 @@ type ProviderBillingSource struct {
 	UpdatedBy            string                            `json:"updated_by"`
 	CreatedAt            time.Time                         `json:"created_at"`
 	UpdatedAt            time.Time                         `json:"updated_at"`
+	RoutingHealth        *ProviderBillingRoutingHealth     `json:"routing_health,omitempty"`
+}
+
+const (
+	ProviderBillingRoutingHealthHealthy     = "healthy"
+	ProviderBillingRoutingHealthDegraded    = "degraded"
+	ProviderBillingRoutingHealthBlocked     = "blocked"
+	ProviderBillingRoutingHealthObserveOnly = "observe_only"
+	ProviderBillingRoutingHealthDisabled    = "disabled"
+)
+
+type ProviderBillingRoutingHealth struct {
+	SourceStatus              string     `json:"source_status"`
+	Status                    string     `json:"status"`
+	HardBlocked               bool       `json:"hard_blocked"`
+	EconomicSwitchEligible    bool       `json:"economic_switch_eligible"`
+	ReasonCodes               []string   `json:"reason_codes"`
+	EvaluatedAt               time.Time  `json:"evaluated_at"`
+	EvidenceObservedAt        *time.Time `json:"evidence_observed_at,omitempty"`
+	EvidenceStaleAfterSeconds int        `json:"evidence_stale_after_seconds"`
 }
 
 type ProviderBillingSourceRequest struct {

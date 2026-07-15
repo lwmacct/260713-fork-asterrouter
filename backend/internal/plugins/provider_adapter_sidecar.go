@@ -25,15 +25,18 @@ var (
 )
 
 var (
-	_ controlplane.DurableAIJobAdapter         = (*Service)(nil)
-	_ controlplane.DurableAIJobAdapterSelector = (*Service)(nil)
-	_ controlplane.DurableAIJobOutputReader    = (*Service)(nil)
-	_ controlplane.DirectAIProviderAdapter     = (*Service)(nil)
-	_ controlplane.DirectAIProviderReconciler  = (*Service)(nil)
+	_ controlplane.DurableAIJobAdapter                     = (*Service)(nil)
+	_ controlplane.DurableAIJobAdapterSelector             = (*Service)(nil)
+	_ controlplane.DurableAIJobAdapterSelectionExplainer   = (*Service)(nil)
+	_ controlplane.DurableAIJobAdapterCanceler             = (*Service)(nil)
+	_ controlplane.DurableAIJobAdapterCancellationSelector = (*Service)(nil)
+	_ controlplane.DurableAIJobOutputReader                = (*Service)(nil)
+	_ controlplane.DirectAIProviderAdapter                 = (*Service)(nil)
+	_ controlplane.DirectAIProviderReconciler              = (*Service)(nil)
 )
 
 func (s *Service) SelectDirectAIAdapter(ctx context.Context, provider controlplane.GatewayProvider, request gatewaycore.CanonicalRequest, artifactPolicy string) (string, bool, error) {
-	if s == nil || request.Protocol != gatewaycore.ProtocolOpenAIImages || request.Modality != "image" || request.Operation != "image_generation" || request.PreviewMode == "required" {
+	if s == nil || request.PreviewMode == "required" {
 		return "", false, nil
 	}
 	plugins, err := s.repo.ListPlugins(ctx)
@@ -41,11 +44,26 @@ func (s *Service) SelectDirectAIAdapter(ctx context.Context, provider controlpla
 		return "", false, err
 	}
 	job := directAIJobSnapshot(controlplane.AIOperation{ArtifactPolicy: artifactPolicy}, request)
-	if !supportsBuiltinOpenAIImageAdapter(provider, job) {
+	if request.Protocol == gatewaycore.ProtocolOpenAIImages && request.Modality == "image" && request.Operation == "image_generation" {
+		if !supportsBuiltinOpenAIImageAdapter(provider, job) {
+			return "", false, nil
+		}
+		for _, plugin := range plugins {
+			if plugin.ID == OpenAICompatibleProviderPluginID && plugin.Status == StatusEnabled {
+				return plugin.ID, true, nil
+			}
+		}
+		return "", false, nil
+	}
+	if request.Protocol != gatewaycore.ProtocolOpenAIMedia || (request.Modality != controlplane.GatewayModalityVideo && request.Modality != controlplane.GatewayModalityAudio) {
 		return "", false, nil
 	}
 	for _, plugin := range plugins {
-		if plugin.ID == OpenAICompatibleProviderPluginID && plugin.Status == StatusEnabled {
+		if plugin.Status != StatusEnabled {
+			continue
+		}
+		manifest, available := s.providerAdapterManifest(ctx, plugin.ID)
+		if available && manifestSupportsProviderJob(manifest, provider, job) {
 			return plugin.ID, true, nil
 		}
 	}
@@ -53,14 +71,29 @@ func (s *Service) SelectDirectAIAdapter(ctx context.Context, provider controlpla
 }
 
 func (s *Service) DispatchDirectAI(ctx context.Context, provider controlplane.GatewayProvider, operation controlplane.AIOperation, attempt controlplane.AIAttempt, request gatewaycore.CanonicalRequest, command controlplane.ProviderDispatchCommand) (controlplane.ProviderDispatchResult, error) {
-	if attempt.ProviderAdapterID != OpenAICompatibleProviderPluginID || provider.AdapterID != attempt.ProviderAdapterID || command.Intent.ProviderAdapterID != attempt.ProviderAdapterID {
+	if strings.TrimSpace(attempt.ProviderAdapterID) == "" || provider.AdapterID != attempt.ProviderAdapterID || command.Intent.ProviderAdapterID != attempt.ProviderAdapterID {
 		return controlplane.ProviderDispatchResult{}, ErrProviderAdapterUnavailable
 	}
-	return s.dispatchBuiltinOpenAIImage(ctx, provider, directAIJobSnapshot(operation, request), attempt, command)
+	if attempt.ProviderAdapterID == OpenAICompatibleProviderPluginID {
+		return s.dispatchBuiltinOpenAIImage(ctx, provider, directAIJobSnapshot(operation, request), attempt, command)
+	}
+	requestPayload := providerAdapterDispatchRequest{
+		Provider: providerAdapterProviderValue(provider), Job: providerAdapterJobValue(directAIJobSnapshot(operation, request)), Attempt: providerAdapterAttemptValue(attempt),
+		Intent: command.Intent, Payload: append(json.RawMessage(nil), command.Payload...),
+	}
+	var result controlplane.ProviderDispatchResult
+	if err := s.callProviderAdapterJSON(ctx, attempt.ProviderAdapterID, "/v1/provider-adapter/dispatch", requestPayload, &result); err != nil {
+		return controlplane.ProviderDispatchResult{}, err
+	}
+	return result, nil
 }
 
-func (s *Service) OpenDirectAIOutput(_ context.Context, _ controlplane.GatewayProvider, _ controlplane.AIOperation, _ controlplane.AIAttempt, _ gatewaycore.CanonicalRequest, result controlplane.ProviderDispatchResult, output controlplane.ProviderOutputDescriptor) (io.ReadCloser, error) {
-	return s.openBuiltinOpenAIImageOutput(result.Task.ProviderTaskID, output)
+func (s *Service) OpenDirectAIOutput(ctx context.Context, provider controlplane.GatewayProvider, operation controlplane.AIOperation, attempt controlplane.AIAttempt, request gatewaycore.CanonicalRequest, result controlplane.ProviderDispatchResult, output controlplane.ProviderOutputDescriptor) (io.ReadCloser, error) {
+	if attempt.ProviderAdapterID == OpenAICompatibleProviderPluginID {
+		return s.openBuiltinOpenAIImageOutput(result.Task.ProviderTaskID, output)
+	}
+	job := directAIJobSnapshot(operation, request)
+	return s.OpenProviderOutput(ctx, provider, job, attempt, output)
 }
 
 func (s *Service) ReconcileDirectAI(ctx context.Context, provider controlplane.GatewayProvider, operation controlplane.AIOperation, attempt controlplane.AIAttempt, intent controlplane.ProviderDispatchIntent, task controlplane.ProviderTaskReference) (controlplane.ProviderDispatchResult, error) {
@@ -125,6 +158,8 @@ type providerAdapterReconcileRequest struct {
 	Task     controlplane.ProviderTaskReference  `json:"task"`
 }
 
+type providerAdapterCancelRequest = providerAdapterReconcileRequest
+
 type providerAdapterOutputRequest struct {
 	Provider providerAdapterProvider               `json:"provider"`
 	Job      providerAdapterJob                    `json:"job"`
@@ -134,32 +169,47 @@ type providerAdapterOutputRequest struct {
 }
 
 func (s *Service) SelectDurableAIJobAdapter(ctx context.Context, provider controlplane.GatewayProvider, job controlplane.AIJob) (string, bool, error) {
+	adapterID, supported, _, err := s.ExplainDurableAIJobAdapterSelection(ctx, provider, job)
+	return adapterID, supported, err
+}
+
+func (s *Service) ExplainDurableAIJobAdapterSelection(ctx context.Context, provider controlplane.GatewayProvider, job controlplane.AIJob) (string, bool, string, error) {
 	if s == nil {
-		return "", false, nil
+		return "", false, controlplane.DurableAIJobCapabilityAdapterUnavailable, nil
 	}
 	plugins, err := s.repo.ListPlugins(ctx)
 	if err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
 	if supportsBuiltinOpenAIImageAdapter(provider, job) {
 		for _, plugin := range plugins {
 			if plugin.ID == OpenAICompatibleProviderPluginID && plugin.Status == StatusEnabled {
-				return plugin.ID, true, nil
+				return plugin.ID, true, "", nil
 			}
 		}
 	}
+	reason := builtinProviderJobExclusionReason(provider, job)
 	sort.SliceStable(plugins, func(left, right int) bool { return plugins[left].ID < plugins[right].ID })
 	for _, plugin := range plugins {
 		if plugin.Status != StatusEnabled {
 			continue
 		}
 		manifest, available := s.providerAdapterManifest(ctx, plugin.ID)
-		if !available || !manifestSupportsProviderJob(manifest, provider, job) {
+		if !available {
 			continue
 		}
-		return plugin.ID, true, nil
+		supported, candidateReason := manifestProviderJobSupport(manifest, provider, job)
+		if supported {
+			return plugin.ID, true, "", nil
+		}
+		if providerAdapterExclusionRank(candidateReason) > providerAdapterExclusionRank(reason) {
+			reason = candidateReason
+		}
 	}
-	return "", false, nil
+	if reason == "" {
+		reason = controlplane.DurableAIJobCapabilityAdapterUnavailable
+	}
+	return "", false, reason, nil
 }
 
 func (s *Service) DispatchProviderTask(ctx context.Context, provider controlplane.GatewayProvider, job controlplane.AIJob, attempt controlplane.AIAttempt, command controlplane.ProviderDispatchCommand) (controlplane.ProviderDispatchResult, error) {
@@ -198,6 +248,44 @@ func (s *Service) ReconcileProviderTask(ctx context.Context, provider controlpla
 	}
 	var result controlplane.ProviderDispatchResult
 	if err := s.callProviderAdapterJSON(ctx, adapterID, "/v1/provider-adapter/reconcile", request, &result); err != nil {
+		return controlplane.ProviderDispatchResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Service) SupportsDurableAIJobCancellation(ctx context.Context, provider controlplane.GatewayProvider, job controlplane.AIJob, attempt controlplane.AIAttempt) (bool, error) {
+	adapterID := strings.TrimSpace(attempt.ProviderAdapterID)
+	if adapterID == "" || adapterID == OpenAICompatibleProviderPluginID {
+		return false, nil
+	}
+	manifest, available := s.providerAdapterManifest(ctx, adapterID)
+	if !available {
+		return false, nil
+	}
+	for index := range manifest.ProviderAdapters {
+		capability := manifest.ProviderAdapters[index]
+		supported, _ := manifestProviderJobSupport(sidecarManifest{ProviderAdapters: []providerAdapterManifestCapability{capability}}, provider, job)
+		if supported && capability.SupportsCancellation {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Service) CancelProviderTask(ctx context.Context, provider controlplane.GatewayProvider, job controlplane.AIJob, attempt controlplane.AIAttempt, intent controlplane.ProviderDispatchIntent, task controlplane.ProviderTaskReference) (controlplane.ProviderDispatchResult, error) {
+	adapterID, err := selectedProviderAdapterID(provider, attempt, intent)
+	if err != nil {
+		return controlplane.ProviderDispatchResult{}, err
+	}
+	if adapterID == OpenAICompatibleProviderPluginID {
+		return controlplane.ProviderDispatchResult{}, controlplane.ErrDurableAIJobCancellationUnsupported
+	}
+	request := providerAdapterCancelRequest{
+		Provider: providerAdapterProviderValue(provider), Job: providerAdapterJobValue(job), Attempt: providerAdapterAttemptValue(attempt),
+		Intent: intent, Task: task,
+	}
+	var result controlplane.ProviderDispatchResult
+	if err := s.callProviderAdapterJSON(ctx, adapterID, "/v1/provider-adapter/cancel", request, &result); err != nil {
 		return controlplane.ProviderDispatchResult{}, err
 	}
 	return result, nil
@@ -247,21 +335,73 @@ func (s *Service) providerAdapterManifest(ctx context.Context, pluginID string) 
 }
 
 func manifestSupportsProviderJob(manifest sidecarManifest, provider controlplane.GatewayProvider, job controlplane.AIJob) bool {
+	supported, _ := manifestProviderJobSupport(manifest, provider, job)
+	return supported
+}
+
+func manifestProviderJobSupport(manifest sidecarManifest, provider controlplane.GatewayProvider, job controlplane.AIJob) (bool, string) {
 	providerType := strings.ToLower(strings.TrimSpace(provider.Type))
 	modality := strings.ToLower(strings.TrimSpace(job.Modality))
 	operation := strings.ToLower(strings.TrimSpace(job.Operation))
+	providerMatched := false
+	modalityMatched := false
+	operationMatched := false
 	for _, capability := range manifest.ProviderAdapters {
-		if !containsString(capability.ProviderTypes, providerType) || !containsString(capability.Modalities, modality) || !containsString(capability.Operations, operation) {
+		if !containsString(capability.ProviderTypes, providerType) {
 			continue
 		}
+		providerMatched = true
+		if !containsString(capability.Modalities, modality) {
+			continue
+		}
+		modalityMatched = true
+		if !containsString(capability.Operations, operation) {
+			continue
+		}
+		operationMatched = true
 		// Older manifests did not declare artifact policy support. Preserve
 		// their behavior; a non-empty declaration is an explicit allowlist.
 		if len(capability.ArtifactPolicies) > 0 && !containsString(capability.ArtifactPolicies, strings.ToLower(strings.TrimSpace(job.ArtifactPolicy))) {
 			continue
 		}
-		return true
+		return true, ""
 	}
-	return false
+	switch {
+	case operationMatched:
+		return false, controlplane.DurableAIJobCapabilityArtifactPolicyUnsupported
+	case modalityMatched:
+		return false, controlplane.DurableAIJobCapabilityOperationUnsupported
+	case providerMatched:
+		return false, controlplane.DurableAIJobCapabilityModalityUnsupported
+	default:
+		return false, controlplane.DurableAIJobCapabilityProviderTypeUnsupported
+	}
+}
+
+func builtinProviderJobExclusionReason(provider controlplane.GatewayProvider, job controlplane.AIJob) string {
+	if strings.EqualFold(strings.TrimSpace(provider.Type), "openai_compatible") &&
+		strings.EqualFold(strings.TrimSpace(job.Modality), controlplane.GatewayModalityImage) &&
+		strings.EqualFold(strings.TrimSpace(job.Operation), controlplane.GatewayOperationImageGeneration) {
+		if job.ArtifactPolicy != controlplane.GatewayArtifactPolicyTemporary && job.ArtifactPolicy != controlplane.GatewayArtifactPolicyManaged && job.ArtifactPolicy != controlplane.GatewayArtifactPolicyCustomerSink {
+			return controlplane.DurableAIJobCapabilityArtifactPolicyUnsupported
+		}
+	}
+	return controlplane.DurableAIJobCapabilityAdapterUnavailable
+}
+
+func providerAdapterExclusionRank(reason string) int {
+	switch reason {
+	case controlplane.DurableAIJobCapabilityArtifactPolicyUnsupported:
+		return 4
+	case controlplane.DurableAIJobCapabilityOperationUnsupported:
+		return 3
+	case controlplane.DurableAIJobCapabilityModalityUnsupported:
+		return 2
+	case controlplane.DurableAIJobCapabilityProviderTypeUnsupported:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func selectedProviderAdapterID(provider controlplane.GatewayProvider, attempt controlplane.AIAttempt, intent controlplane.ProviderDispatchIntent) (string, error) {

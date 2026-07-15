@@ -101,6 +101,28 @@ func TestPluginHostFeedEndpointRejectsExternalAndUnknownRuntime(t *testing.T) {
 	}
 }
 
+func TestPluginHostProviderCallbackEndpointRejectsExternalAndUnknownRuntime(t *testing.T) {
+	handler := newTestHandler(t, config.Config{})
+	body := bytes.NewBufferString(`{"event_id":"event-1","adapter_id":"com.asterrouter.test","attempt_id":"attempt-1","provider_id":"provider-1","provider_account_id":"account-1","provider_task_id":"task-1","status":"running"}`)
+	externalReq := httptest.NewRequest(http.MethodPost, "/api/v1/plugin-host/com.asterrouter.test/provider-callback", body)
+	externalReq.RemoteAddr = "198.51.100.20:43100"
+	externalReq.Header.Set("Authorization", "Bearer runtime-token")
+	externalRec := httptest.NewRecorder()
+	handler.ServeHTTP(externalRec, externalReq)
+	if externalRec.Code != http.StatusForbidden {
+		t.Fatalf("external callback status = %d body=%s", externalRec.Code, externalRec.Body.String())
+	}
+
+	loopbackReq := httptest.NewRequest(http.MethodPost, "/api/v1/plugin-host/com.asterrouter.test/provider-callbacks", bytes.NewBufferString(`{"event_id":"event-1"}`))
+	loopbackReq.RemoteAddr = "127.0.0.1:43100"
+	loopbackReq.Header.Set("Authorization", "Bearer runtime-token")
+	loopbackRec := httptest.NewRecorder()
+	handler.ServeHTTP(loopbackRec, loopbackReq)
+	if loopbackRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown callback runtime status = %d body=%s", loopbackRec.Code, loopbackRec.Body.String())
+	}
+}
+
 func TestPluginOpenCatalogUsesScopedAPIToken(t *testing.T) {
 	settingsService := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{Version: "test", StorageMode: "memory", DemoMode: true, EnabledProfiles: []string{"personal", "enterprise"}})
 	controlService := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")

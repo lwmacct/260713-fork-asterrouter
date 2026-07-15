@@ -30,6 +30,7 @@ const (
 var (
 	errGatewayRequestTooLarge   = errors.New("gateway request body is too large")
 	errUpstreamResponseTooLarge = errors.New("upstream response body is too large")
+	errGatewaySSEIncomplete     = errors.New("upstream sse stream ended without a terminal event")
 	errNoSchedulableSlot        = errors.New("no schedulable provider account slot is available")
 )
 
@@ -41,7 +42,7 @@ const (
 
 func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service, durableJobs DurableAIJobAdmission, directAI controlplane.DirectAIProviderAdapter) {
 	registerGatewayJobRoutes(r, control, durableJobs)
-	registerGatewayMediaJobRoutes(r, control, durableJobs)
+	registerGatewayMediaJobRoutes(r, control, durableJobs, directAI)
 	registerGatewayImageRoutes(r, control, durableJobs, directAI)
 
 	r.GET("/v1/models", func(c *gin.Context) {
@@ -785,9 +786,15 @@ func recordGatewayUsage(control *controlplane.Service, c *gin.Context, auth cont
 
 func recordGatewayTrace(control *controlplane.Service, c *gin.Context, auth controlplane.GatewayAuthContext, input controlplane.GatewayTraceInput) {
 	if control != nil {
-		input.OperationID = c.GetString(gatewayOperationContextKey)
-		input.AttemptID = c.GetString(gatewayAttemptContextKey)
-		input.RequestFingerprint = c.GetString(gatewayFingerprintContextKey)
+		if value := c.GetString(gatewayOperationContextKey); value != "" {
+			input.OperationID = value
+		}
+		if value := c.GetString(gatewayAttemptContextKey); value != "" {
+			input.AttemptID = value
+		}
+		if value := c.GetString(gatewayFingerprintContextKey); value != "" {
+			input.RequestFingerprint = value
+		}
 		_ = control.RecordGatewayTrace(c.Request.Context(), auth, input)
 	}
 }
@@ -819,6 +826,9 @@ func streamUpstreamResponse(c *gin.Context, resp *http.Response, startedAt time.
 			c.Writer.Flush()
 		}
 		if readErr == io.EOF {
+			if !collector.Completed() {
+				return collector.Observation(), ttftMS, errGatewaySSEIncomplete
+			}
 			return collector.Observation(), ttftMS, nil
 		}
 		if readErr != nil {

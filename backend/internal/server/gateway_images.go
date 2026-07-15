@@ -54,6 +54,7 @@ type directImageExecution struct {
 
 func registerGatewayImageRoutes(r *gin.Engine, control *controlplane.Service, durableJobs DurableAIJobAdmission, adapter controlplane.DirectAIProviderAdapter) {
 	r.POST("/v1/images/generations", func(c *gin.Context) {
+		startedAt := time.Now()
 		if control == nil {
 			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
 			return
@@ -86,7 +87,7 @@ func registerGatewayImageRoutes(r *gin.Engine, control *controlplane.Service, du
 			return
 		}
 		if request.Lane == gatewaycore.LaneDurable {
-			acceptImageDurableJob(c, control, durableJobs, canonicalAuth, request)
+			acceptImageDurableJob(c, control, durableJobs, auth, canonicalAuth, request, startedAt)
 			return
 		}
 		executeDirectImage(c, control, adapter, auth, canonicalAuth, request)
@@ -128,17 +129,15 @@ func validateImageDeliveryContract(request gatewaycore.CanonicalRequest, auth ga
 	return nil
 }
 
-func acceptImageDurableJob(c *gin.Context, control *controlplane.Service, durableJobs DurableAIJobAdmission, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) {
-	if durableJobs == nil {
-		openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this image job")
-		return
-	}
-	supported, err := durableJobs.SupportsDurableAIJob(c.Request.Context(), auth, request)
+func acceptImageDurableJob(c *gin.Context, control *controlplane.Service, durableJobs DurableAIJobAdmission, legacyAuth controlplane.GatewayAuthContext, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest, startedAt time.Time) {
+	evaluation, err := evaluateDurableAIJobAdmission(c.Request.Context(), durableJobs, auth, request)
 	if err != nil {
+		recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, controlplane.DurableAIJobSupportEvaluation{RejectionReason: controlplane.DurableAIJobCapabilityEvaluationError}, startedAt)
 		openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "image job runtime capability check failed")
 		return
 	}
-	if !supported {
+	if !evaluation.Supported {
+		recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, evaluation, startedAt)
 		openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this image job")
 		return
 	}
@@ -272,22 +271,11 @@ func executeDirectImage(c *gin.Context, control *controlplane.Service, adapter c
 	_ = control.TouchProviderAccountUsage(c.Request.Context(), execution.Provider.AccountID)
 	_ = control.RecordGatewayCall(c.Request.Context(), auth, request.Model, "forwarded", fmt.Sprintf("Generated %d image output(s) through provider %s", len(response.Data), execution.Provider.ID))
 	_ = control.CompleteAIAttempt(c.Request.Context(), execution.Attempt.ID, controlplane.AIAttemptStatusSucceeded, "")
-	usageDimensions := controlplane.UsageDimensions{
-		controlplane.UsageDimensionOutputImages: {
-			Quantity: int64(len(response.Data)), Unit: controlplane.UsageUnitCount,
-			Source: "core_artifact", Confidence: controlplane.UsageConfidenceObserved,
-		},
-	}
-	if outputBytes := finalArtifactBytes(artifacts); outputBytes > 0 {
-		usageDimensions[controlplane.UsageDimensionOutputBytes] = controlplane.UsageDimension{
-			Quantity: outputBytes, Unit: controlplane.UsageUnitByte,
-			Source: "core_artifact", Confidence: controlplane.UsageConfidenceObserved,
-		}
-	}
+	usageDimensions := directMediaUsageDimensions(request, len(response.Data), finalArtifactBytes(artifacts))
 	if err := control.RecordDirectAIProviderUsage(c.Request.Context(), operation, execution.Attempt, execution.Result, controlplane.GatewayUsageInput{
 		UsageSource: "gateway_final", Model: request.Model, UpstreamModel: execution.Provider.UpstreamModel,
 		Protocol: string(request.Protocol), ProviderID: execution.Provider.ID, ProviderAccountID: execution.Provider.AccountID,
-		Status: "forwarded", LatencyMS: time.Since(startedAt).Milliseconds(), UsageNormalizationStatus: "normalized_image_outputs",
+		Status: "forwarded", LatencyMS: time.Since(startedAt).Milliseconds(), UsageNormalizationStatus: "normalized_media_outputs",
 		UsageDimensions: usageDimensions, UpstreamRequestID: execution.Result.Task.ProviderRequestID,
 	}); err != nil {
 		_ = control.DisputeBillingHold(c.Request.Context(), operation.ID, "usage_ledger_error")
@@ -296,7 +284,7 @@ func executeDirectImage(c *gin.Context, control *controlplane.Service, adapter c
 		return
 	}
 	complete(controlplane.AIOperationStatusSucceeded, "")
-	recordImageTrace(control, c, auth, request, execution.Provider, "forwarded", http.StatusOK, "", startedAt, fmt.Sprintf("images=%d", len(response.Data)), routeAttempts)
+	recordImageTrace(control, c, auth, request, execution.Provider, "forwarded", http.StatusOK, "", startedAt, fmt.Sprintf("%s=%d", request.Modality, len(response.Data)), routeAttempts)
 	writeDirectImageResponse(c, request, response)
 }
 
@@ -508,12 +496,25 @@ func writeDirectImageResponse(c *gin.Context, request gatewaycore.CanonicalReque
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Status(http.StatusOK)
-	for _, item := range response.Data {
-		payload, _ := json.Marshal(gin.H{"type": "image.final", "operation_id": response.OperationID, "image": item})
-		_, _ = fmt.Fprintf(c.Writer, "id: %d\nevent: image.final\ndata: %s\n\n", item.Index+1, payload)
+	eventPrefix := strings.TrimSpace(request.Modality)
+	if eventPrefix == "" {
+		eventPrefix = "media"
 	}
-	usage, _ := json.Marshal(gin.H{"type": "usage.finalized", "operation_id": response.OperationID, "output_images": len(response.Data)})
-	_, _ = fmt.Fprintf(c.Writer, "id: %d\nevent: usage.finalized\ndata: %s\n\n", len(response.Data)+1, usage)
+	for _, item := range response.Data {
+		payload, _ := json.Marshal(gin.H{"type": eventPrefix + ".final", "operation_id": response.OperationID, "media": item})
+		_, _ = fmt.Fprintf(c.Writer, "id: %d\nevent: %s.final\ndata: %s\n\n", item.Index+1, eventPrefix, payload)
+	}
+	usage := gin.H{"type": "usage.finalized", "operation_id": response.OperationID}
+	switch request.Modality {
+	case controlplane.GatewayModalityVideo:
+		usage[controlplane.UsageDimensionOutputVideoMilliseconds] = request.VideoDurationMS
+	case controlplane.GatewayModalityAudio:
+		usage[controlplane.UsageDimensionOutputAudioMilliseconds] = request.AudioDurationMS
+	default:
+		usage[controlplane.UsageDimensionOutputImages] = len(response.Data)
+	}
+	usagePayload, _ := json.Marshal(usage)
+	_, _ = fmt.Fprintf(c.Writer, "id: %d\nevent: usage.finalized\ndata: %s\n\n", len(response.Data)+1, usagePayload)
 	_, _ = fmt.Fprint(c.Writer, "event: done\ndata: [DONE]\n\n")
 	c.Writer.Flush()
 }
@@ -548,7 +549,35 @@ func recordImageTrace(control *controlplane.Service, c *gin.Context, auth contro
 		GatewayModelID: provider.GatewayModelID, RouteID: provider.RouteID, RouteGroup: provider.RouteGroup,
 		UpstreamModel: provider.UpstreamModel, RouteSource: provider.Source, RouteReason: provider.SelectionReason,
 		Status: status, HTTPStatus: httpStatus, ErrorType: errorType, LatencyMS: time.Since(startedAt).Milliseconds(),
-		RequestSummary:  fmt.Sprintf("images.generate response_mode=%s preview_mode=%s delivery_mode=%s n=%d", request.ResponseMode, request.PreviewMode, request.DeliveryMode, request.OutputCount),
+		RequestSummary:  fmt.Sprintf("%s.generate response_mode=%s preview_mode=%s delivery_mode=%s n=%d", request.Modality, request.ResponseMode, request.PreviewMode, request.DeliveryMode, request.OutputCount),
 		ResponseSummary: summary, RouteAttempts: routeAttempts,
 	})
+}
+
+func directMediaUsageDimensions(request gatewaycore.CanonicalRequest, outputCount int, outputBytes int64) controlplane.UsageDimensions {
+	dimensions := make(controlplane.UsageDimensions)
+	switch request.Modality {
+	case controlplane.GatewayModalityVideo:
+		dimensions[controlplane.UsageDimensionOutputVideoMilliseconds] = controlplane.UsageDimension{
+			Quantity: request.VideoDurationMS, Unit: controlplane.UsageUnitMillisecond,
+			Source: "request", Confidence: controlplane.UsageConfidenceEstimated,
+		}
+	case controlplane.GatewayModalityAudio:
+		dimensions[controlplane.UsageDimensionOutputAudioMilliseconds] = controlplane.UsageDimension{
+			Quantity: request.AudioDurationMS, Unit: controlplane.UsageUnitMillisecond,
+			Source: "request", Confidence: controlplane.UsageConfidenceEstimated,
+		}
+	default:
+		dimensions[controlplane.UsageDimensionOutputImages] = controlplane.UsageDimension{
+			Quantity: int64(outputCount), Unit: controlplane.UsageUnitCount,
+			Source: "core_artifact", Confidence: controlplane.UsageConfidenceObserved,
+		}
+	}
+	if outputBytes > 0 {
+		dimensions[controlplane.UsageDimensionOutputBytes] = controlplane.UsageDimension{
+			Quantity: outputBytes, Unit: controlplane.UsageUnitByte,
+			Source: "core_artifact", Confidence: controlplane.UsageConfidenceObserved,
+		}
+	}
+	return dimensions
 }

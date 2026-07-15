@@ -8,6 +8,7 @@ const (
 	ProtocolOpenAIModels      Protocol = "openai_models"
 	ProtocolOpenAIChat        Protocol = "openai_chat_completions"
 	ProtocolOpenAIImages      Protocol = "openai_images_generations"
+	ProtocolOpenAIMedia       Protocol = "openai_media_generations"
 	ProtocolOpenAIResponses   Protocol = "openai_responses"
 	ProtocolAnthropicMessages Protocol = "anthropic_messages"
 	ProtocolGeminiGenerate    Protocol = "gemini_generate_content"
