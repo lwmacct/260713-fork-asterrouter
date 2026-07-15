@@ -195,6 +195,99 @@ func registerGatewayJobRoutes(r *gin.Engine, control *controlplane.Service, dura
 		}
 		c.JSON(http.StatusOK, newPublicAIJobResponse(job))
 	})
+
+	r.POST("/v1/jobs/:job_id/actions", func(c *gin.Context) {
+		startedAt := time.Now()
+		if control == nil {
+			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "gateway control service is not available")
+			return
+		}
+		credential, err := gatewaycore.ExtractCredential(c.Request, gatewaycore.ProtocolAsterJobs)
+		if err != nil {
+			writeGatewayError(c, controlplane.ErrGatewayUnauthorized)
+			return
+		}
+		actionAuth, err := control.AuthorizeGatewayCredentialScope(c.Request.Context(), credential, gatewaySourceIP(c.Request), controlplane.GatewayScopeJobsActions)
+		if err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		sourceJob, found, err := control.AIJobForAuth(c.Request.Context(), actionAuth, c.Param("job_id"))
+		if err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		if !found {
+			openAIError(c, http.StatusNotFound, "resource_not_found", "ai job not found")
+			return
+		}
+		if sourceJob.Status != controlplane.AIJobStatusSucceeded && sourceJob.Status != controlplane.AIJobStatusFailed && sourceJob.Status != controlplane.AIJobStatusUnknown {
+			openAIError(c, http.StatusConflict, "job_action_conflict", "job actions require a terminal source job")
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, gatewayRequestBodyLimit)
+		raw, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				openAIError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "request body exceeds 16 MiB limit")
+				return
+			}
+			openAIError(c, http.StatusBadRequest, "invalid_request_error", "invalid job action payload")
+			return
+		}
+		request, err := gatewaycore.CanonicalizeAIJobAction(raw, c.Request.Header, sourceJob.ID, sourceJob.Model, sourceJob.Operation, sourceJob.Modality)
+		if err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		request.SourceIP = gatewaySourceIP(c.Request)
+		legacyAuth, auth, err := control.AuthorizeCanonicalGatewayRequest(c.Request.Context(), credential, request)
+		if err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		if _, sourceStillOwned, ownerErr := control.AIJobForAuth(c.Request.Context(), auth, sourceJob.ID); ownerErr != nil {
+			writeGatewayError(c, ownerErr)
+			return
+		} else if !sourceStillOwned {
+			openAIError(c, http.StatusNotFound, "resource_not_found", "ai job not found")
+			return
+		}
+		if err := control.EnforceGatewayPolicy(c.Request.Context(), legacyAuth); err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		evaluation, err := evaluateDurableAIJobAdmission(c.Request.Context(), durableJobs, auth, request)
+		if err != nil {
+			recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, controlplane.DurableAIJobSupportEvaluation{RejectionReason: controlplane.DurableAIJobCapabilityEvaluationError}, startedAt)
+			openAIError(c, http.StatusServiceUnavailable, "service_unavailable", "job action runtime capability check failed")
+			return
+		}
+		if !evaluation.Supported {
+			recordDurableAIJobCapabilityRejection(control, c, legacyAuth, request, evaluation, startedAt)
+			openAIError(c, http.StatusServiceUnavailable, "unsupported_capability", "no executable provider adapter is available for this job action")
+			return
+		}
+		job, created, err := control.BeginDurableAIJob(c.Request.Context(), auth, request)
+		if err != nil {
+			writeGatewayError(c, err)
+			return
+		}
+		c.Header("Location", "/v1/jobs/"+job.ID)
+		c.Header("X-AsterRouter-Operation-ID", job.OperationID)
+		if !created {
+			c.Header("Idempotent-Replayed", "true")
+		}
+		if !aiJobPublicTerminal(job.Status) {
+			c.Header("Retry-After", strconv.Itoa(controlplane.AIJobDefaultPollAfter))
+		}
+		status := http.StatusAccepted
+		if !created {
+			status = http.StatusOK
+		}
+		c.JSON(status, newPublicAIJobResponse(job))
+	})
 }
 
 func parseCanonicalDurableJobRequest(c *gin.Context) (gatewaycore.CanonicalRequest, error) {

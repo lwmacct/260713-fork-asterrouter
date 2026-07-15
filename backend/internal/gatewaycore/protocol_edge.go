@@ -302,6 +302,61 @@ func CanonicalizeDurableJob(raw []byte, header http.Header) (CanonicalRequest, e
 	}, nil
 }
 
+// CanonicalizeAIJobAction creates a new durable request from an owned Job.
+// Actions are represented as input data for the selected provider adapter;
+// Core keeps ownership, admission, idempotency and billing unchanged and
+// never mutates the source Job.
+func CanonicalizeAIJobAction(raw []byte, header http.Header, sourceJobID, model, operation, modality string) (CanonicalRequest, error) {
+	model = strings.TrimSpace(model)
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	modality = strings.ToLower(strings.TrimSpace(modality))
+	sourceJobID = strings.TrimSpace(sourceJobID)
+	if model == "" || !validCanonicalToken(operation) || !validCanonicalToken(modality) || !validCanonicalToken(sourceJobID) {
+		return CanonicalRequest{}, ErrInvalidCanonicalRequest
+	}
+	var payload struct {
+		Action string                 `json:"action"`
+		Input  map[string]interface{} `json:"input"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		return CanonicalRequest{}, ErrInvalidCanonicalRequest
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action != "edit" && action != "extend" && action != "remix" && action != "retry" && action != "upscale" && action != "variation" {
+		return CanonicalRequest{}, fmt.Errorf("%w: unsupported job action", ErrInvalidCanonicalRequest)
+	}
+	if len(payload.Input) == 0 {
+		return CanonicalRequest{}, fmt.Errorf("%w: action input is required", ErrInvalidCanonicalRequest)
+	}
+	requestID, err := canonicalRequestID(header)
+	if err != nil {
+		return CanonicalRequest{}, err
+	}
+	idempotencyKey := strings.TrimSpace(header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > maxIdempotencyBytes {
+		return CanonicalRequest{}, fmt.Errorf("%w: a valid idempotency key is required", ErrInvalidCanonicalRequest)
+	}
+	canonicalPayload, err := json.Marshal(map[string]interface{}{
+		"model": model, "operation": operation, "modality": modality,
+		"action": action, "source_job_id": sourceJobID, "input": payload.Input,
+	})
+	if err != nil {
+		return CanonicalRequest{}, ErrInvalidCanonicalRequest
+	}
+	outputCount, videoDurationMS, audioDurationMS, err := canonicalDurableMediaEstimate(operation, modality, payload.Input)
+	if err != nil {
+		return CanonicalRequest{}, err
+	}
+	fingerprint := sha256.Sum256(canonicalPayload)
+	return CanonicalRequest{
+		ID: "op_" + requestID, ClientRequestID: requestID, Fingerprint: hex.EncodeToString(fingerprint[:]),
+		Protocol: ProtocolAsterJobs, Operation: operation, Modality: modality, Lane: LaneDurable,
+		Model: model, IdempotencyKey: idempotencyKey, ResponseMode: "async", DeliveryMode: "artifact",
+		OutputCount: outputCount, VideoDurationMS: videoDurationMS, AudioDurationMS: audioDurationMS,
+		Payload: canonicalPayload,
+	}, nil
+}
+
 // CanonicalizeOpenAIMediaJob adapts the public video/audio generation entry
 // points to the same operation contract used by /v1/jobs. Blocking and stream
 // requests stay on the direct lane; async requests are the only ones that

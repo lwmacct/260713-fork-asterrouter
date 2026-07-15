@@ -220,6 +220,28 @@ func TestCanonicalizeDurableJobRejectsInvalidPayloadAndConflictingRequestIDs(t *
 	}
 }
 
+func TestCanonicalizeAIJobActionFreezesSourceAndIdempotencyContract(t *testing.T) {
+	header := http.Header{"X-Request-Id": []string{"action-request-1"}, "Idempotency-Key": []string{"action-idem-1"}}
+	request, err := CanonicalizeAIJobAction([]byte(`{"action":"remix","input":{"prompt":"synthetic"}}`), header, "job_source_1", "video-model", "video_generation", "video")
+	if err != nil {
+		t.Fatalf("CanonicalizeAIJobAction(): %v", err)
+	}
+	if request.Protocol != ProtocolAsterJobs || request.Lane != LaneDurable || request.Operation != "video_generation" || request.Modality != "video" || request.ResponseMode != "async" || request.DeliveryMode != "artifact" || request.IdempotencyKey != "action-idem-1" || request.VideoDurationMS != 0 {
+		t.Fatalf("request=%+v", request)
+	}
+	if !strings.Contains(string(request.Payload), `"action":"remix"`) || !strings.Contains(string(request.Payload), `"source_job_id":"job_source_1"`) {
+		t.Fatalf("payload=%s", request.Payload)
+	}
+	for _, raw := range []string{
+		`{"action":"unknown","input":{"prompt":"synthetic"}}`,
+		`{"action":"remix"}`,
+	} {
+		if _, err := CanonicalizeAIJobAction([]byte(raw), header, "job_source_1", "video-model", "video_generation", "video"); !errors.Is(err, ErrInvalidCanonicalRequest) {
+			t.Fatalf("raw=%s error=%v", raw, err)
+		}
+	}
+}
+
 func TestCanonicalizeOpenAIMediaJobUsesDurableContract(t *testing.T) {
 	header := http.Header{"X-Request-Id": []string{"video-request-1"}, "Idempotency-Key": []string{"video-idem-1"}}
 	request, err := CanonicalizeOpenAIMediaJob([]byte(`{"model":"video-model","prompt":"synthetic","duration_seconds":1.5}`), header, "video", "video_generation")

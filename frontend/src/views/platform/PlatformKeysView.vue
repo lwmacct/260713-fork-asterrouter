@@ -60,7 +60,10 @@ function resetForm() {
   status.value = 'active'
 }
 
-function openCreate() {
+async function openCreate() {
+  if (loading.value || activeTenants.value.length === 0 || principals.value.length === 0) {
+    await load()
+  }
   editing.value = null
   resetForm()
   modalOpen.value = true

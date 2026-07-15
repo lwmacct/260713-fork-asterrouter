@@ -81,6 +81,77 @@ func TestGatewayDurableJobLifecycleAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestGatewayJobActionCreatesOwnedIdempotentChildJob(t *testing.T) {
+	handler, control := newTestRuntime(t, config.Config{})
+	if _, err := control.CreateGatewayModel(context.Background(), "action-image", controlplane.GatewayModelRequest{
+		ModelID: "action-image", Name: "Action image", Modality: controlplane.GatewayModalityImage, Status: controlplane.GatewayModelStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "action owner", ModelAllowlist: []string{"action-image"},
+		Scopes:            []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeJobsRead, controlplane.GatewayScopeJobsActions},
+		AllowedModalities: []string{controlplane.GatewayModalityImage}, AllowedOperations: []string{controlplane.GatewayOperationImageGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDurableOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceResponse := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs", key.Key, "action-source-idem", `{"model":"action-image","operation":"image_generation","modality":"image","input":{"prompt":"source"}}`)
+	if sourceResponse.Code != http.StatusAccepted {
+		t.Fatalf("source status=%d body=%s", sourceResponse.Code, sourceResponse.Body.String())
+	}
+	var source publicAIJobResponse
+	if err := json.Unmarshal(sourceResponse.Body.Bytes(), &source); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := control.ClaimReadyAIJobs(context.Background(), "action-test-worker", time.Minute, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed=%+v err=%v", claimed, err)
+	}
+	running, err := control.TransitionAIJob(context.Background(), claimed[0].ID, claimed[0].StatusVersion, claimed[0].FenceToken, controlplane.AIJobStatusRunning, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.TransitionAIJob(context.Background(), running.ID, running.StatusVersion, running.FenceToken, controlplane.AIJobStatusSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	actionBody := `{"action":"variation","input":{"prompt":"variation"}}`
+	first := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs/"+source.ID+"/actions", key.Key, "action-child-idem", actionBody)
+	if first.Code != http.StatusAccepted || first.Header().Get("Location") == "" {
+		t.Fatalf("first status=%d headers=%v body=%s", first.Code, first.Header(), first.Body.String())
+	}
+	var child publicAIJobResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &child); err != nil || child.ID == source.ID || child.Status != controlplane.AIJobStatusQueued {
+		t.Fatalf("child=%+v err=%v", child, err)
+	}
+	replay := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs/"+source.ID+"/actions", key.Key, "action-child-idem", actionBody)
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replayed") != "true" || !strings.Contains(replay.Body.String(), child.ID) {
+		t.Fatalf("replay status=%d headers=%v body=%s", replay.Code, replay.Header(), replay.Body.String())
+	}
+	invalid := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs/"+source.ID+"/actions", key.Key, "action-invalid", `{"action":"unknown","input":{"prompt":"variation"}}`)
+	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "invalid_request_error") {
+		t.Fatalf("invalid status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+	conflict := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs/"+source.ID+"/actions", key.Key, "action-child-idem", `{"action":"variation","input":{"prompt":"different"}}`)
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "idempotency_conflict") {
+		t.Fatalf("conflict status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+	noActionKey, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "action denied", ModelAllowlist: []string{"action-image"},
+		Scopes:            []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeJobsRead},
+		AllowedModalities: []string{controlplane.GatewayModalityImage}, AllowedOperations: []string{controlplane.GatewayOperationImageGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDurableOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs/"+source.ID+"/actions", noActionKey.Key, "action-denied", actionBody)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("denied status=%d body=%s", denied.Code, denied.Body.String())
+	}
+}
+
 func TestGatewayMediaGenerationRoutesUseDurableJobContract(t *testing.T) {
 	handler, control := newTestRuntime(t, config.Config{})
 	for _, test := range []struct {
