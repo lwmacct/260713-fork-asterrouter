@@ -26,6 +26,9 @@ func (s *Service) BeginDurableAIJob(ctx context.Context, auth gatewaycore.Canoni
 	if !found || (resolved.GatewayModel.Modality != request.Modality && resolved.GatewayModel.Modality != "multimodal") {
 		return AIJob{}, false, ErrAIJobCapabilityMismatch
 	}
+	if err := s.ValidateInputArtifactsForAuth(ctx, auth, request); err != nil {
+		return AIJob{}, false, err
+	}
 	requestPayloadCiphertext, err := encryptSecret(s.secretKey, string(request.Payload))
 	if err != nil {
 		return AIJob{}, false, err

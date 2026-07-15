@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -107,6 +108,63 @@ func (s *Service) CreateArtifactFromReader(ctx context.Context, input ArtifactCr
 		})
 	}
 	return s.storeArtifactContent(ctx, artifact, input, body)
+}
+
+// ValidateInputArtifactsForAuth verifies artifact references embedded in a
+// canonical request before any Operation, Job, billing hold or provider
+// dispatch is created. The provider never becomes an authorization oracle.
+func (s *Service) ValidateInputArtifactsForAuth(ctx context.Context, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) error {
+	if len(request.Payload) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Input map[string]json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(request.Payload, &envelope); err != nil {
+		return gatewaycore.ErrInvalidCanonicalRequest
+	}
+	ids := make([]string, 0, 4)
+	appendID := func(raw json.RawMessage) error {
+		var id string
+		if err := json.Unmarshal(raw, &id); err != nil || strings.TrimSpace(id) == "" {
+			return gatewaycore.ErrInvalidCanonicalRequest
+		}
+		ids = append(ids, strings.TrimSpace(id))
+		return nil
+	}
+	for _, key := range []string{"artifact_id", "input_artifact_id"} {
+		if raw, exists := envelope.Input[key]; exists {
+			if err := appendID(raw); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"artifact_ids", "input_artifact_ids"} {
+		raw, exists := envelope.Input[key]
+		if !exists {
+			continue
+		}
+		var values []json.RawMessage
+		if err := json.Unmarshal(raw, &values); err != nil || len(values) > 32 {
+			return gatewaycore.ErrInvalidCanonicalRequest
+		}
+		for _, value := range values {
+			if err := appendID(value); err != nil {
+				return err
+			}
+		}
+	}
+	owner := ArtifactOwner(aiJobOwnerFromAuth(auth))
+	for _, id := range ids {
+		artifact, found, err := s.repo.FindOwnedArtifact(ctx, id, owner)
+		if err != nil {
+			return err
+		}
+		if !found || artifact.Role != ArtifactRoleInput || !oneOf(artifact.Status, ArtifactStatusReady, ArtifactStatusDelivered) || !artifactDownloadable(artifact, s.nowUTC()) {
+			return ErrArtifactNotFound
+		}
+	}
+	return nil
 }
 
 func (s *Service) resolveArtifactPolicyAndReferences(ctx context.Context, operation AIOperation, input ArtifactCreateInput) (string, error) {

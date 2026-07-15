@@ -44,6 +44,9 @@ func (s *Service) BeginCanonicalOperation(ctx context.Context, auth gatewaycore.
 	if !validArtifactSinkBinding(operation.ArtifactPolicy, operation.ArtifactSinkID) {
 		return AIOperation{}, false, ErrArtifactSinkRequired
 	}
+	if err := s.ValidateInputArtifactsForAuth(ctx, auth, request); err != nil {
+		return AIOperation{}, false, err
+	}
 	billing, err := s.newBillingHoldAdmission(ctx, operation, auth, request)
 	if err != nil {
 		return AIOperation{}, false, err

@@ -22,7 +22,9 @@ func TestGatewayUploadCreatesOwnedInputArtifactAndReplaysIdempotently(t *testing
 	}
 	key, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
 		Name: "upload caller", ModelAllowlist: []string{"upload-model"},
-		Scopes:         []string{controlplane.GatewayScopeArtifactsWrite, controlplane.GatewayScopeArtifactsRead},
+		Scopes:            []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeArtifactsWrite, controlplane.GatewayScopeArtifactsRead, controlplane.GatewayScopeJobsRead},
+		AllowedModalities: []string{controlplane.GatewayModalityImage}, AllowedOperations: []string{controlplane.GatewayOperationImageGeneration},
+		LanePolicy:     controlplane.GatewayLanePolicyDurableOnly,
 		ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
 	})
 	if err != nil {
@@ -71,6 +73,27 @@ func TestGatewayUploadCreatesOwnedInputArtifactAndReplaysIdempotently(t *testing
 	handler.ServeHTTP(metadataRec, metadata)
 	if metadataRec.Code != http.StatusOK || !strings.Contains(metadataRec.Body.String(), uploaded.ArtifactID) {
 		t.Fatalf("metadata status=%d body=%s", metadataRec.Code, metadataRec.Body.String())
+	}
+	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
+		ModelID: "upload-model", Name: "Upload model", Modality: controlplane.GatewayModalityImage, Status: controlplane.GatewayModelStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs", key.Key, "upload-input-job", `{"model":"upload-model","operation":"image_generation","modality":"image","input":{"prompt":"use-upload","artifact_id":"`+uploaded.ArtifactID+`"}}`)
+	if job.Code != http.StatusAccepted || !strings.Contains(job.Body.String(), `"status":"queued"`) {
+		t.Fatalf("artifact reference job status=%d body=%s", job.Code, job.Body.String())
+	}
+	otherKey, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
+		Name: "other caller", ModelAllowlist: []string{"upload-model"}, Scopes: []string{controlplane.GatewayScopeInvoke},
+		AllowedModalities: []string{controlplane.GatewayModalityImage}, AllowedOperations: []string{controlplane.GatewayOperationImageGeneration},
+		LanePolicy: controlplane.GatewayLanePolicyDurableOnly, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := performGatewayJobRequest(handler, http.MethodPost, "/v1/jobs", otherKey.Key, "foreign-input-job", `{"model":"upload-model","operation":"image_generation","modality":"image","input":{"prompt":"foreign","artifact_id":"`+uploaded.ArtifactID+`"}}`)
+	if foreign.Code != http.StatusNotFound || !strings.Contains(foreign.Body.String(), "resource_not_found") {
+		t.Fatalf("foreign artifact status=%d body=%s", foreign.Code, foreign.Body.String())
 	}
 }
 

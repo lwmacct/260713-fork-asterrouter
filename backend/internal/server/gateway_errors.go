@@ -30,6 +30,8 @@ func writeGatewayError(c *gin.Context, err error) {
 		openAIError(c, http.StatusConflict, "job_not_cancelable", "ai job is already in a non-cancelable terminal state")
 	case errors.Is(err, controlplane.ErrAIJobStateConflict):
 		openAIError(c, http.StatusConflict, "job_state_conflict", "ai job state changed concurrently")
+	case errors.Is(err, controlplane.ErrArtifactNotFound), errors.Is(err, controlplane.ErrAIJobNotFound):
+		openAIError(c, http.StatusNotFound, "resource_not_found", "requested resource was not found")
 	case errors.Is(err, controlplane.ErrAIJobQueueCapacityExceeded):
 		c.Header("Retry-After", strconv.Itoa(controlplane.AIJobDefaultPollAfter))
 		openAIError(c, http.StatusTooManyRequests, "queue_capacity_exceeded", "durable ai job queue capacity exceeded")
