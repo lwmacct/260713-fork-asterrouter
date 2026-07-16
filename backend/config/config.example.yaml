@@ -1,0 +1,102 @@
+# 默认配置示例文件, 此文件由单元测试生成, 请勿直接修改
+# 复制此文件为 config.yaml 并根据需要修改
+
+# AsterRouter service configuration
+server:
+
+  # HTTP service configuration
+  http:
+    listen: ":8080" # HTTP listen address
+    frontend-dir: "../frontend/dist" # Built frontend asset directory
+
+  # First-run bootstrap configuration
+  bootstrap:
+    deployment-role: "" # Optional unattended deployment role: personal, relay_operator, enterprise, or platform
+    demo-mode: false # Enable the isolated demonstration login flow
+
+  # Authentication and encryption configuration
+  security:
+
+    # Bootstrap administrator credentials
+    admin:
+      username: "admin" # Bootstrap administrator username
+      password: "" # Bootstrap administrator password
+      token: "" # Legacy administrator bearer token
+    secret-key: "" # Stable application encryption and signing secret
+
+  # Persistent storage and Redis configuration
+  storage:
+    database-url: "" # PostgreSQL connection URL; empty uses in-memory storage for source development
+
+    # Shared Redis configuration
+    redis:
+      url: "" # Redis connection URL
+      namespace: "asterrouter" # Redis key namespace
+
+  # Official catalog and license services
+  official:
+    update-manifest-url: "" # Release update manifest URL
+
+    # Official plugin catalog configuration
+    catalog:
+      mode: "disabled" # Catalog mode: disabled, online, private_mirror, or offline
+      bootstrap-url: "" # Signed catalog bootstrap URL
+      url: "" # Catalog index URL
+      services-url: "" # Official services base URL
+      key-id: "" # Catalog signature key ID
+      public-key: "" # Catalog signature public key
+
+    # Official license service configuration
+    license:
+      url: "" # License service URL
+      redeem-url: "" # License redemption URL
+      key-id: "" # License signature key ID
+      public-key: "" # License signature public key
+
+    # Stable installation identity
+    instance:
+      id: "" # Stable installation ID
+      fingerprint: "" # Installation fingerprint
+      display-name: "" # Installation display name
+
+  # Plugin runtime configuration
+  plugins:
+    cache-dir: "data/plugin-cache" # Downloaded plugin package cache
+    active-dir: "" # Activated plugin runtime directory; derived from cache-dir when empty
+    host-url: "" # Plugin host callback URL; derived from http.listen when empty
+
+  # Durable AI job infrastructure
+  jobs:
+
+    # Durable AI job delivery queue
+    queue:
+      driver: "memory" # Queue driver: memory or redis
+
+      # Concurrent queued job admission limits; zero disables a limit
+      limits:
+        profile: 0 # Maximum queued jobs per profile
+        tenant: 0 # Maximum queued jobs per tenant
+        principal: 0 # Maximum queued jobs per principal
+    routing-affinity-driver: "repository" # Routing affinity driver: repository or redis
+
+  # Artifact storage configuration
+  artifacts:
+    driver: "none" # Artifact store driver: none, local, or s3
+    local-root: "data/artifacts" # Local artifact root directory
+
+    # S3-compatible artifact store
+    s3:
+      endpoint: "" # S3-compatible endpoint URL
+      region: "auto" # S3 region
+      bucket: "" # S3 bucket
+      prefix: "" # S3 object key prefix
+      access-key: "" # S3 access key
+      secret-key: "" # S3 secret key
+      path-style: false # Use path-style S3 addressing
+
+  # Backup, diagnostics, and process management
+  maintenance:
+    backup-dir: "data/backups" # Local backup directory
+    diagnostic-dir: "data/diagnostics" # Diagnostic bundle directory
+    max-archive-bytes: 2147483648 # Maximum backup or diagnostic archive size
+    allow-restart: false # Allow managed process restart operations

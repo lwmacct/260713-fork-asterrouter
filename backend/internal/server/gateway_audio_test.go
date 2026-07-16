@@ -14,7 +14,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
@@ -84,7 +83,7 @@ func newAudioProtocolFixture(t *testing.T, artifactPolicy string) *audioProtocol
 	}))
 	t.Cleanup(upstream.Close)
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	fixture.handler, fixture.control = handler, control
 	if artifactPolicy == controlplane.GatewayArtifactPolicyTemporary || artifactPolicy == controlplane.GatewayArtifactPolicyManaged {
 		if err := control.SetArtifactStore(controlplane.NewMemoryArtifactStore()); err != nil {

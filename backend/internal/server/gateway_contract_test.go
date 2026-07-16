@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/testutil"
 )
@@ -198,7 +197,7 @@ func TestGatewayProtocolEdgeRejectsQueryAndConflictingCredentials(t *testing.T) 
 
 func TestGatewayCanonicalPlannerRejectsChatOnImageOnlyModel(t *testing.T) {
 	upstream := testutil.NewFakeOpenAI(t)
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "image provider", Type: "openai_compatible", BaseURL: upstream.BaseURL(), Status: controlplane.ProviderStatusActive,
 		Models: []string{"upstream-image"}, APIKey: "provider-secret",
@@ -240,7 +239,7 @@ func TestGatewayCanonicalPlannerRejectsChatOnImageOnlyModel(t *testing.T) {
 
 func TestGatewayTraceIncludesPlannerExclusionEvidence(t *testing.T) {
 	upstream := testutil.NewFakeOpenAI(t)
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "excluded provider", Type: "openai_compatible", BaseURL: upstream.BaseURL(), Status: controlplane.ProviderStatusActive,
 		Models: []string{"upstream-model"}, APIKey: "provider-secret",
@@ -359,7 +358,7 @@ func gatewayContractRuntime(t *testing.T, upstream *testutil.FakeOpenAI) (http.H
 
 func gatewayContractRuntimeWithKeyRequest(t *testing.T, upstream *testutil.FakeOpenAI, keyRequest controlplane.APIKeyCreateRequest) (http.Handler, *controlplane.Service, string) {
 	t.Helper()
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "contract provider", Type: "openai_compatible", BaseURL: upstream.BaseURL(),
 		Status: controlplane.ProviderStatusActive, Models: []string{"upstream-model"}, APIKey: "provider-secret",

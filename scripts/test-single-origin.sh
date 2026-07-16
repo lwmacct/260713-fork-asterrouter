@@ -26,11 +26,11 @@ fi
 
 (
   cd "${ROOT_DIR}/backend"
-  ASTER_ADDR="127.0.0.1:${PORT}" \
-  ASTER_FRONTEND_DIR="../frontend/dist" \
-  ASTER_DEMO_MODE=true \
-  ASTER_SECRET_KEY=asterrouter-single-origin-test-secret \
-  go run ./cmd/asterrouter
+  ASTERROUTER_SERVER_HTTP_LISTEN="127.0.0.1:${PORT}" \
+  ASTERROUTER_SERVER_HTTP_FRONTEND_DIR="../frontend/dist" \
+  ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true \
+  ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-single-origin-test-secret \
+  go run ./cmd/asterrouter server
 ) &
 PID="$!"
 

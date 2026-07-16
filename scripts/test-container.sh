@@ -46,12 +46,12 @@ if docker run --rm --network "${NETWORK}" "${IMAGE}" >"${ARTIFACT_DIR}/container
   echo "Release container unexpectedly started without required configuration." >&2
   exit 1
 fi
-grep -Fq 'DATABASE_URL is required for release deployments' "${ARTIFACT_DIR}/container-fail-closed.log"
+grep -Fq 'server.storage.database-url is required in release builds' "${ARTIFACT_DIR}/container-fail-closed.log"
 
 docker run -d --name "${APP_CONTAINER}" --network "${NETWORK}" -p "127.0.0.1:${PORT}:8080" \
-  -e ASTER_DEMO_MODE=true \
-  -e ASTER_SECRET_KEY=asterrouter-container-test-secret \
-  -e DATABASE_URL='postgres://asterrouter:asterrouter@postgres:5432/asterrouter_test?sslmode=disable' \
+  -e ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true \
+  -e ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-container-test-secret \
+  -e ASTERROUTER_SERVER_STORAGE_DATABASE_URL='postgres://asterrouter:asterrouter@postgres:5432/asterrouter_test?sslmode=disable' \
   "${IMAGE}" >/dev/null
 
 for _ in $(seq 1 90); do

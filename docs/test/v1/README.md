@@ -33,7 +33,7 @@
 
 | 项目 | 当前状态 | 基线结果 |
 | --- | --- | --- |
-| 后端 | Go 1.25，56 个 `*_test.go`，232 个 `Test*` | `go test ./...` 通过 |
+| 后端 | Go 1.26.1，使用 cfgm 统一文件、环境变量与 CLI 配置 | `go test ./...` 通过 |
 | 后端覆盖面 | auth/config/controlplane/operator/plugins/server/settings/system | server 83、controlplane 68、plugins 35 个测试函数，分布不均 |
 | PostgreSQL | 仅 1 个测试由 `ASTER_TEST_DATABASE_URL` 控制 | 默认本地/CI 会跳过该测试 |
 | 前端 | Vue 3 + TypeScript + Vite | 0 个单元、组件或 E2E 测试文件 |
@@ -45,7 +45,7 @@
 
 需要在 Phase 0 先处理的结构性风险：
 
-- `backend/go.mod` 声明 Go 1.25，而 `Dockerfile` 使用 `golang:1.24-alpine`；CI、容器和发布构建必须验证并统一工具链事实。
+- Go module、CI 和 Docker 构建统一以 Go 1.26 系列为基线；发布验收必须继续验证实际工具链版本。
 - PostgreSQL Schema 由各 Repository 内联 SQL 在运行时创建，同时保留 `backend/migrations/*.sql`；两套事实源存在漂移风险。
 - `backend/migrations` 的编号从 018 跳到 020，历史 `019` 已删除。必须明确迁移文件是部署事实源、审计快照还是历史参考，并为相应规则加自动校验。
 - 当前大多数后端测试使用内存 Repository，不能证明 SQL 约束、事务原子性、重启持久化和升级兼容性。

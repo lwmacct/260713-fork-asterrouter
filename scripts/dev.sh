@@ -11,7 +11,7 @@ if [ -f "${ROOT_DIR}/.env" ]; then
 fi
 
 KILL_OCCUPIED="${ASTER_DEV_KILL_OCCUPIED:-1}"
-DEMO_MODE="${ASTER_DEMO_MODE:-false}"
+DEMO_MODE="${ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE:-false}"
 
 usage() {
   cat <<'EOF'
@@ -24,7 +24,7 @@ Options:
   -h, --help          Show this help message.
 
 Environment:
-  ASTER_DEMO_MODE=true       Enable the built-in one-click demo account.
+  ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true       Enable the built-in one-click demo account.
   ASTER_DEV_KILL_OCCUPIED=1  Enable automatic port cleanup (default).
   ASTER_DEV_KILL_OCCUPIED=0  Disable automatic port cleanup.
 EOF
@@ -154,10 +154,10 @@ fi
 
 (
   cd "${ROOT_DIR}/backend"
-  ASTER_ADDR="${ASTER_ADDR:-${BACKEND_HOST}:${BACKEND_PORT}}" \
-    ASTER_FRONTEND_DIR="${ASTER_FRONTEND_DIR:-../frontend/dist}" \
-    ASTER_DEMO_MODE="${DEMO_MODE}" \
-    go run ./cmd/asterrouter
+  ASTERROUTER_SERVER_HTTP_LISTEN="${ASTERROUTER_SERVER_HTTP_LISTEN:-${BACKEND_HOST}:${BACKEND_PORT}}" \
+    ASTERROUTER_SERVER_HTTP_FRONTEND_DIR="${ASTERROUTER_SERVER_HTTP_FRONTEND_DIR:-../frontend/dist}" \
+    ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE="${DEMO_MODE}" \
+    go run ./cmd/asterrouter server
 ) &
 PIDS+=("$!")
 

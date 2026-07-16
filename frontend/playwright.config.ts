@@ -66,8 +66,8 @@ export default defineConfig({
           `ASTER_DEV_FRONTEND_PORT=${frontendPort}`,
           `VITE_DEV_PROXY_TARGET=http://127.0.0.1:${backendPort}`,
           `ASTER_E2E_UPSTREAM_PORT=${upstreamPort}`,
-          'ASTER_DEMO_MODE=true',
-          'ASTER_SECRET_KEY=asterrouter-e2e-test-secret',
+          'ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true',
+          'ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-e2e-test-secret',
           'bash ../scripts/e2e.sh'
         ].join(' '),
         url: `http://127.0.0.1:${backendPort}/ready`,

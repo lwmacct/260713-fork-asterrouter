@@ -82,18 +82,17 @@ start_runtime() {
   (
     cd "${PACKAGE_DIR}"
     exec env \
-      "ASTER_ADDR=127.0.0.1:${port}" \
-      "ASTER_FRONTEND_DIR=${PACKAGE_DIR}/frontend/dist" \
-      "ASTER_ADMIN_PASSWORD=release-browser-test-password" \
-      "ASTER_SECRET_KEY=asterrouter-release-journey-test-secret" \
-      "ASTER_PROFILES=${profile}" \
-      "ASTER_DEFAULT_PROFILE=${profile}" \
-      "ASTER_PLUGIN_CACHE_DIR=${profile_dir}/data/plugin-cache" \
-      "ASTER_PLUGIN_ACTIVE_DIR=${profile_dir}/data/plugin-active" \
-      "ASTER_BACKUP_DIR=${profile_dir}/data/backups" \
-      "ASTER_DIAGNOSTIC_DIR=${profile_dir}/data/diagnostics" \
-      "DATABASE_URL=${database_url}" \
-      ./asterrouter
+      "ASTERROUTER_SERVER_HTTP_LISTEN=127.0.0.1:${port}" \
+      "ASTERROUTER_SERVER_HTTP_FRONTEND_DIR=${PACKAGE_DIR}/frontend/dist" \
+      "ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD=release-browser-test-password" \
+      "ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-release-journey-test-secret" \
+      "ASTERROUTER_SERVER_BOOTSTRAP_DEPLOYMENT_ROLE=${profile}" \
+      "ASTERROUTER_SERVER_PLUGINS_CACHE_DIR=${profile_dir}/data/plugin-cache" \
+      "ASTERROUTER_SERVER_PLUGINS_ACTIVE_DIR=${profile_dir}/data/plugin-active" \
+      "ASTERROUTER_SERVER_MAINTENANCE_BACKUP_DIR=${profile_dir}/data/backups" \
+      "ASTERROUTER_SERVER_MAINTENANCE_DIAGNOSTIC_DIR=${profile_dir}/data/diagnostics" \
+      "ASTERROUTER_SERVER_STORAGE_DATABASE_URL=${database_url}" \
+      ./asterrouter server
   ) >"${profile_dir}/runtime.log" 2>&1 &
   RUNTIME_PID="$!"
   PIDS+=("${RUNTIME_PID}")
@@ -176,7 +175,7 @@ tar -C "${RUN_DIR}" -xzf "${ARCHIVE}"
 ) >"${RUN_DIR}/fake-upstream.log" 2>&1 &
 PIDS+=("$!")
 
-DATABASE_URL="$(database_url_for platform_setup)" \
+ASTER_SETUP_JOURNEY_DATABASE_URL="$(database_url_for platform_setup)" \
   ASTER_SETUP_JOURNEY_DIR="${RUN_DIR}/setup" \
   ASTER_SETUP_JOURNEY_PORT="${BACKEND_PORT}" \
   ASTER_SETUP_JOURNEY_BINARY="${PACKAGE_DIR}/asterrouter" \

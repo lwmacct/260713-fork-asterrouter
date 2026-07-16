@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/settings"
 )
@@ -126,7 +125,7 @@ func TestPlatformUsageSinkRoutesMaskSecretsAndRejectCrossSinkRequeue(t *testing.
 	settingsService := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{
 		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"platform"}, DefaultProfile: "platform",
 	})
-	handler := New(Options{Config: config.Config{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control})
+	handler := New(Options{Runtime: RuntimeConfig{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control})
 	ctx := context.Background()
 	tenant, err := control.CreatePlatformTenant(ctx, "operator", controlplane.PlatformTenantRequest{Name: "Usage routes", Slug: "usage-routes"})
 	if err != nil {
@@ -213,7 +212,7 @@ func newPlatformExternalAuthHandler(t *testing.T) (http.Handler, *controlplane.S
 		Version: "test", StorageMode: "memory", EnabledProfiles: []string{"platform"}, DefaultProfile: "platform",
 	})
 	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
-	return New(Options{Config: config.Config{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control}), control
+	return New(Options{Runtime: RuntimeConfig{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control}), control
 }
 
 func signedGatewayContext(t testing.TB, claims controlplane.ExternalAuthContextClaims, secret string) string {

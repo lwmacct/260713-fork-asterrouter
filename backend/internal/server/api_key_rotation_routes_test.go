@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestAdminAPIKeyRotationAcceptsGracePeriod(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name: "grace route", ModelAllowlist: []string{"model-a"},
 	})
@@ -53,7 +52,7 @@ func TestAdminAPIKeyRotationAcceptsGracePeriod(t *testing.T) {
 }
 
 func TestAdminAPIKeyRotationRejectsInvalidGracePeriodWithoutMutation(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name: "invalid grace route", ModelAllowlist: []string{"model-a"},
 	})

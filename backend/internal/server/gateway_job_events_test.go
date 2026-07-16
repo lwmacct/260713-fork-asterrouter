@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
@@ -313,7 +312,7 @@ func gatewayJobEventTestRuntime(t *testing.T) (http.Handler, *controlplane.Servi
 
 func gatewayJobEventTestRuntimeWithKey(t *testing.T, configure func(*controlplane.APIKeyCreateRequest)) (http.Handler, *controlplane.Service, controlplane.APIKeyCreateResponse, publicAIJobResponse) {
 	t.Helper()
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "event-image-job", Name: "Event image job", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {

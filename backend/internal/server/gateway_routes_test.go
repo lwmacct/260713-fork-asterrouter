@@ -13,13 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/gin-gonic/gin"
 )
 
 func TestGatewayModelsRequiresAPIKey(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	rec := httptest.NewRecorder()
@@ -31,7 +30,7 @@ func TestGatewayModelsRequiresAPIKey(t *testing.T) {
 }
 
 func TestGatewayModelsUsesAPIKeyAllowlist(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "tester", controlplane.GatewayModelRequest{ModelID: "gpt-4o-mini", Name: "GPT", Status: controlplane.GatewayModelStatusActive}); err != nil {
 		t.Fatalf("CreateGatewayModel(): %v", err)
 	}
@@ -67,7 +66,7 @@ func TestGatewayModelsUsesAPIKeyAllowlist(t *testing.T) {
 }
 
 func TestGatewayChatCompletionAuthorizesModelAndAudits(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "gateway",
 		ModelAllowlist:    []string{"gpt-4o-mini"},
@@ -101,7 +100,7 @@ func TestGatewayChatCompletionAuthorizesModelAndAudits(t *testing.T) {
 }
 
 func TestGatewayChatCompletionEnforcesQPSLimitAndRecordsTrace(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "gateway limited",
 		ModelAllowlist:    []string{"gpt-4o-mini"},
@@ -159,7 +158,7 @@ func TestGatewayChatCompletionEnforcesQPSLimitAndRecordsTrace(t *testing.T) {
 }
 
 func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	policy, err := control.CreateGovernancePolicy(context.Background(), "tester", controlplane.GovernancePolicyRequest{
 		Name:               "Workspace key budget",
 		ScopeType:          controlplane.GovernancePolicyScopeGlobal,
@@ -232,7 +231,7 @@ func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testi
 }
 
 func TestGatewayChatCompletionRejectsDisallowedModel(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "gateway",
 		ModelAllowlist:    []string{"gpt-4o-mini"},
@@ -280,7 +279,7 @@ func TestGatewayChatCompletionForwardsToConfiguredProvider(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "test provider",
 		Type:    "openai_compatible",
@@ -348,7 +347,7 @@ func TestGatewayChatCompletionRoutesThroughProviderAccountPool(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "account route provider",
 		Type:    "openai_compatible",
@@ -461,7 +460,7 @@ func TestGatewayChatCompletionFallsBackToNextAccountAfterUpstreamFailure(t *test
 	}))
 	defer healthy.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	failingProvider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "failing provider",
 		Type:    "openai_compatible",
@@ -583,7 +582,7 @@ func TestGatewayChatCompletionFallsBackAfterRateLimitAndServerError(t *testing.T
 			}))
 			defer fallback.Close()
 
-			handler, control := newTestRuntime(t, config.Config{})
+			handler, control := newTestRuntime(t, RuntimeConfig{})
 			primaryProvider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{Name: "Failing provider", Type: "openai_compatible", BaseURL: failing.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"model"}, APIKey: "primary-provider-secret"})
 			if err != nil {
 				t.Fatal(err)
@@ -650,7 +649,7 @@ func TestGatewayChatCompletionFallsBackAfterPrimaryTimeoutAndReleasesCapacity(t 
 	}))
 	defer fallback.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	primaryProvider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{Name: "Timeout primary", Type: "openai_compatible", BaseURL: primary.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"model"}, APIKey: "primary-secret"})
 	if err != nil {
 		t.Fatal(err)
@@ -719,7 +718,7 @@ func TestGatewayStreamingInterruptionRecordsErrorWithoutUnsafeFailover(t *testin
 	}))
 	defer fallback.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	primaryProvider, _ := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{Name: "Interrupted stream", Type: "openai_compatible", BaseURL: interrupted.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"model"}, APIKey: "primary-secret"})
 	fallbackProvider, _ := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{Name: "Stream fallback", Type: "openai_compatible", BaseURL: fallback.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"model"}, APIKey: "fallback-secret"})
 	primaryAccount := createGatewayTestAccount(t, control, primaryProvider, "model", "primary-secret", 10, 1)
@@ -768,7 +767,7 @@ func TestGatewayChatCompletionSkipsAccountAtConcurrencyCapacity(t *testing.T) {
 	}))
 	defer free.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	busyProvider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "busy provider",
 		Type:    "openai_compatible",
@@ -877,7 +876,7 @@ func TestGatewayChatCompletionSkipsAccountAtConcurrencyCapacity(t *testing.T) {
 }
 
 func TestGatewayChatCompletionRejectsOversizedRequestBody(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("x", gatewayRequestBodyLimit+1)))
 	req.Header.Set("Content-Type", "application/json")
@@ -905,7 +904,7 @@ func TestGatewayChatCompletionPassesThroughUpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "limited provider",
 		Type:    "openai_compatible",
@@ -957,7 +956,7 @@ func TestGatewayChatCompletionStreamsConfiguredProvider(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "stream provider",
 		Type:    "openai_compatible",
@@ -1003,7 +1002,7 @@ func TestGatewayChatCompletionStreamsConfiguredProvider(t *testing.T) {
 }
 
 func TestGatewayChatCompletionRejectsStreamingWithoutProvider(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "gateway",
 		ModelAllowlist:    []string{"gpt-4o-mini"},

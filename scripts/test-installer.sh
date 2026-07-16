@@ -108,7 +108,7 @@ test "$("${INSTALL_DIR}/asterrouter" --version)" = "asterrouter 0.3.0"
 test -f "${INSTALL_DIR}/frontend/dist/index.html"
 test -x "${COMMAND_PATH}"
 test -f "${SERVICE_FILE}"
-grep -q '^ASTER_DEPLOYMENT_ROLE=platform$' "${CONFIG_DIR}/asterrouter.env"
+grep -q '^ASTERROUTER_SERVER_BOOTSTRAP_DEPLOYMENT_ROLE=platform$' "${CONFIG_DIR}/asterrouter.env"
 
 bash "${ROOT_DIR}/deploy/install.sh" upgrade -v 0.4.0
 test "$("${INSTALL_DIR}/asterrouter" --version)" = "asterrouter 0.4.0"
@@ -132,7 +132,7 @@ grep -Eq 'FAILED|checksum' "${WORK_DIR}/checksum-rejection.log"
 grep -q '^daemon-reload$' "${SYSTEMCTL_LOG}"
 grep -q '^stop asterrouter-test$' "${SYSTEMCTL_LOG}"
 if grep -q '^enable --now asterrouter-test$' "${SYSTEMCTL_LOG}"; then
-  echo "Installer started the service even though DATABASE_URL was empty." >&2
+  echo "Installer started the service even though ASTERROUTER_SERVER_STORAGE_DATABASE_URL was empty." >&2
   exit 1
 fi
 

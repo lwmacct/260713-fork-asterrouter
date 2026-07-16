@@ -1,21 +1,21 @@
 # AsterRouter 测试计划 v1 实施状态
 
-> 最近核验：2026-07-14 CST
+> 最近核验：2026-07-16 CST
 >
-> 基准提交：`f8378c5c58a94ac56295872eb5919e4d506f939a`（dirty worktree）
+> 基准提交：`aee45c9dec4f5a50d1bf515fd834fef6e4d07f4f`（dirty worktree）
 >
 > 结论：v1 的本地实现、测试入口和 CI/release/nightly 门禁已落地。当前不能宣称候选版本可发布，直到本轮变更在 GitHub Actions 的 PostgreSQL 16、Linux、Docker、arm64 和 nightly 环境产生真实成功证据。
 
-本轮本地复核已通过：`GOTOOLCHAIN=go1.25.1 bash scripts/test.sh all`、`go test -race -count=1 -timeout=15m ./...`、J04 六场景失败矩阵、20 秒 normal/SSE soak（1,615 请求，goroutine 增量 3）、独立空库 setup、以及四个独立单 Profile runtime 的 Chromium 验收。所有临时 runtime 使用独立端口和内存数据，不能替代 PostgreSQL 或 Linux candidate artifact 证据。
+配置与启动重构本地复核已通过：Go 1.26.1 全量与 race、34 个前端测试文件的 102 个用例、单源生产 smoke、installer 安装/升级/回滚，以及 Go 1.26 容器的 PostgreSQL ready、非 root、fail-closed 和 SIGTERM 验收。Linux candidate archive 和 GitHub Actions 证据仍由发布门禁负责。
 
 ## 1. 当前自动化入口
 
 | 能力 | 自动化入口 | 当前本地证据 |
 | --- | --- | --- |
 | 后端全量 | `cd backend && go test -count=1 ./...` | 通过；本机无 PostgreSQL 时环境依赖测试按显式条件跳过 |
-| 后端 race | `cd backend && GOTOOLCHAIN=go1.25.1 go test -race -count=1 -timeout=15m ./...` | 已运行通过；长期 nightly 仍需 Ubuntu 证据 |
-| 后端覆盖率 | `GOTOOLCHAIN=go1.25.1 bash scripts/test.sh backend-coverage` | 本地 Go 1.25.1 运行，coverage profile 已生成；当前关键包仍未达到 75% 渐进目标 |
-| 前端单元/组件 | `cd frontend && npm run test:unit:coverage` | 11 文件、46 用例通过；覆盖率持续以渐进 ratchet 管理 |
+| 后端 race | `cd backend && go test -race -count=1 -timeout=15m ./...` | Go 1.26.1 本地运行通过；长期 nightly 仍需 Ubuntu 证据 |
+| 后端覆盖率 | `bash scripts/test.sh backend-coverage` | 项目基线已升级到 Go 1.26.1；coverage profile 已生成，关键包继续执行 75% 渐进目标 |
+| 前端单元/组件 | `cd frontend && npm run test:unit` | 34 文件、102 用例通过；覆盖率持续以渐进 ratchet 管理 |
 | 开发浏览器 smoke | `cd frontend && npm run test:e2e:smoke` | demo 多 Surface Chromium smoke 通过；关键 API 旅程仅在桌面运行，其余视口按设计 skip |
 | 首装浏览器旅程 | `bash scripts/test-setup-browser-journey.sh` | 空 runtime、单源构建、`platform` 首装持久化；桌面 1 通过、其余视口按设计 skip |
 | 非 demo 候选路径模拟 | 每个 `enterprise`、`relay_operator`、`personal`、`platform` 启动独立 runtime/数据库；`configure-e2e-profiles.mjs` 验证其单 Profile 状态 | 本机已验证 `enterprise` J01-J05 与 `platform` Surface；候选 archive 的 Linux/PostgreSQL 实跑由 CI 负责 |
@@ -24,7 +24,7 @@
 | 短 soak 回归 | `ASTER_GATEWAY_SOAK=1 ASTER_GATEWAY_SOAK_DURATION=20s ...` | 1,615 普通/流式请求通过；goroutine 增量 3；30 分钟 nightly 仍待执行 |
 | 发布包静态验收 | `ASTER_DIST_DIR=<empty-dir> bash scripts/build-release.sh 0.5.0 && ...test-release-artifacts.sh 0.5.0` | amd64/arm64 archive、checksum、manifest 与二进制元数据通过；本机不能执行 Linux binary |
 
-本机为 macOS arm64、Go 1.24.3（可用 `GOTOOLCHAIN=go1.25.1`）、Node 23.4.0。项目 CI 的 Go 1.25、Node 24 与 Ubuntu Linux 结果才是版本和发布门禁的事实来源。
+本地环境版本仅用于快速反馈。项目 CI 的 Go 1.26、Node 24 与 Ubuntu Linux 结果才是版本和发布门禁的事实来源。
 
 ## 2. Phase 状态
 

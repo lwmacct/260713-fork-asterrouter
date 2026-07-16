@@ -9,12 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestAdminIdentityUserAndRoleBindingEndpoints(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	department, err := control.CreateDepartment(t.Context(), "tester", controlplane.DepartmentRequest{Name: "Engineering", Code: "eng", Status: controlplane.DepartmentStatusActive})
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +127,7 @@ func TestAdminIdentityUserAndRoleBindingEndpoints(t *testing.T) {
 }
 
 func TestAdminUserDepartmentAssignmentValidationAndSessionRevocation(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	engineering, err := control.CreateDepartment(t.Context(), "tester", controlplane.DepartmentRequest{Name: "Engineering", Code: "eng", Status: controlplane.DepartmentStatusActive})
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +192,7 @@ func TestAdminUserDepartmentAssignmentValidationAndSessionRevocation(t *testing.
 }
 
 func TestDepartmentAdministratorCanOnlyAssignAuthorizedDepartment(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	engineering, err := control.CreateDepartment(t.Context(), "tester", controlplane.DepartmentRequest{Name: "Engineering", Code: "eng", Status: controlplane.DepartmentStatusActive})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +235,7 @@ func TestDepartmentAdministratorCanOnlyAssignAuthorizedDepartment(t *testing.T) 
 }
 
 func TestAdminOrganizationGroupLifecycle(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	user, err := control.CreateWorkspaceUser(t.Context(), "tester", controlplane.WorkspaceUserRequest{Email: "group-member@example.test", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper})
 	if err != nil {
 		t.Fatal(err)

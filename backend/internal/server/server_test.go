@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/astercloud/asterrouter/backend/internal/auth"
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 	operatorcore "github.com/astercloud/asterrouter/backend/internal/operator"
@@ -26,11 +25,11 @@ func (allowDurableAIJobs) SupportsDurableAIJob(context.Context, gatewaycore.Cano
 	return true, nil
 }
 
-func newTestRuntime(t *testing.T, cfg config.Config) (http.Handler, *controlplane.Service) {
+func newTestRuntime(t *testing.T, cfg RuntimeConfig) (http.Handler, *controlplane.Service) {
 	return newTestRuntimeWithDurableAdmission(t, cfg, allowDurableAIJobs{})
 }
 
-func newTestRuntimeWithDurableAdmission(t *testing.T, cfg config.Config, durableJobs DurableAIJobAdmission) (http.Handler, *controlplane.Service) {
+func newTestRuntimeWithDurableAdmission(t *testing.T, cfg RuntimeConfig, durableJobs DurableAIJobAdmission) (http.Handler, *controlplane.Service) {
 	t.Helper()
 	settingsService := settings.NewService(settings.NewMemoryRepository(), settings.ServiceOptions{Version: "test", StorageMode: "memory", DemoMode: true, EnabledProfiles: []string{"personal", "relay_operator", "enterprise"}})
 	controlService := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
@@ -47,10 +46,10 @@ func newTestRuntimeWithDurableAdmission(t *testing.T, cfg config.Config, durable
 	if value, ok := durableJobs.(AIJobRuntimeStatusProvider); ok {
 		runtime = value
 	}
-	return New(Options{Config: cfg, SettingsService: settingsService, ControlService: controlService, OperatorService: operatorService, PluginService: pluginService, SystemService: systemService, DurableAIJobs: durableJobs, AIJobRuntime: runtime}), controlService
+	return New(Options{Runtime: cfg, SettingsService: settingsService, ControlService: controlService, OperatorService: operatorService, PluginService: pluginService, SystemService: systemService, DurableAIJobs: durableJobs, AIJobRuntime: runtime}), controlService
 }
 
-func newTestHandler(t *testing.T, cfg config.Config) http.Handler {
+func newTestHandler(t *testing.T, cfg RuntimeConfig) http.Handler {
 	t.Helper()
 	handler, _ := newTestRuntime(t, cfg)
 	return handler
@@ -79,7 +78,7 @@ func newAuthTestRuntime(t *testing.T) (http.Handler, *controlplane.Service) {
 		t.Fatalf("Plugin EnsureSeedData(): %v", err)
 	}
 	return New(Options{
-		Config:          config.Config{},
+		Runtime:         RuntimeConfig{},
 		AuthService:     auth.NewService(auth.Config{Username: "admin", Password: "secret", PasswordHash: localAdmin.PasswordHash, SecretKey: "test-secret"}),
 		SettingsService: settingsService,
 		ControlService:  controlService,
@@ -90,7 +89,7 @@ func newAuthTestRuntime(t *testing.T) (http.Handler, *controlplane.Service) {
 }
 
 func TestPublicSettingsEndpoint(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
 	rec := httptest.NewRecorder()
@@ -112,7 +111,7 @@ func TestPublicSettingsEndpoint(t *testing.T) {
 }
 
 func TestAdminSettingsRequiresToken(t *testing.T) {
-	handler := newTestHandler(t, config.Config{AdminToken: "secret"})
+	handler := newTestHandler(t, RuntimeConfig{AdminToken: "secret"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
 	rec := httptest.NewRecorder()
@@ -296,7 +295,7 @@ func TestSetupProfileEndpoint(t *testing.T) {
 		t.Fatalf("Plugin EnsureSeedData(): %v", err)
 	}
 	systemService := system.NewService(system.Config{Version: "test", BuildType: "source"})
-	handler := New(Options{Config: config.Config{}, SettingsService: svc, ControlService: controlService, PluginService: pluginService, SystemService: systemService})
+	handler := New(Options{Runtime: RuntimeConfig{}, SettingsService: svc, ControlService: controlService, PluginService: pluginService, SystemService: systemService})
 	postProfile := func(profile string) *httptest.ResponseRecorder {
 		t.Helper()
 		body := bytes.NewBufferString(fmt.Sprintf(`{"profile":%q}`, profile))

@@ -380,7 +380,7 @@ func (s *Service) Restart(operationID string, delay time.Duration) (ApplyResult,
 		return ApplyResult{
 			Message:      "Automatic restart is disabled.",
 			OperationID:  operationID,
-			ManualAction: "Restart the service manually, or set ASTER_ALLOW_RESTART=true for managed deployments.",
+			ManualAction: "Restart the service manually, or set ASTERROUTER_SERVER_MAINTENANCE_ALLOW_RESTART=true for managed deployments.",
 		}, ErrRestartUnsupported
 	}
 	if delay <= 0 {

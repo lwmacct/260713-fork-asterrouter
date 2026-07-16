@@ -177,7 +177,7 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_e2e_test?sslmode=disable
+      ASTERROUTER_SERVER_STORAGE_DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_e2e_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -207,7 +207,7 @@ jobs:
       - name: First-install setup browser journey
         env:
           ASTER_SETUP_JOURNEY_DIR: ${{ runner.temp }}/asterrouter-setup-journey
-          DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_e2e_setup_test?sslmode=disable
+          ASTER_SETUP_JOURNEY_DATABASE_URL: postgres://asterrouter:asterrouter@127.0.0.1:5432/asterrouter_e2e_setup_test?sslmode=disable
         run: bash scripts/test-setup-browser-journey.sh
       - name: Upload browser evidence
         if: always()

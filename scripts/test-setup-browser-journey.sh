@@ -1,99 +1,117 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_DIR="${ASTER_SETUP_JOURNEY_DIR:-${TMPDIR:-/tmp}/asterrouter-setup-journey-$$}"
-PORT="${ASTER_SETUP_JOURNEY_PORT:-18088}"
-BINARY="${ASTER_SETUP_JOURNEY_BINARY:-}"
-DATABASE_URL="${DATABASE_URL:-}"
-PID=""
+_pid=""
 
-if [ -d "${RUN_DIR}" ] && find "${RUN_DIR}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
-  echo "Refusing to overwrite non-empty setup journey directory: ${RUN_DIR}" >&2
-  exit 1
-fi
-if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Setup journey port ${PORT} is already in use." >&2
-  exit 1
-fi
-
-cleanup() {
-  if [ -n "${PID}" ]; then
-    kill -TERM "${PID}" >/dev/null 2>&1 || true
-    wait "${PID}" >/dev/null 2>&1 || true
+__cleanup() {
+  if [ -n "${_pid}" ]; then
+    kill -TERM "${_pid}" >/dev/null 2>&1 || true
+    wait "${_pid}" >/dev/null 2>&1 || true
   fi
 }
-trap cleanup EXIT INT TERM
 
-mkdir -p "${RUN_DIR}"
-if [ -z "${BINARY}" ]; then
-  (
-    cd "${ROOT_DIR}/frontend"
-    npm run build
-  )
-else
-  if [ ! -x "${BINARY}" ]; then
-    echo "ASTER_SETUP_JOURNEY_BINARY must point to an executable: ${BINARY}" >&2
-    exit 1
-  fi
-fi
-(
-  if [ -n "${BINARY}" ]; then
-    cd "$(dirname "${BINARY}")"
-    APP_COMMAND=("${BINARY}")
-    FRONTEND_DIR="$(dirname "${BINARY}")/frontend/dist"
+__run_runtime() {
+  local -a _app_command
+  local -a _runtime_env
+  local _frontend_dir
+
+  if [ -n "${_binary}" ]; then
+    cd "$(dirname "${_binary}")"
+    _app_command=("${_binary}" server)
+    _frontend_dir="$(dirname "${_binary}")/frontend/dist"
   else
-    cd "${ROOT_DIR}/backend"
-    APP_COMMAND=(go run ./cmd/asterrouter)
-    FRONTEND_DIR="${ROOT_DIR}/frontend/dist"
+    cd "${_root_dir}/backend"
+    _app_command=(go run ./cmd/asterrouter server)
+    _frontend_dir="${_root_dir}/frontend/dist"
   fi
-  runtime_env=(
-    "ASTER_ADDR=127.0.0.1:${PORT}"
-    "ASTER_FRONTEND_DIR=${FRONTEND_DIR}"
-    'ASTER_ADMIN_PASSWORD=setup-browser-test-password'
-    'ASTER_SECRET_KEY=asterrouter-setup-browser-test-secret'
-    "ASTER_PLUGIN_CACHE_DIR=${RUN_DIR}/data/plugin-cache"
-    "ASTER_PLUGIN_ACTIVE_DIR=${RUN_DIR}/data/plugin-active"
-    "ASTER_BACKUP_DIR=${RUN_DIR}/data/backups"
-    "ASTER_DIAGNOSTIC_DIR=${RUN_DIR}/data/diagnostics"
+  _runtime_env=(
+    "ASTERROUTER_SERVER_HTTP_LISTEN=127.0.0.1:${_port}"
+    "ASTERROUTER_SERVER_HTTP_FRONTEND_DIR=${_frontend_dir}"
+    'ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD=setup-browser-test-password'
+    'ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-setup-browser-test-secret'
+    "ASTERROUTER_SERVER_PLUGINS_CACHE_DIR=${_run_dir}/data/plugin-cache"
+    "ASTERROUTER_SERVER_PLUGINS_ACTIVE_DIR=${_run_dir}/data/plugin-active"
+    "ASTERROUTER_SERVER_MAINTENANCE_BACKUP_DIR=${_run_dir}/data/backups"
+    "ASTERROUTER_SERVER_MAINTENANCE_DIAGNOSTIC_DIR=${_run_dir}/data/diagnostics"
   )
-  if [ -n "${DATABASE_URL}" ]; then
-    runtime_env+=("DATABASE_URL=${DATABASE_URL}")
+  if [ -n "${ASTER_SETUP_JOURNEY_DATABASE_URL:-}" ]; then
+    _runtime_env+=("ASTERROUTER_SERVER_STORAGE_DATABASE_URL=${ASTER_SETUP_JOURNEY_DATABASE_URL}")
   fi
-  exec env "${runtime_env[@]}" "${APP_COMMAND[@]}"
-) >"${RUN_DIR}/runtime.log" 2>&1 &
-PID="$!"
+  exec env "${_runtime_env[@]}" "${_app_command[@]}"
+}
 
-for _ in $(seq 1 120); do
-  if curl -fsS "http://127.0.0.1:${PORT}/ready" 2>/dev/null | grep -q '"status":"ready"'; then
-    break
-  fi
-  if ! kill -0 "${PID}" >/dev/null 2>&1; then
-    wait "${PID}" || true
-    echo "Setup journey runtime exited before becoming ready." >&2
+__main() {
+  local _attempt
+  local _execution
+
+  _root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  _run_dir="${ASTER_SETUP_JOURNEY_DIR:-${TMPDIR:-/tmp}/asterrouter-setup-journey-$$}"
+  _port="${ASTER_SETUP_JOURNEY_PORT:-18088}"
+  _binary="${ASTER_SETUP_JOURNEY_BINARY:-}"
+
+  if [ -d "${_run_dir}" ] && find "${_run_dir}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "Refusing to overwrite non-empty setup journey directory: ${_run_dir}" >&2
     exit 1
   fi
-  sleep 0.25
-done
-curl -fsS "http://127.0.0.1:${PORT}/api/v1/setup/status" | grep -q '"setup_completed":false'
+  if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"${_port}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Setup journey port ${_port} is already in use." >&2
+    exit 1
+  fi
 
-(
-  cd "${ROOT_DIR}/frontend"
-  CI=true \
-    ASTER_E2E_INCLUDE_SETUP=1 \
-    ASTER_E2E_EXTERNAL_URL="http://127.0.0.1:${PORT}" \
-    ASTER_E2E_ARTIFACT_DIR="${RUN_DIR}/playwright" \
-    npx playwright test --grep '@setup'
-)
+  trap __cleanup EXIT INT TERM
 
-curl -fsS "http://127.0.0.1:${PORT}/api/v1/setup/status" | grep -q '"default_profile":"platform"'
-curl -fsS "http://127.0.0.1:${PORT}/api/v1/setup/status" | grep -q '"setup_completed":true'
+  mkdir -p "${_run_dir}"
+  if [ -z "${_binary}" ]; then
+    (
+      cd "${_root_dir}/frontend"
+      npm run build
+    )
+  elif [ ! -x "${_binary}" ]; then
+    echo "ASTER_SETUP_JOURNEY_BINARY must point to an executable: ${_binary}" >&2
+    exit 1
+  fi
 
-{
-  echo 'setup_browser_journey=passed'
-  echo "execution=$([ -n "${BINARY}" ] && echo candidate_binary || echo source_runtime)"
-  echo 'profile=platform'
-  echo 'browser=chromium'
-} >"${RUN_DIR}/report.txt"
+  __run_runtime >"${_run_dir}/runtime.log" 2>&1 &
+  _pid="$!"
 
-echo "Setup browser journey passed. Evidence: ${RUN_DIR}/report.txt"
+  for _attempt in $(seq 1 120); do
+    if curl -fsS "http://127.0.0.1:${_port}/ready" 2>/dev/null | grep -q '"status":"ready"'; then
+      break
+    fi
+    if ! kill -0 "${_pid}" >/dev/null 2>&1; then
+      wait "${_pid}" || true
+      echo "Setup journey runtime exited before becoming ready." >&2
+      exit 1
+    fi
+    sleep 0.25
+  done
+  curl -fsS "http://127.0.0.1:${_port}/api/v1/setup/status" | grep -q '"setup_completed":false'
+
+  (
+    cd "${_root_dir}/frontend"
+    CI=true \
+      ASTER_E2E_INCLUDE_SETUP=1 \
+      ASTER_E2E_EXTERNAL_URL="http://127.0.0.1:${_port}" \
+      ASTER_E2E_ARTIFACT_DIR="${_run_dir}/playwright" \
+      npx playwright test --grep '@setup'
+  )
+
+  curl -fsS "http://127.0.0.1:${_port}/api/v1/setup/status" | grep -q '"default_profile":"platform"'
+  curl -fsS "http://127.0.0.1:${_port}/api/v1/setup/status" | grep -q '"setup_completed":true'
+
+  if [ -n "${_binary}" ]; then
+    _execution="candidate_binary"
+  else
+    _execution="source_runtime"
+  fi
+  {
+    echo 'setup_browser_journey=passed'
+    echo "execution=${_execution}"
+    echo 'profile=platform'
+    echo 'browser=chromium'
+  } >"${_run_dir}/report.txt"
+
+  echo "Setup browser journey passed. Evidence: ${_run_dir}/report.txt"
+}
+
+__main "$@"

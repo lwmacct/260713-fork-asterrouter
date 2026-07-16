@@ -9,12 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestAdminDepartmentEndpoints(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 
 	parentBody := bytes.NewBufferString(`{"name":"Engineering","code":"eng","cost_center":"eng-core","monthly_budget_cents":250000,"status":"active"}`)
 	parentReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/departments", parentBody)

@@ -7,13 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestAdminAlertEndpoints(t *testing.T) {
 	ctx := context.Background()
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(ctx, "tester", controlplane.APIKeyCreateRequest{
 		Name:              "HTTP alert key",
 		ModelAllowlist:    []string{"gpt-alert"},

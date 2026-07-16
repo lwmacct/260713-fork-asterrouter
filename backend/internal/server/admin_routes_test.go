@@ -12,13 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/system"
 )
 
 func TestAdminDashboardEndpoint(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/dashboard", nil)
 	rec := httptest.NewRecorder()
@@ -40,7 +39,7 @@ func TestAdminDashboardEndpoint(t *testing.T) {
 }
 
 func TestAdminModelPricingEndpoints(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	createBody := bytes.NewBufferString(`{"model":"priced-model","currency":"USD","input_price_cents_per_1m_tokens":120,"output_price_cents_per_1m_tokens":480,"status":"active"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-pricings", createBody)
@@ -96,7 +95,7 @@ func TestAdminModelPricingEndpoints(t *testing.T) {
 }
 
 func TestAdminGatewayModelAndRouteEndpoints(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "route provider", Type: "openai_compatible", BaseURL: "https://provider.example/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"upstream-chat"}, APIKey: "provider-secret",
@@ -184,7 +183,7 @@ func TestAdminProviderAccountModelEndpoints(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"existing"},{"id":"new-model"}]}`))
 	}))
 	defer upstream.Close()
-	handler, control := newTestRuntime(t, config.Config{SecretKey: "admin-model-secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{Name: "Inventory provider", Type: "openai_compatible", BaseURL: upstream.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"existing"}, APIKey: "provider-secret"})
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +214,7 @@ func TestAdminProviderAccountModelEndpoints(t *testing.T) {
 }
 
 func TestAdminGovernancePolicyEndpoints(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	createBody := bytes.NewBufferString(`{"name":"Platform policy","scope_type":"global","model_allowlist":["gpt-4o-mini"],"model_denylist":[],"qps_limit":10,"monthly_token_limit":1000000,"monthly_budget_cents":50000,"overage_action":"block","prompt_logging_mode":"metadata_only","retention_days":30,"tool_call_allowed":true,"image_input_allowed":true,"web_access_allowed":false,"status":"active"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/policies", createBody)
@@ -271,7 +270,7 @@ func TestAdminGovernancePolicyEndpoints(t *testing.T) {
 }
 
 func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "query key",
 		ModelAllowlist:    []string{"model-a", "model-b"},
@@ -535,7 +534,7 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 }
 
 func TestCreateAPIKeyEndpoint(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	body := bytes.NewBufferString(`{"name":"demo","model_allowlist":["gpt-4o-mini"],"qps_limit":2,"monthly_token_limit":1000}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/api-keys", body)
@@ -559,7 +558,7 @@ func TestCreateAPIKeyEndpoint(t *testing.T) {
 }
 
 func TestAPIKeyPolicyExplanationEndpoint(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	policyBody := bytes.NewBufferString(`{"name":"Platform policy","scope_type":"global","model_allowlist":["gpt-4o-mini"],"qps_limit":5,"monthly_token_limit":1000,"overage_action":"block","prompt_logging_mode":"metadata_only","retention_days":30,"tool_call_allowed":true,"image_input_allowed":true,"web_access_allowed":false,"status":"active"}`)
 	policyReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/policies", policyBody)
@@ -612,7 +611,7 @@ func TestAPIKeyPolicyExplanationEndpoint(t *testing.T) {
 }
 
 func TestUpdateProviderEndpointKeepsExistingSecret(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	createBody := bytes.NewBufferString(`{"name":"Vendor A","type":"openai_compatible","base_url":"https://example.com/v1","status":"active","models":["gpt-4o-mini"],"priority":10,"api_key":"sk-test-123456"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/providers", createBody)
@@ -649,7 +648,7 @@ func TestUpdateProviderEndpointKeepsExistingSecret(t *testing.T) {
 }
 
 func TestCheckProviderEndpoint(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/providers/prov_openai_compatible/check", nil)
 	rec := httptest.NewRecorder()
@@ -685,7 +684,7 @@ func TestCheckProviderEndpoint(t *testing.T) {
 }
 
 func TestAdminRoutingGroupsAndProviderAccountsEndpoints(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("path = %s", r.URL.Path)
@@ -802,7 +801,7 @@ func TestAdminRoutingGroupsAndProviderAccountsEndpoints(t *testing.T) {
 }
 
 func TestAdminProviderAccountClearCooldownEndpoint(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name:    "Cooldown provider",
 		Type:    "openai_compatible",
@@ -867,7 +866,7 @@ func TestAdminProviderAccountClearCooldownEndpoint(t *testing.T) {
 }
 
 func TestAdminSystemCheckUpdatesEndpoint(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/check-updates?force=true", nil)
 	rec := httptest.NewRecorder()
@@ -899,7 +898,7 @@ func TestAdminSystemCheckUpdatesEndpoint(t *testing.T) {
 }
 
 func TestAdminSystemUpdateWithoutManifestRequiresManualConfiguration(t *testing.T) {
-	handler, _ := newTestRuntime(t, config.Config{})
+	handler, _ := newTestRuntime(t, RuntimeConfig{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
 	req.Header.Set("Idempotency-Key", "test-update")
@@ -915,7 +914,7 @@ func TestAdminSystemUpdateWithoutManifestRequiresManualConfiguration(t *testing.
 }
 
 func TestSystemBackupEndpointsExposeEmptyListAndRejectMemoryBackup(t *testing.T) {
-	handler, _ := newTestRuntime(t, config.Config{})
+	handler, _ := newTestRuntime(t, RuntimeConfig{})
 
 	for _, path := range []string{"/api/v1/admin/system/backups", "/api/v1/console/system/backups", "/api/v1/operator/system/backups"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
