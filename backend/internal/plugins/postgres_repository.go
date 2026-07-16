@@ -293,7 +293,7 @@ ORDER BY category ASC, tier ASC, name ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Plugin
+	out := make([]Plugin, 0)
 	for rows.Next() {
 		plugin, err := scanPlugin(rows)
 		if err != nil {
@@ -398,7 +398,7 @@ FROM notification_deliveries`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DeliveryAttempt
+	out := make([]DeliveryAttempt, 0)
 	for rows.Next() {
 		attempt, err := scanDeliveryAttempt(rows)
 		if err != nil {
@@ -486,7 +486,7 @@ ORDER BY version DESC, os ASC, arch ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []packageRecord
+	out := make([]packageRecord, 0)
 	for rows.Next() {
 		record, err := scanPackageRecord(rows)
 		if err != nil {
@@ -576,7 +576,7 @@ ORDER BY created_at ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []affectedVersionRecord
+	out := make([]affectedVersionRecord, 0)
 	for rows.Next() {
 		record, err := scanAffectedVersionRecord(rows)
 		if err != nil {

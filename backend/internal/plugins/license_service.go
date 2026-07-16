@@ -430,7 +430,7 @@ func licenseAllowsResource(record licenseRecord, entitlementType string, resourc
 }
 
 func entitlementsFromRecord(record licenseRecord) []Entitlement {
-	var out []Entitlement
+	out := make([]Entitlement, 0)
 	if err := json.Unmarshal([]byte(defaultString(record.EntitlementsJSON, "[]")), &out); err != nil {
 		return []Entitlement{}
 	}

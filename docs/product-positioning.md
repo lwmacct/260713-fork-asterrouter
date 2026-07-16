@@ -24,7 +24,7 @@ AsterRouter 是面向企业团队、AI API 平台和客户产品的 AI Access Ga
 - **更省钱：** 在策略、健康和容量约束内比较合格线路，逐步实现价格插件、成本感知调度和可验证节省。
 - **两种对外接入：** 可以直接签发 AsterRouter Gateway API Key，也可以保留 SaaS/OEM 的用户、Session 和权益体系，只委托 AI 访问上下文。
 - **企业治理：** 按 Tenant、用户、部门、Group、Key Principal、模型和外部 Subject 管理权限、预算、用量与审计。
-- **灵活交付：** 支持自主部署、私有化交付和托管运维，从单机低成本运行平滑扩展到 Kubernetes。
+- **灵活交付：** 支持自主部署、私有化交付和托管运维；当前以低成本单机运行，Kubernetes 弹性部署属于后续路线图。
 - **统一 Core：** 协议、Credential Source 和 Provider 可以扩展，但 Policy、候选规划、账号调度、Usage、Billing 和 Audit 只有一套事实源。
 
 ## 商业场景
@@ -88,7 +88,7 @@ AsterRouter 不实现以下能力：
 - 飞书（中国大陆）/ Lark（国际版）、钉钉企业登录与自动入职，OIDC 作为通用企业 SSO 兼容入口。
 - GitHub、Google 作为已验证邮箱的辅助登录源；本地安全登录保留为企业救援入口。
 - 企业账户支持多身份记录、安全解绑和持久化会话撤销；身份变更、改密与人员禁用必须即时收回旧令牌权限。
-- Operator 仅用于企业内部使用方、额度策略、成本规则和额度流水治理；不接受月费、充值、退款或订阅售卖业务。
+- Relay Operator 管理 Customer、Plan、余额分配、兑换、账单视图和风险运营；真实支付渠道、订单、退款、税务与订阅合同仍由外部业务系统或独立插件负责，不能进入 Gateway Core。Enterprise 不复用这些中转商业对象。
 - 用户、部门、Group 和资源级 RBAC。
 - Workspace Key 生命周期、模型白名单、限流、预算和过期策略。
 - User/Customer/Service Key 基础类型、Bearer 鉴权、Hash/Fingerprint、禁用、立即轮换和用量归属。
@@ -98,7 +98,7 @@ AsterRouter 不实现以下能力：
 
 员工 Portal 只展示本人可见的 Key、模型、额度和用量，不暴露上游账号、渠道或运营信息。
 
-后续路线图会在同一 Core 上增加 API Key Principal 的细粒度 Scope 与分布式并发、平台委托鉴权、Responses/Anthropic/Gemini、多模态 Job/Artifact、价格插件、成本感知调度、PostgreSQL + Redis 多模态基础设施，以及可选 Kubernetes 弹性部署。未交付能力不能作为当前产品承诺。
+后续路线图会在同一 Core 上增加 API Key Principal 的细粒度 Scope 与分布式并发、OIDC Introspection/撤销事件与其他平台鉴权适配、Responses/Anthropic/Gemini、多模态 Job/Artifact、价格插件、成本感知调度、PostgreSQL + Redis 多模态基础设施，以及可选 Kubernetes 弹性部署。HMAC 与 RS256 JWT/JWKS 平台委托鉴权已经交付；未交付能力不能作为当前产品承诺。
 
 ## 产品原则
 

@@ -38,7 +38,7 @@ ORDER BY status ASC, code ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Department
+	out := make([]Department, 0)
 	for rows.Next() {
 		var department Department
 		if err := rows.Scan(&department.ID, &department.Name, &department.Code, &department.ParentID, &department.CostCenter, &department.MonthlyBudgetCents, &department.Status, &department.CreatedAt, &department.UpdatedAt); err != nil {

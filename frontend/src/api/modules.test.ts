@@ -176,6 +176,43 @@ describe('API module contracts', () => {
     expect(await platform.getPlatformUsageDeliveries('sink-1')).toEqual([])
   })
 
+  it('normalizes nullable collections across settings, plugins, operator, system, customer, and account APIs', async () => {
+    for (const load of [settings.getDefaultEmailTemplates, settings.getLocales]) {
+      client.get.mockResolvedValueOnce({ data: null })
+      expect(await load()).toEqual([])
+    }
+
+    for (const load of [
+      () => plugins.getArtifactSinkDestinations('plugin-1'),
+      () => plugins.getPluginAPITokens(),
+      () => plugins.getOfficialFeedStatuses(),
+      () => plugins.getOfficialFeedSyncRuns(),
+      () => plugins.getPluginDeliveries('plugin-1'),
+      () => plugins.getPluginPackages('plugin-1'),
+      () => operator.listOperatorResource('customers'),
+      operator.getOperatorBalances,
+      operator.getOperatorCustomerKeys,
+      operator.getOperatorRiskBlocks,
+      system.listSystemBackups,
+      system.listS3Backups
+    ]) {
+      client.get.mockResolvedValueOnce({ data: null })
+      expect(await load()).toEqual([])
+    }
+
+    client.get.mockResolvedValueOnce({ data: { summary: {}, plugins: null } })
+    expect(await plugins.getPluginCatalog()).toMatchObject({ plugins: [] })
+
+    client.get.mockResolvedValueOnce({ data: { recharge_options: null, payment_channels: null, vouchers: null } })
+    expect(await customer.getCustomerBilling()).toMatchObject({ recharge_options: [], payment_channels: [], vouchers: [] })
+
+    client.get.mockResolvedValueOnce({ data: { preferences: [{ event_type: 'balance_low', channels: null }] } })
+    expect(await customer.getCustomerNotificationSettings()).toMatchObject({ preferences: [{ channels: [] }] })
+
+    client.get.mockResolvedValueOnce({ data: { auth_identities: null, login_methods: null } })
+    expect(await account.getAccountProfile()).toMatchObject({ auth_identities: [], login_methods: [] })
+  })
+
   it('uses customer billing and notification endpoint contracts', async () => {
     await customer.getCustomerBilling()
     expect(client.get).toHaveBeenLastCalledWith('/customer/billing')

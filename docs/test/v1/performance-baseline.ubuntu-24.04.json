@@ -1,17 +1,33 @@
 {
   "schema_version": 1,
-  "status": "bootstrap_required",
+  "status": "confirmed",
   "environment": {
     "runner": "ubuntu-24.04",
     "os": "linux",
     "architecture": "amd64",
     "go": "from backend/go.mod"
   },
-  "source": "Populate from three successful nightly runs on the pinned runner, then change status to confirmed in a reviewed commit.",
+  "source": "Median of per-run medians from successful Nightly Tests runs 29313835627, 29313835542, and 29313835587 for commit 7eb4c5ece7bb5fa68f22028ee651f72970ca8193 on 2026-07-14.",
   "thresholds": {
     "ns_per_op_ratio": 1.2,
     "bytes_per_op_ratio": 1.1,
     "allocs_per_op_ratio": 1.0
   },
-  "benchmarks": {}
+  "benchmarks": {
+    "BenchmarkGatewayEstimateTokens": {
+      "ns_per_op": 1775,
+      "bytes_per_op": 280,
+      "allocs_per_op": 7
+    },
+    "BenchmarkGatewayParseUsage": {
+      "ns_per_op": 1071,
+      "bytes_per_op": 296,
+      "allocs_per_op": 7
+    },
+    "BenchmarkGatewayRewriteModel": {
+      "ns_per_op": 5515,
+      "bytes_per_op": 2296,
+      "allocs_per_op": 56
+    }
+  }
 }

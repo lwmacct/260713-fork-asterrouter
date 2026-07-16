@@ -105,7 +105,7 @@ FROM alert_events`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AlertEvent
+	out := make([]AlertEvent, 0)
 	for rows.Next() {
 		event, err := scanAlertEvent(rows)
 		if err != nil {

@@ -40,7 +40,7 @@ ORDER BY status ASC, name ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []GovernancePolicy
+	out := make([]GovernancePolicy, 0)
 	for rows.Next() {
 		var policy GovernancePolicy
 		var allowlist, denylist string

@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AsterRouter 有效价格与缓存感知路由原型</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f6f8fb;
+        --surface: #ffffff;
+        --surface-soft: #f8fafc;
+        --surface-hover: #f0fdfa;
+        --text: #10212b;
+        --muted: #64748b;
+        --border: #dbe4ea;
+        --border-strong: #c4d2da;
+        --teal: #0f8a82;
+        --teal-dark: #0a665f;
+        --teal-soft: #e6f7f4;
+        --blue: #2563eb;
+        --blue-soft: #edf4ff;
+        --amber: #a16207;
+        --amber-soft: #fff7df;
+        --red: #b42318;
+        --red-soft: #fff0ee;
+        --green: #18794e;
+        --green-soft: #eaf8ef;
+        --shadow: 0 8px 24px rgba(15, 35, 47, 0.06);
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; background: var(--page); color: var(--text); font: 13px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      button, input, select { font: inherit; }
+      button { cursor: pointer; }
+      .app { min-height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
+      .sidebar { display: flex; flex-direction: column; gap: 26px; padding: 22px 14px; border-right: 1px solid var(--border); background: var(--surface); }
+      .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; color: var(--text); text-decoration: none; }
+      .brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--teal); color: #fff; font-size: 12px; font-weight: 800; }
+      .brand strong { display: block; font-size: 15px; }
+      .brand small { display: block; color: var(--muted); font-size: 10px; }
+      .side-label { margin: 0 10px 8px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+      .side-link { display: flex; align-items: center; gap: 10px; min-height: 38px; margin: 2px 0; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); text-align: left; width: 100%; }
+      .side-link:hover, .side-link.active { background: var(--teal-soft); color: var(--teal-dark); }
+      .side-icon { width: 18px; color: currentColor; font-size: 15px; text-align: center; }
+      .sidebar-footer { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+      .main { min-width: 0; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 30px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.92); }
+      .crumb { color: var(--muted); font-size: 12px; }
+      .top-actions { display: flex; align-items: center; gap: 8px; }
+      .icon-btn, .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+      .icon-btn { width: 34px; padding: 0; font-size: 16px; }
+      .button:hover, .icon-btn:hover { border-color: var(--teal); color: var(--teal-dark); }
+      .button.primary { border-color: var(--teal); background: var(--teal); color: #fff; }
+      .button.primary:hover { background: var(--teal-dark); color: #fff; }
+      .button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+      .content { width: min(1400px, 100%); margin: 0 auto; padding: 28px 30px 48px; }
+      .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: 24px; letter-spacing: 0; }
+      .page-head p { margin-top: 5px; color: var(--muted); }
+      .head-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+      .tabs { display: flex; gap: 3px; padding: 4px; border-bottom: 1px solid var(--border); background: var(--surface); }
+      .tab { min-height: 38px; padding: 0 16px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 700; }
+      .tab:hover, .tab.active { border-bottom-color: var(--teal); color: var(--teal-dark); }
+      .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 16px; border: 1px solid var(--border); border-top: 0; background: var(--surface); }
+      .field { display: grid; gap: 5px; min-width: 142px; }
+      .field label { color: var(--muted); font-size: 11px; font-weight: 700; }
+      .field select, .field input { width: 100%; min-height: 34px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+      .summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+      .capability-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 14px 0; border: 1px solid var(--border); background: var(--surface); }
+      .capability-strip > div { min-width: 0; padding: 14px; border-right: 1px solid var(--border); }
+      .capability-strip > div:last-child { border-right: 0; }
+      .capability-strip small, .source-balance small { display: block; color: var(--muted); }
+      .capability-strip strong { display: block; margin-top: 6px; }
+      .source-balance { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: baseline; gap: 18px; padding: 16px; border-bottom: 1px solid var(--border); }
+      .source-balance strong { font-size: 22px; }
+      .source-config { display: grid; grid-template-columns: minmax(150px,.8fr) minmax(160px,.8fr) minmax(180px,1fr) auto; align-items: end; gap: 12px; margin-bottom: 14px; padding: 14px; border: 1px solid var(--border); background: var(--surface); }
+      .source-check { display: flex; min-height: 34px; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+      .source-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1px; margin: 0 16px 16px; border: 1px solid var(--border); background: var(--border); }
+      .source-summary > div { display: grid; gap: 5px; padding: 12px; background: var(--surface); }
+      .source-summary small { color: var(--muted); }
+      .routing-health-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1px; margin: 0 16px 16px; border: 1px solid var(--border); background: var(--border); }
+      .routing-health-summary > div { display: grid; gap: 5px; padding: 12px; background: var(--surface); }
+      .routing-health-summary small { color: var(--muted); }
+      .routing-health-summary p { grid-column: 1 / -1; margin: 0; padding: 10px 12px; background: var(--surface-subtle); color: var(--muted); font-size: 11px; }
+      .source-history h3 { margin: 18px 16px 10px; font-size: 14px; }
+      .metric { padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+      .metric small { display: block; color: var(--muted); font-size: 11px; }
+      .metric strong { display: block; margin-top: 3px; font-size: 20px; }
+      .metric em { color: var(--green); font-size: 11px; font-style: normal; }
+      .panel { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+      .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 16px; border-bottom: 1px solid var(--border); }
+      .panel-head h2 { font-size: 14px; }
+      .panel-head p { color: var(--muted); font-size: 11px; }
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; min-width: 1120px; border-collapse: collapse; }
+      th, td { padding: 13px 14px; border-bottom: 1px solid #edf1f4; text-align: left; vertical-align: top; white-space: nowrap; }
+      th { background: var(--surface-soft); color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+      td strong { display: block; font-size: 13px; }
+      td span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+      tr:last-child td { border-bottom: 0; }
+      .provider-cell { display: flex; align-items: flex-start; gap: 9px; }
+      .dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--teal); }
+      .dot.warn { background: #d97706; }
+      .dot.muted { background: #94a3b8; }
+      .tag { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 5px; background: var(--surface-soft); color: var(--muted); font-size: 10px; font-weight: 800; }
+      .tag.success { background: var(--green-soft); color: var(--green); }
+      .tag.warning { background: var(--amber-soft); color: var(--amber); }
+      .tag.danger { background: var(--red-soft); color: var(--red); }
+      .tag.info { background: var(--blue-soft); color: var(--blue); }
+      .row-action { padding: 0; border: 0; background: transparent; color: var(--teal-dark); font-size: 11px; font-weight: 700; }
+      .row-action:hover { text-decoration: underline; }
+      .footnote { margin-top: 10px; color: var(--muted); font-size: 11px; }
+      .split { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 14px; }
+      .cache-split { grid-template-columns: 1fr; }
+      .timeline { padding: 18px; }
+      .chart { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); align-items: end; gap: 13px; height: 185px; padding: 16px 8px 22px; border-bottom: 1px solid var(--border); background: repeating-linear-gradient(to top, transparent 0, transparent 44px, #edf1f4 45px); }
+      .bar-group { display: grid; align-items: end; height: 100%; gap: 5px; }
+      .bar { width: 100%; min-height: 5px; border-radius: 4px 4px 0 0; background: var(--teal); }
+      .bar.alt { background: #7cc9c2; }
+      .chart-label { color: var(--muted); font-size: 10px; text-align: center; }
+      .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+      .legend span { display: inline-flex; align-items: center; gap: 5px; }
+      .legend i { width: 9px; height: 9px; border-radius: 3px; background: var(--teal); }
+      .legend i.alt { background: #7cc9c2; }
+      .callout { padding: 15px; border-left: 3px solid var(--amber); background: var(--amber-soft); color: #713f12; }
+      .callout strong { display: block; margin-bottom: 4px; }
+      .callout p { font-size: 12px; }
+      .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .comparison-card { padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+      .comparison-card.current { border-top: 3px solid #d97706; }
+      .comparison-card.candidate { border-top: 3px solid var(--teal); }
+      .comparison-card h3 { font-size: 14px; }
+      .comparison-card .sub { margin-top: 3px; color: var(--muted); }
+      .compare-number { display: flex; align-items: baseline; gap: 7px; margin: 18px 0; }
+      .compare-number strong { font-size: 28px; }
+      .compare-number span { color: var(--muted); }
+      .compare-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+      .compare-list li { display: flex; justify-content: space-between; gap: 10px; padding-top: 9px; border-top: 1px solid #edf1f4; }
+      .compare-list li span { color: var(--muted); }
+      .guardrails { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; padding: 16px; }
+      .guardrail { display: flex; align-items: flex-start; gap: 8px; padding: 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
+      .guardrail.ok { color: var(--green); }
+      .guardrail.warn { color: var(--amber); }
+      .guardrail div { color: var(--text); }
+      .guardrail small { display: block; margin-top: 2px; color: var(--muted); }
+      .steps { display: flex; gap: 0; margin: 16px 0; }
+      .step { flex: 1; padding: 9px 12px; border-top: 2px solid var(--border); color: var(--muted); font-size: 11px; }
+      .step.done { border-top-color: var(--teal); color: var(--teal-dark); }
+      .step.current { border-top-color: #d97706; color: #7c4a03; font-weight: 800; }
+      .probe-list { display: grid; gap: 9px; padding: 16px; }
+      .probe-row { display: grid; grid-template-columns: 100px minmax(130px, 1fr) 130px 130px 92px; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 7px; }
+      .probe-row small { color: var(--muted); }
+      .progress { height: 6px; overflow: hidden; border-radius: 5px; background: #e7edf0; }
+      .progress span { display: block; height: 100%; border-radius: inherit; background: var(--teal); }
+      .drawer-backdrop, .dialog-backdrop { position: fixed; inset: 0; z-index: 10; display: none; overflow-y: auto; background: rgba(11, 27, 37, .36); }
+      .drawer-backdrop.open, .dialog-backdrop.open { display: block; }
+      .drawer { position: absolute; inset: 0 0 0 auto; width: min(480px, 100%); overflow-y: auto; padding: 22px; background: var(--surface); box-shadow: -12px 0 36px rgba(15,35,47,.16); }
+      .drawer-head, .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+      .drawer-head h2, .dialog-head h2 { font-size: 17px; }
+      .drawer-head p, .dialog-head p { margin-top: 4px; color: var(--muted); font-size: 11px; }
+      .close { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); }
+      .detail-block { padding: 16px 0; border-bottom: 1px solid var(--border); }
+      .detail-block h3 { margin-bottom: 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+      .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .detail-grid small { display: block; color: var(--muted); }
+      .detail-grid strong { display: block; margin-top: 2px; }
+      .cost-lines { display: grid; gap: 7px; }
+      .cost-line { display: flex; justify-content: space-between; gap: 12px; }
+      .cost-line span { color: var(--muted); }
+      .drawer-footer, .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 18px; }
+      .dialog-wrap { display: grid; min-height: 100%; place-items: center; padding: 20px; }
+      .dialog { width: min(540px, 100%); padding: 22px; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+      .dialog.wide { width: min(760px, 100%); }
+      .dialog-body { padding-top: 16px; }
+      .dialog-body p { color: var(--muted); }
+      .dialog-warning { margin-top: 14px; padding: 12px; border-left: 3px solid #d97706; background: var(--amber-soft); color: #713f12; }
+      .dialog-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+      .dialog-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; color: var(--text); font-size: 12px; }
+      .dialog-check input { margin-top: 3px; }
+      .mobile-only { display: none; }
+      @media (max-width: 980px) {
+        .app { grid-template-columns: 72px minmax(0, 1fr); }
+        .sidebar { padding: 20px 10px; }
+        .brand { justify-content: center; padding: 0; }
+        .brand-copy, .side-label, .side-link span, .sidebar-footer { display: none; }
+        .side-link { justify-content: center; padding: 0; }
+        .topbar { padding: 0 18px; }
+        .content { padding: 22px 18px 40px; }
+        .split { grid-template-columns: 1fr; }
+      }
+      @media (min-width: 681px) and (max-width: 1300px) {
+        table { min-width: 0; table-layout: fixed; }
+        th, td { padding: 10px 7px; overflow-wrap: anywhere; white-space: normal; }
+      }
+      @media (max-width: 680px) {
+        .app { display: block; }
+        .sidebar { display: none; }
+        .topbar { min-height: 56px; }
+        .top-actions .button { display: none; }
+        .content { padding: 18px 12px 32px; }
+        .page-head { display: block; }
+        .head-actions { justify-content: flex-start; margin-top: 14px; }
+        h1 { font-size: 21px; }
+        .tabs { overflow-x: auto; }
+        .tab { flex: 0 0 auto; padding: 0 12px; }
+        .filters { display: grid; grid-template-columns: 1fr 1fr; }
+        .field { min-width: 0; }
+        .field:first-child { grid-column: 1 / -1; }
+        .summary-strip { grid-template-columns: 1fr 1fr; }
+        .capability-strip { grid-template-columns: 1fr 1fr; }
+        .capability-strip > div { border-bottom: 1px solid var(--border); }
+        .source-balance { grid-template-columns: 1fr; gap: 4px; }
+        .source-config { grid-template-columns: 1fr; align-items: stretch; }
+        .source-summary { grid-template-columns: 1fr 1fr; }
+        .routing-health-summary { grid-template-columns: 1fr 1fr; }
+        .metric { padding: 12px; }
+        .metric strong { font-size: 18px; }
+        .comparison { grid-template-columns: 1fr; }
+        .guardrails { grid-template-columns: 1fr; }
+        .probe-row { grid-template-columns: 1fr 1fr; }
+        .probe-row .progress { grid-column: 1 / -1; }
+        .dialog-fields { grid-template-columns: 1fr; }
+        .dialog-backdrop.open { overflow: hidden; }
+        .dialog-wrap { min-height: 0; height: 100%; overflow: hidden; padding: 0; place-items: stretch; }
+        .dialog, .dialog.wide { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; max-height: 100%; padding: 16px; border-radius: 0; }
+        .dialog-body { min-height: 0; overflow-y: auto; }
+        .dialog-footer { padding-top: 12px; border-top: 1px solid var(--border); }
+        .mobile-only { display: inline-flex; }
+        .table-wrap { overflow: visible; }
+        table { min-width: 0; table-layout: fixed; }
+        th, td { padding: 10px 8px; white-space: normal; }
+        .row-action { white-space: normal; text-align: left; }
+        [data-view-panel="pricing"] th:nth-child(2),
+        [data-view-panel="pricing"] td:nth-child(2),
+        [data-view-panel="pricing"] th:nth-child(3),
+        [data-view-panel="pricing"] td:nth-child(3),
+        [data-view-panel="pricing"] th:nth-child(6),
+        [data-view-panel="pricing"] td:nth-child(6),
+        [data-view-panel="pricing"] th:nth-child(8),
+        [data-view-panel="pricing"] td:nth-child(8),
+        [data-view-panel="pricing"] th:nth-child(9),
+        [data-view-panel="pricing"] td:nth-child(9) { display: none; }
+        [data-view-panel="pricing"] th:nth-child(1), [data-view-panel="pricing"] td:nth-child(1) { width: 37%; }
+        [data-view-panel="pricing"] th:nth-child(4), [data-view-panel="pricing"] td:nth-child(4) { width: 15%; }
+        [data-view-panel="pricing"] th:nth-child(5), [data-view-panel="pricing"] td:nth-child(5) { width: 16%; }
+        [data-view-panel="pricing"] th:nth-child(7), [data-view-panel="pricing"] td:nth-child(7) { width: 14%; }
+        [data-view-panel="pricing"] th:nth-child(10), [data-view-panel="pricing"] td:nth-child(10) { width: 18%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="#pricing">
+          <span class="brand-mark">AR</span>
+          <span class="brand-copy"><strong>AsterRouter</strong><small>Enterprise Console</small></span>
+        </a>
+        <div>
+          <p class="side-label">推理与路由</p>
+          <button class="side-link" data-view="routing"><span class="side-icon">⌁</span><span>路由总览</span></button>
+          <button class="side-link active" data-view="pricing"><span class="side-icon">¤</span><span>有效价格</span></button>
+          <button class="side-link" data-view="cache"><span class="side-icon">◌</span><span>缓存质量</span></button>
+          <button class="side-link" data-view="switch"><span class="side-icon">⇄</span><span>切换中心</span></button>
+          <button class="side-link" data-view="probes"><span class="side-icon">⊙</span><span>探针记录</span></button>
+          <button class="side-link" data-view="sources"><span class="side-icon">◫</span><span>账单源</span></button>
+        </div>
+        <div>
+          <p class="side-label">审计与数据</p>
+          <button class="side-link"><span class="side-icon">◫</span><span>Gateway Trace</span></button>
+          <button class="side-link"><span class="side-icon">◷</span><span>账单对账</span></button>
+        </div>
+        <div class="sidebar-footer">示意原型 · 数据为虚构样本</div>
+      </aside>
+      <section class="main">
+        <header class="topbar">
+          <div class="crumb">管理端 / 推理与路由 / <strong id="crumbTitle">有效价格</strong></div>
+          <div class="top-actions"><button class="button ghost">帮助</button><button class="icon-btn" title="通知">◔</button><button class="icon-btn" title="账户">◉</button></div>
+        </header>
+        <main class="content">
+          <div class="page-head">
+            <div><h1>有效价格与缓存感知路由</h1><p>把采购账单、缓存 Usage、号池风险和客户亲和放到同一份路由证据中。</p></div>
+            <div class="head-actions"><button class="button" id="exportButton">⇩ 导出报告</button><button class="button" id="priceButton">＋ 新增采购价</button><button class="button" id="strategyButton">⚙ 策略设置</button></div>
+          </div>
+          <nav class="tabs" role="tablist" aria-label="有效价格视图">
+            <button class="tab active" data-view="pricing" role="tab">有效价格</button>
+            <button class="tab" data-view="cache" role="tab">缓存质量</button>
+            <button class="tab" data-view="switch" role="tab">切换中心</button>
+            <button class="tab" data-view="probes" role="tab">探针记录</button>
+            <button class="tab" data-view="sources" role="tab">账单源</button>
+          </nav>
+
+          <section class="view" data-view-panel="pricing">
+            <div class="filters">
+              <div class="field"><label>模型</label><select><option>claude-3-5-sonnet</option><option>gpt-4o</option></select></div>
+              <div class="field"><label>协议</label><select><option>Anthropic Messages</option><option>OpenAI Chat</option></select></div>
+              <div class="field"><label>时间窗口</label><select><option>过去 24 小时</option><option>过去 7 天</option></select></div>
+              <div class="field"><label>客户范围</label><select><option>全部客户</option><option>重点客户</option></select></div>
+              <button class="button" type="button">✓ 仅显示可比</button>
+            </div>
+            <div class="summary-strip">
+              <div class="metric"><small>官方未缓存等价成本</small><strong>¥42.80 / M</strong><em>基准已验证</em></div>
+              <div class="metric"><small>当前生产有效成本</small><strong>¥18.40 / M</strong><em>较标称低 21.8%</em></div>
+              <div class="metric"><small>账单覆盖</small><strong>96.4%</strong><em>12,284 / 12,742 请求</em></div>
+              <div class="metric"><small>同客户供应商复用率</small><strong>91.7%</strong><em>亲和窗口 24 小时</em></div>
+            </div>
+            <section class="panel">
+              <div class="panel-head"><div><h2>供应商有效价格对比</h2><p>默认按标准化有效成本排序，标称倍率只作为采购报价参考。</p></div><span class="tag info">数据截至 18:30</span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>供应商 / 采购账号</th><th>标称倍率</th><th>账单倍率</th><th>有效倍率</th><th>有效成本 / M</th><th>缓存价格结构</th><th>缓存读占比</th><th>写 / 读</th><th>可信度</th><th>建议</th></tr></thead>
+                  <tbody>
+                    <tr><td><div class="provider-cell"><i class="dot warn"></i><div><strong>渠道 A</strong><span>采购 1 · claude-3-5-sonnet</span></div></div></td><td><strong>0.20x</strong><span>宣传价</span></td><td><strong>0.61x</strong><span>账单 94.1%</span></td><td><strong>0.68x</strong><span>标准化</span></td><td><strong>¥29.10</strong><span>无缓存 ¥31.80 · 净节省 8.5%</span></td><td><strong>读 0.80x</strong><span>写 5m 1.25x · 1h 2.00x</span></td><td><strong>12.4%</strong><span>3.2k 请求</span></td><td>1.72</td><td><span class="tag warning">derived</span></td><td><button class="row-action" data-drawer="pricing-a">降低权重 · 查看依据</button></td></tr>
+                    <tr><td><div class="provider-cell"><i class="dot"></i><div><strong>渠道 B</strong><span>采购 2 · claude-3-5-sonnet</span></div></div></td><td><strong>0.55x</strong><span>合同价</span></td><td><strong>0.54x</strong><span>账单 99.3%</span></td><td><strong>0.43x</strong><span>标准化</span></td><td><strong>¥18.40</strong><span>无缓存 ¥42.80 · 净节省 57.0%</span></td><td><strong>读 0.10x</strong><span>写 5m 1.25x · 1h 2.00x</span></td><td><strong>67.8%</strong><span>12.8k 请求</span></td><td>0.21</td><td><span class="tag success">billed</span></td><td><button class="row-action" data-drawer="pricing-b">当前默认 · 查看依据</button></td></tr>
+                    <tr><td><div class="provider-cell"><i class="dot muted"></i><div><strong>渠道 C</strong><span>采购 3 · claude-3-5-sonnet</span></div></div></td><td><strong>0.38x</strong><span>销售报价</span></td><td><strong>—</strong><span>账单未接入</span></td><td><strong>0.47x*</strong><span>样本推导</span></td><td><strong>¥20.10*</strong><span>无缓存 ¥42.80 · 净节省 —</span></td><td><strong>读 0.25x</strong><span>写价缺失 · 不可自动切换</span></td><td><strong>59.1%*</strong><span>820 请求</span></td><td>0.34</td><td><span class="tag">estimated</span></td><td><button class="row-action" data-view="switch">建议 Canary · 评估切换</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <p class="footnote">* 估算或样本不足的数字不会直接触发自动切换；点击行操作查看价格快照、Usage、账单匹配和路由 Trace。</p>
+          </section>
+
+          <section class="view" data-view-panel="cache" hidden>
+            <div class="filters"><div class="field"><label>数据来源</label><select><option>生产流量</option><option>受控探针</option><option>生产 + 探针</option></select></div><div class="field"><label>时间窗口</label><select><option>过去 7 天</option><option>过去 24 小时</option></select></div><div class="field"><label>最小样本</label><select><option>200 请求</option><option>1,000 请求</option></select></div><button class="button">✓ 排除不可比样本</button></div>
+            <div class="summary-strip"><div class="metric"><small>缓存字段可见率</small><strong>98.7%</strong><em>OpenAI + Anthropic</em></div><div class="metric"><small>生产 Token 命中率</small><strong>63.2%</strong><em>较上周 +8.1pp</em></div><div class="metric"><small>疑似号池碎片供应商</small><strong>1</strong><em>渠道 A / claude-*</em></div><div class="metric"><small>探针账单兑现率</small><strong>99.1%</strong><em>渠道 B 已验证</em></div></div>
+            <div class="split cache-split"><section class="panel"><div class="panel-head"><div><h2>缓存能力与号池质量</h2><p>字段缺失显示“—”，明确返回零才计为 0%；亲和字段需先配置后启用。</p></div><span class="tag warning">渠道 A 需要观察</span></div><div class="table-wrap"><table><thead><tr><th>供应商 / 模型</th><th>能力状态</th><th>合格命中率</th><th>Token 命中率</th><th>写 / 读</th><th>账单一致率</th><th>号池亲和一致率</th><th>判断</th><th>操作</th></tr></thead><tbody><tr><td><strong>渠道 A</strong><span>claude-3-5-sonnet</span></td><td><span class="tag warning">degraded</span></td><td><strong>18.0%</strong><span>3.2k 样本</span></td><td><strong>12.4%</strong></td><td>1.72</td><td>94.1%</td><td>31.5%</td><td><span class="tag danger">疑似号池碎片</span></td><td><button class="row-action" data-capability="a">配置能力</button></td></tr><tr><td><strong>渠道 B</strong><span>claude-3-5-sonnet</span></td><td><span class="tag success">billed_verified</span></td><td><strong>74.2%</strong><span>12.8k 样本</span></td><td><strong>67.8%</strong></td><td>0.21</td><td>99.3%</td><td>96.8%</td><td><span class="tag success">正常</span></td><td><button class="row-action" data-capability="b">配置能力</button></td></tr><tr><td><strong>渠道 C</strong><span>claude-3-5-sonnet</span></td><td><span class="tag">observed</span></td><td><strong>69.5%*</strong><span>820 样本</span></td><td><strong>59.1%*</strong></td><td>0.34</td><td>—</td><td>82.0%*</td><td><span class="tag warning">样本不足</span></td><td><button class="row-action" data-capability="c">配置能力</button></td></tr></tbody></table></div></section><aside class="panel timeline"><div class="panel-head"><div><h2>缓存读占比趋势</h2><p>生产流量 · 7 天</p></div><span class="tag info">阈值 40%</span></div><div class="chart"><div class="bar-group"><div class="bar" style="height:24%"></div><div class="chart-label">7/08</div></div><div class="bar-group"><div class="bar" style="height:31%"></div><div class="chart-label">7/09</div></div><div class="bar-group"><div class="bar alt" style="height:41%"></div><div class="chart-label">7/10</div></div><div class="bar-group"><div class="bar alt" style="height:58%"></div><div class="chart-label">7/11</div></div><div class="bar-group"><div class="bar alt" style="height:63%"></div><div class="chart-label">7/12</div></div><div class="bar-group"><div class="bar alt" style="height:66%"></div><div class="chart-label">7/13</div></div><div class="bar-group"><div class="bar alt" style="height:68%"></div><div class="chart-label">7/14</div></div></div><div class="legend"><span><i></i>渠道 A</span><span><i class="alt"></i>渠道 B</span></div><div class="callout" style="margin-top:16px"><strong>疑似号池碎片化</strong><p>渠道 A 同会话探针连续 3 次冷写，且不同会话没有额外劣化。系统只标记“疑似”，不推断第三方内部账号。</p></div></aside></div>
+          </section>
+
+          <section class="view" data-view-panel="switch" hidden>
+            <div class="page-head" style="margin:16px 0 12px"><div><h2 style="font-size:18px">切换评估：网关 claude-sonnet</h2><p>上游 claude-3-5-sonnet · Anthropic Messages；证据按上游模型比较，决策按网关模型命中客户请求。</p></div><span class="tag warning">建议 Canary</span></div>
+            <div class="comparison"><article class="comparison-card current"><span class="tag warning">当前</span><h3 style="margin-top:10px">渠道 A / 采购 1</h3><p class="sub">第三方内部账号不可见 · 号池亲和疑似碎片</p><div class="compare-number"><strong>0.68x</strong><span>有效倍率</span></div><ul class="compare-list"><li><span>24h 实扣</span><strong>¥2,910.00</strong></li><li><span>缓存 Token 命中</span><strong>12.4%</strong></li><li><span>缓存净节省</span><strong>8.5%</strong></li><li><span>号池亲和一致率</span><strong>31.5%</strong></li><li><span>P95 / 错误率</span><strong>2.4s / 0.8%</strong></li></ul></article><article class="comparison-card candidate"><span class="tag success">候选</span><h3 style="margin-top:10px">渠道 B / 采购 2</h3><p class="sub">账单已验证 · 账号亲和稳定</p><div class="compare-number"><strong>0.43x</strong><span>有效倍率</span></div><ul class="compare-list"><li><span>同流量预计</span><strong>¥1,840.00</strong></li><li><span>缓存 Token 命中</span><strong>67.8%</strong></li><li><span>缓存净节省</span><strong>57.0%</strong></li><li><span>号池亲和一致率</span><strong>96.8%</strong></li><li><span>P95 / 错误率</span><strong>2.1s / 0.7%</strong></li></ul></article></div>
+            <section class="panel" style="margin-top:14px"><div class="panel-head"><div><h2>切换门禁</h2><p>只有全部硬门禁通过，建议才可进入批准流程。</p></div><span class="tag success">6 / 7 已通过</span></div><div class="guardrails"><div class="guardrail ok"><span>✓</span><div>上游模型 / 协议可比<small>claude-3-5-sonnet · Anthropic Messages</small></div></div><div class="guardrail ok"><span>✓</span><div>账单验证<small>覆盖 99.3%</small></div></div><div class="guardrail ok"><span>✓</span><div>样本量充足<small>12.8k 请求</small></div></div><div class="guardrail ok"><span>✓</span><div>错误率未恶化<small>-0.1pp</small></div></div><div class="guardrail ok"><span>✓</span><div>P95 未越界<small>-12.5%</small></div></div><div class="guardrail ok"><span>✓</span><div>连续窗口通过<small>3 个窗口</small></div></div><div class="guardrail warn"><span>!</span><div>现有绑定影响<small>286 个按 TTL 到期</small></div></div></div></section>
+            <section class="panel" style="margin-top:14px"><div class="panel-head"><div><h2>Canary 参数</h2><p>策略版本 effective-pricing-v3 · 客户级 HMAC 稳定分桶，已有绑定按 TTL 到期。</p></div></div><div style="padding:16px"><div class="dialog-fields" style="margin-top:0"><div class="field"><label>客户网关模型</label><input value="claude-sonnet" readonly></div><div class="field"><label>供应商上游模型</label><input value="claude-3-5-sonnet" readonly></div><div class="field"><label>Canary 比例</label><select><option>5%</option><option>10%</option><option>25%</option></select></div><div class="field"><label>观察窗口</label><select><option>2 小时</option><option>6 小时</option><option>24 小时</option></select></div></div><div class="steps"><div class="step done">1. 观察</div><div class="step done">2. 推荐</div><div class="step current">3. Canary</div><div class="step">4. 全量</div></div><div class="callout"><strong>回滚条件</strong><p>错误率 +0.5pp、P95 +20%、有效成本连续两个窗口不再改善，或账单兑现率低于 95%。</p></div><div class="drawer-footer"><button class="button">保持当前</button><button class="button primary" id="canaryButton">启动 Canary</button></div></div></section>
+          </section>
+
+          <section class="view" data-view-panel="probes" hidden>
+            <div class="filters"><div class="field"><label>供应商</label><select><option>全部供应商</option><option>渠道 A</option><option>渠道 B</option></select></div><div class="field"><label>探针类型</label><select><option>全部类型</option><option>warm</option><option>reuse</option><option>negative_control</option></select></div><div class="field"><label>时间窗口</label><select><option>过去 24 小时</option><option>过去 7 天</option></select></div><button class="button" id="runProbeButton">⊙ 运行受控探针</button></div>
+            <div class="panel"><div class="panel-head"><div><h2>探针记录</h2><p>每次探针均有预算、冷却和审计记录，不发送客户 Prompt。</p></div><span class="tag success">今日额度 62% 已用</span></div><div class="probe-list"><div class="probe-row"><div><strong>18:14:02</strong><small>probe_8124</small></div><div><strong>渠道 B / 采购 2</strong><small>claude-3-5-sonnet · session reuse</small></div><div><span class="tag success">reuse</span><small>读 4,096 tok</small></div><div><strong>¥0.0012</strong><small>账单已匹配</small></div><div><span class="tag success">通过</span></div><div class="progress"><span style="width:100%"></span></div></div><div class="probe-row"><div><strong>18:13:41</strong><small>probe_8123</small></div><div><strong>渠道 B / 采购 2</strong><small>claude-3-5-sonnet · warm</small></div><div><span class="tag info">warm</span><small>写 4,096 tok</small></div><div><strong>¥0.0150</strong><small>账单已匹配</small></div><div><span class="tag success">通过</span></div><div class="progress"><span style="width:100%"></span></div></div><div class="probe-row"><div><strong>17:58:20</strong><small>probe_8119</small></div><div><strong>渠道 A / 采购 1</strong><small>claude-3-5-sonnet · reuse</small></div><div><span class="tag warning">reuse</span><small>写 4,096 tok</small></div><div><strong>¥0.0150</strong><small>未匹配</small></div><div><span class="tag danger">冷写</span></div><div class="progress"><span style="width:31%;background:#d97706"></span></div></div></div></div>
+            <p class="footnote">探针序列：warm → reuse → negative_control。首个请求开始响应后才发起复用请求，并按供应商/模型/协议执行冷却。</p>
+          </section>
+
+          <section class="view" data-view-panel="sources" hidden>
+            <div class="filters"><div class="field"><label>采购账号</label><select><option>渠道 A / 采购 1</option><option>渠道 B / 采购 2</option></select></div><button class="button" id="inspectSourceButton">↻ 自动检测</button></div>
+            <div class="source-config"><div class="field"><label>账单源状态</label><select><option>observe_only</option><option>active</option><option>disabled</option></select></div><div class="field"><label>同步间隔（秒）</label><input type="number" value="3600" min="60" max="86400" /></div><label class="source-check"><input type="checkbox" checked />启用自动同步</label><div><button class="button" id="saveSourceButton">保存配置</button> <button class="button primary" id="syncSourceButton">↻ 立即同步</button></div></div>
+            <section class="panel"><div class="panel-head"><div><h2>第三方账单源检测</h2><p>结构匹配只识别可用契约，不确认第三方具体实现或内部账号池。</p></div><span class="tag success">schema_match</span></div><div style="padding:0 16px 16px"><p class="footnote" style="margin:14px 0 0">sub2api_compatible · sub2api_v1_usage · 证据 0123456789abcdef</p><div class="capability-strip"><div><small>逐请求账单行</small><strong style="color:var(--muted)">不可用</strong></div><div><small>聚合用量</small><strong style="color:var(--green)">可用</strong></div><div><small>余额 / 可用额度</small><strong style="color:var(--green)">可用</strong></div><div><small>增量同步</small><strong style="color:var(--muted)">不可用</strong></div><div><small>价格 Feed</small><strong style="color:var(--muted)">不可用</strong></div></div><div class="source-balance"><span>API Key 剩余额度<small>不是采购钱包余额</small></span><strong>$7.50</strong><small>7/15 16:00</small></div><div class="table-wrap"><table><thead><tr><th>统计范围</th><th>请求</th><th>输入 Token</th><th>输出 Token</th><th>缓存读取 Token</th><th>模型原价成本</th><th>第三方实扣聚合</th></tr></thead><tbody><tr><td>累计</td><td>10</td><td>500</td><td>80</td><td>200</td><td>$8.00</td><td><strong>$4.25</strong></td></tr><tr><td>claude-sonnet · 近 30 天</td><td>7</td><td>350</td><td>60</td><td>180</td><td>$6.50</td><td><strong>$3.25</strong></td></tr></tbody></table></div><div class="callout" style="margin-top:14px"><strong>证据边界</strong><p>该采购 API Key 不提供逐请求账单行、价格 Feed 或增量游标；聚合总额不会生成账单行或伪精确单价。</p></div></div></section>
+            <section class="panel source-history"><div class="panel-head"><div><h2>同步与历史证据</h2><p>运行记录、余额和聚合快照不可变；失败只保存稳定错误码。</p></div><span class="tag info">version 6</span></div><div class="source-summary"><div><small>账单源状态</small><strong><span class="tag warning">observe_only</span></strong></div><div><small>最近成功</small><strong>7/15 16:00</strong></div><div><small>下次同步</small><strong>7/15 17:00</strong></div><div><small>连续失败</small><strong>0</strong></div></div><h3>同步运行历史</h3><div class="table-wrap"><table><thead><tr><th>状态</th><th>触发方式</th><th>Adapter</th><th>错误码</th><th>开始</th><th>完成</th></tr></thead><tbody><tr><td><span class="tag success">succeeded</span></td><td>manual</td><td>sub2api_compatible</td><td>—</td><td>16:00:00</td><td>16:00:01</td></tr><tr><td><span class="tag danger">lease_expired</span></td><td>scheduled</td><td>sub2api_compatible</td><td>lease_expired</td><td>14:00:00</td><td>14:02:00</td></tr></tbody></table></div><h3>余额 / 额度历史</h3><div class="table-wrap"><table><thead><tr><th>语义</th><th>金额</th><th>观测时间</th><th>证据哈希</th></tr></thead><tbody><tr><td>API Key 剩余额度</td><td><strong>$7.50</strong></td><td>7/15 16:00</td><td>0123456789abcdef</td></tr><tr><td>API Key 剩余额度</td><td><strong>$9.25</strong></td><td>7/15 15:00</td><td>fedcba9876543210</td></tr></tbody></table></div><h3>模型与周期聚合历史</h3><div class="table-wrap"><table><thead><tr><th>范围</th><th>请求</th><th>缓存读取 Token</th><th>模型原价成本</th><th>第三方实扣聚合</th><th>观测时间</th></tr></thead><tbody><tr><td>claude-sonnet · 近 30 天</td><td>7</td><td>180</td><td>$6.50</td><td><strong>$3.25</strong></td><td>7/15 16:00</td></tr><tr><td>累计</td><td>10</td><td>200</td><td>$8.00</td><td><strong>$4.25</strong></td><td>7/15 16:00</td></tr></tbody></table></div></section>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"><aside class="drawer" role="dialog" aria-modal="true"><div class="drawer-head"><div><h2 id="drawerTitle">渠道 B / 采购 2</h2><p>有效价格证据抽屉</p></div><button class="close" id="drawerClose" aria-label="关闭">×</button></div><div class="detail-block"><h3>价格摘要</h3><div class="detail-grid"><div><small>工作负载有效倍率</small><strong>0.43x</strong></div><div><small>标称倍率</small><strong>0.55x</strong></div><div><small>差异</small><strong style="color:var(--green)">-21.8%</strong></div><div><small>可信度</small><strong><span class="tag success">billed</span></strong></div></div></div><div class="detail-block"><h3>输入成本拆解</h3><div class="cost-lines"><div class="cost-line"><span>未缓存输入 · 3.2M × ¥3.00/M</span><strong>¥9.60</strong></div><div class="cost-line"><span>缓存写入 · 0.4M × ¥3.75/M</span><strong>¥1.50</strong></div><div class="cost-line"><span>缓存读取 · 7.1M × ¥0.30/M</span><strong>¥2.13</strong></div><div class="cost-line"><span>输出 · 0.8M × ¥15.00/M</span><strong>¥12.00</strong></div></div></div><div class="detail-block"><h3>证据关联</h3><div class="detail-grid"><div><small>账单匹配</small><strong>12,284 / 12,742</strong></div><div><small>价格快照</small><strong>price_20260714_1830</strong></div><div><small>数据窗口</small><strong>24 小时</strong></div><div><small>路由决策</small><strong>decision_1f20</strong></div></div></div><div class="drawer-footer"><button class="button">查看账单样本</button><button class="button primary">查看计算明细</button></div></aside></div>
+    <div class="dialog-backdrop" id="dialogBackdrop"><div class="dialog-wrap"><section class="dialog" role="dialog" aria-modal="true"><div class="dialog-head"><div><h2>启动 5% Canary</h2><p>这是一项需要审计的路由策略变更。</p></div><button class="close" id="dialogClose" aria-label="关闭">×</button></div><div class="dialog-body"><p>将仅把新建会话的 5% 流量从渠道 A 导向渠道 B。现有 286 个健康会话保持原绑定，紧急故障转移不受此审批影响。</p><div class="dialog-warning"><strong>自动回滚已启用</strong><br />错误率 +0.5pp、P95 +20%、有效成本连续两个窗口不再改善，或账单兑现率低于 95% 时自动回滚。</div><div class="dialog-fields"><div class="field"><label>策略版本</label><input value="effective-pricing-v3" readonly /></div><div class="field"><label>审批人</label><input value="当前管理员" readonly /></div></div></div><div class="dialog-footer"><button class="button" id="dialogCancel">取消</button><button class="button primary" id="dialogConfirm">确认启动</button></div></section></div></div>
+    <div class="dialog-backdrop" id="probeDialogBackdrop"><div class="dialog-wrap"><section class="dialog" role="dialog" aria-modal="true"><div class="dialog-head"><div><h2>运行受控缓存探针</h2><p>只发送合成长前缀，先确认预算后才会请求第三方。</p></div><button class="close" id="probeDialogClose" aria-label="关闭">×</button></div><div class="dialog-body"><div class="dialog-fields"><div class="field"><label>供应商 / 采购账号</label><select><option>渠道 B / 采购 2</option><option>渠道 A / 采购 1</option></select></div><div class="field"><label>模型</label><input value="claude-3-5-sonnet" /></div><div class="field"><label>协议</label><select><option>Anthropic Messages</option><option>OpenAI Chat</option></select></div><div class="field"><label>合成前缀 Token（每阶段）</label><input type="number" value="2048" min="256" /></div><div class="field"><label>本次最高成本（微单位）</label><input type="number" value="100000" min="1" /></div><div class="field"><label>预计请求量</label><input value="3 个请求 / 6,144 Token" readonly /></div></div><div class="dialog-warning"><strong>预算与冷却门禁</strong><br />今日已用 62,000 / 100,000 Token；本账号冷却 3,600 秒；探针不会读取、保存或复制客户 Prompt。</div><label class="dialog-check"><input id="probeConfirm" type="checkbox" />我确认本次会向第三方 API 发出 3 个合成请求，并接受上述成本上限。</label></div><div class="dialog-footer"><button class="button" id="probeDialogCancel">取消</button><button class="button primary" id="probeDialogConfirm" disabled>确认运行</button></div></section></div></div>
+    <div class="dialog-backdrop" id="priceDialogBackdrop"><div class="dialog-wrap"><section class="dialog wide" role="dialog" aria-modal="true"><div class="dialog-head"><div><h2>新增缓存感知采购价</h2><p>同时录入缓存读写、请求费和充值折扣，避免宣传倍率掩盖真实成本。</p></div><button class="close" id="priceDialogClose" aria-label="关闭">×</button></div><div class="dialog-body"><div class="dialog-fields"><div class="field"><label>供应商 / 采购账号</label><select><option>渠道 B / 采购 2</option><option>渠道 A / 采购 1</option></select></div><div class="field"><label>供应商上游模型</label><input value="claude-3-5-sonnet" /></div><div class="field"><label>协议</label><select><option>Anthropic Messages</option><option>OpenAI Chat</option></select></div><div class="field"><label>币种</label><input value="CNY" maxlength="3" /></div><div class="field"><label>未缓存输入 / M</label><input type="number" value="3000000" /></div><div class="field"><label>缓存读取 / M</label><input type="number" value="300000" /></div><div class="field"><label>缓存写入 5 分钟 / M</label><input type="number" value="3750000" /></div><div class="field"><label>缓存写入 1 小时 / M</label><input type="number" value="6000000" /></div><div class="field"><label>输出 / M</label><input type="number" value="15000000" /></div><div class="field"><label>单请求费用</label><input type="number" value="0" /></div><div class="field"><label>标称倍率</label><input type="number" value="0.55" step="0.01" /></div><div class="field"><label>充值实付系数</label><input type="number" value="0.90" step="0.01" /></div><div class="field"><label>官方基准输入 / M</label><input type="number" value="7000000" /></div><div class="field"><label>官方基准输出 / M</label><input type="number" value="35000000" /></div><div class="field"><label>可信度</label><select><option>estimated</option><option>derived</option><option>exact</option></select></div><div class="field"><label>报价来源 / 合同编号</label><input value="contract-2026-q3" /></div></div><div class="dialog-warning"><strong>真实价格口径</strong><br />有效成本会按未缓存输入、缓存写入、缓存读取、输出和请求费分别计算；缓存写入溢价允许产生负节省。</div></div><div class="dialog-footer"><button class="button" id="priceDialogCancel">取消</button><button class="button primary" id="priceDialogConfirm">保存采购价</button></div></section></div></div>
+    <div class="dialog-backdrop" id="capabilityDialogBackdrop"><div class="dialog-wrap"><section class="dialog wide" role="dialog" aria-modal="true"><div class="dialog-head"><div><h2>配置第三方缓存与亲和能力</h2><p>只配置供应商公开或已经验证的字段，不推断第三方内部账号。</p></div><button class="close" id="capabilityDialogClose" aria-label="关闭">×</button></div><div class="dialog-body"><div class="dialog-fields"><div class="field"><label>供应商 / 采购账号</label><select><option>渠道 B / 采购 2</option></select></div><div class="field"><label>供应商上游模型</label><input value="claude-3-5-sonnet" /></div><div class="field"><label>协议</label><select><option>Anthropic Messages</option><option>OpenAI Chat</option></select></div><div class="field"><label>能力状态</label><select><option>accepted</option><option>claimed</option><option>unknown</option></select></div><div class="field"><label>号池亲和等级（系统观测）</label><input value="verified" readonly /></div><div class="field"><label>亲和传输方式</label><select><option>body</option><option>header</option><option>none</option></select></div><div class="field"><label>亲和字段</label><input value="session_id" /></div><div class="field"><label>缓存控制模式</label><select><option>passthrough_if_present</option><option>prompt_cache_key</option></select></div><div class="field"><label>Usage Schema</label><input value="anthropic" /></div></div><div class="dialog-warning"><strong>启用条件</strong><br />只有 accepted、observed 或 billed_verified 能向第三方注入 HMAC 亲和值；健康、容量、熔断和策略门禁仍可打破亲和。</div></div><div class="dialog-footer"><button class="button" id="capabilityDialogCancel">取消</button><button class="button primary" id="capabilityDialogConfirm">保存能力配置</button></div></section></div></div>
+
+    <script>
+      const views = ['pricing', 'cache', 'switch', 'probes', 'sources'];
+      const titles = { pricing: '有效价格', cache: '缓存质量', switch: '切换中心', probes: '探针记录', sources: '账单源' };
+      const setView = (view) => {
+        if (!views.includes(view)) view = 'pricing';
+        document.querySelectorAll('[data-view-panel]').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== view; });
+        document.querySelectorAll('[data-view]').forEach((control) => control.classList.toggle('active', control.dataset.view === view));
+        document.getElementById('crumbTitle').textContent = titles[view];
+        history.replaceState(null, '', `?view=${view}`);
+      };
+      document.querySelectorAll('[data-view]').forEach((control) => control.addEventListener('click', () => setView(control.dataset.view)));
+      document.querySelectorAll('[data-drawer]').forEach((control) => control.addEventListener('click', () => document.getElementById('drawerBackdrop').classList.add('open')));
+      const closeDrawer = () => document.getElementById('drawerBackdrop').classList.remove('open');
+      document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+      document.getElementById('drawerBackdrop').addEventListener('click', (event) => { if (event.target.id === 'drawerBackdrop') closeDrawer(); });
+      const dialog = document.getElementById('dialogBackdrop');
+      const closeDialog = () => dialog.classList.remove('open');
+      document.getElementById('canaryButton').addEventListener('click', () => dialog.classList.add('open'));
+      document.getElementById('dialogClose').addEventListener('click', closeDialog);
+      document.getElementById('dialogCancel').addEventListener('click', closeDialog);
+      document.getElementById('dialogConfirm').addEventListener('click', () => { closeDialog(); document.getElementById('canaryButton').textContent = 'Canary 已启动'; });
+      const probeDialog = document.getElementById('probeDialogBackdrop');
+      const closeProbeDialog = () => { probeDialog.classList.remove('open'); document.getElementById('probeConfirm').checked = false; document.getElementById('probeDialogConfirm').disabled = true; };
+      document.getElementById('runProbeButton').addEventListener('click', () => probeDialog.classList.add('open'));
+      document.getElementById('probeDialogClose').addEventListener('click', closeProbeDialog);
+      document.getElementById('probeDialogCancel').addEventListener('click', closeProbeDialog);
+      probeDialog.addEventListener('click', (event) => { if (event.target.id === 'probeDialogBackdrop') closeProbeDialog(); });
+      document.getElementById('probeConfirm').addEventListener('change', (event) => { document.getElementById('probeDialogConfirm').disabled = !event.currentTarget.checked; });
+      document.getElementById('probeDialogConfirm').addEventListener('click', () => { closeProbeDialog(); const button = document.getElementById('runProbeButton'); button.textContent = '探针已运行'; button.disabled = true; });
+      document.getElementById('inspectSourceButton').addEventListener('click', (event) => { event.currentTarget.textContent = '检测完成'; });
+      document.getElementById('saveSourceButton').addEventListener('click', (event) => { event.currentTarget.textContent = '配置已保存'; });
+      document.getElementById('syncSourceButton').addEventListener('click', (event) => { event.currentTarget.textContent = '同步完成'; });
+      const priceDialog = document.getElementById('priceDialogBackdrop');
+      const closePriceDialog = () => priceDialog.classList.remove('open');
+      document.getElementById('priceButton').addEventListener('click', () => priceDialog.classList.add('open'));
+      document.getElementById('priceDialogClose').addEventListener('click', closePriceDialog);
+      document.getElementById('priceDialogCancel').addEventListener('click', closePriceDialog);
+      document.getElementById('priceDialogConfirm').addEventListener('click', closePriceDialog);
+      priceDialog.addEventListener('click', (event) => { if (event.target.id === 'priceDialogBackdrop') closePriceDialog(); });
+      const capabilityDialog = document.getElementById('capabilityDialogBackdrop');
+      const closeCapabilityDialog = () => capabilityDialog.classList.remove('open');
+      document.querySelectorAll('[data-capability]').forEach((control) => control.addEventListener('click', () => capabilityDialog.classList.add('open')));
+      document.getElementById('capabilityDialogClose').addEventListener('click', closeCapabilityDialog);
+      document.getElementById('capabilityDialogCancel').addEventListener('click', closeCapabilityDialog);
+      document.getElementById('capabilityDialogConfirm').addEventListener('click', closeCapabilityDialog);
+      capabilityDialog.addEventListener('click', (event) => { if (event.target.id === 'capabilityDialogBackdrop') closeCapabilityDialog(); });
+      document.querySelectorAll('.button').forEach((button) => { if (button.id !== 'canaryButton' && button.id !== 'runProbeButton') button.addEventListener('click', () => { if (button.id === 'exportButton') button.textContent = '报告已生成'; }); });
+      const prototypeParams = new URLSearchParams(location.search);
+      const initial = prototypeParams.get('view') || 'pricing';
+      setView(initial);
+      if (prototypeParams.get('dialog') === 'price') priceDialog.classList.add('open');
+      if (prototypeParams.get('dialog') === 'capability') capabilityDialog.classList.add('open');
+      if (prototypeParams.get('dialog') === 'probe') probeDialog.classList.add('open');
+      const sourceHistory = document.querySelector('.source-history');
+      if (sourceHistory) {
+        const health = document.createElement('div');
+        health.className = 'routing-health-summary';
+        health.innerHTML = '<div><small>路由健康</small><strong><span class="tag warning">observe_only</span></strong></div><div><small>硬阻断</small><strong>否</strong></div><div><small>自动经济切换</small><strong>否（仅观测）</strong></div><div><small>证据观测</small><strong>7/15 16:00</strong></div><p>路由依据：账单源仅观测。active 来源若出现 Key 无效、认证拒绝或额度耗尽会硬阻断；同步失败和过期证据只禁止自动经济切换。</p>';
+        sourceHistory.insertBefore(health, sourceHistory.querySelector('h3'));
+        if (prototypeParams.get('focus') === 'routing-health') {
+          sourceHistory.querySelectorAll('.table-wrap, h3').forEach((element) => { element.style.display = 'none'; });
+        }
+      }
+    </script>
+  </body>
+</html>

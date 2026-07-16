@@ -27,7 +27,7 @@ func (r *PostgresRepository) ListActiveGatewayRiskBlocks(ctx context.Context, no
 		return nil, err
 	}
 	defer rows.Close()
-	var out []GatewayRiskBlock
+	out := make([]GatewayRiskBlock, 0)
 	for rows.Next() {
 		var block GatewayRiskBlock
 		if err := rows.Scan(&block.APIKeyID, &block.RuleID, &block.Reason, &block.ExpiresAt, &block.CreatedAt); err != nil {

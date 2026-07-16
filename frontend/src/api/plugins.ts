@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { listOrEmpty, stringListOrEmpty } from './normalizers'
 import type {
   ArtifactSinkDestination,
   ArtifactSinkDestinationRequest,
@@ -28,19 +29,32 @@ import type {
   SidecarRuntimeStatus
 } from '@/types'
 
+type PluginPayload = Omit<Plugin, 'surfaces' | 'packages'> & {
+  surfaces?: string[] | null
+  packages?: PluginPackage[] | null
+}
+
+function normalizePlugin(plugin: PluginPayload): Plugin {
+  return {
+    ...plugin,
+    surfaces: stringListOrEmpty(plugin.surfaces),
+    packages: listOrEmpty(plugin.packages)
+  }
+}
+
 export async function getPluginCatalog(): Promise<PluginCatalog> {
-  const response = await apiClient.get<PluginCatalog>('/admin/plugins')
-  return response.data
+  const response = await apiClient.get<Omit<PluginCatalog, 'plugins'> & { plugins?: PluginPayload[] | null }>('/admin/plugins')
+  return { ...response.data, plugins: listOrEmpty(response.data.plugins).map(normalizePlugin) }
 }
 
 export async function enablePlugin(id: string): Promise<Plugin> {
-  const response = await apiClient.post<Plugin>(`/admin/plugins/${encodeURIComponent(id)}/enable`)
-  return response.data
+  const response = await apiClient.post<PluginPayload>(`/admin/plugins/${encodeURIComponent(id)}/enable`)
+  return normalizePlugin(response.data)
 }
 
 export async function disablePlugin(id: string): Promise<Plugin> {
-  const response = await apiClient.post<Plugin>(`/admin/plugins/${encodeURIComponent(id)}/disable`)
-  return response.data
+  const response = await apiClient.post<PluginPayload>(`/admin/plugins/${encodeURIComponent(id)}/disable`)
+  return normalizePlugin(response.data)
 }
 
 export async function getPluginConfig(id: string): Promise<PluginConfig> {
@@ -54,8 +68,8 @@ export async function updatePluginConfig(id: string, payload: PluginConfigReques
 }
 
 export async function getArtifactSinkDestinations(pluginID: string): Promise<ArtifactSinkDestination[]> {
-  const response = await apiClient.get<ArtifactSinkDestination[]>(`/admin/plugins/${encodeURIComponent(pluginID)}/artifact-sinks`)
-  return response.data
+  const response = await apiClient.get<ArtifactSinkDestination[] | null>(`/admin/plugins/${encodeURIComponent(pluginID)}/artifact-sinks`)
+  return listOrEmpty(response.data)
 }
 
 export async function upsertArtifactSinkDestination(pluginID: string, sinkID: string, payload: ArtifactSinkDestinationRequest): Promise<ArtifactSinkDestination> {
@@ -71,8 +85,12 @@ export async function deleteArtifactSinkDestination(pluginID: string, sinkID: st
 }
 
 export async function getPluginAPITokens(pluginID = ''): Promise<PluginAPIToken[]> {
-  const response = await apiClient.get<PluginAPIToken[]>('/admin/plugins/api-tokens', { params: pluginID ? { plugin_id: pluginID } : undefined })
-  return response.data
+  const response = await apiClient.get<PluginAPIToken[] | null>('/admin/plugins/api-tokens', { params: pluginID ? { plugin_id: pluginID } : undefined })
+  return listOrEmpty(response.data).map((token) => ({
+    ...token,
+    scopes: stringListOrEmpty(token.scopes),
+    surfaces: stringListOrEmpty(token.surfaces)
+  }))
 }
 
 export async function createPluginAPIToken(payload: PluginAPITokenCreateRequest): Promise<PluginAPITokenCreateResult> {
@@ -91,8 +109,8 @@ export async function getOfficialFeedClientInfo(): Promise<OfficialFeedClientInf
 }
 
 export async function getOfficialFeedStatuses(serviceKey = ''): Promise<OfficialFeedStatus[]> {
-  const response = await apiClient.get<OfficialFeedStatus[]>('/admin/plugins/feeds', { params: serviceKey ? { service_key: serviceKey } : undefined })
-  return response.data
+  const response = await apiClient.get<OfficialFeedStatus[] | null>('/admin/plugins/feeds', { params: serviceKey ? { service_key: serviceKey } : undefined })
+  return listOrEmpty(response.data)
 }
 
 export async function importOfficialFeed(payload: OfficialFeedImportRequest): Promise<OfficialFeedStatus> {
@@ -106,15 +124,15 @@ export async function syncOfficialFeed(serviceKey: string): Promise<OfficialFeed
 }
 
 export async function getOfficialFeedSyncRuns(serviceKey = '', limit = 20): Promise<OfficialFeedSyncRun[]> {
-  const response = await apiClient.get<OfficialFeedSyncRun[]>('/admin/plugins/feeds/sync-runs', {
+  const response = await apiClient.get<OfficialFeedSyncRun[] | null>('/admin/plugins/feeds/sync-runs', {
     params: { ...(serviceKey ? { service_key: serviceKey } : {}), limit }
   })
-  return response.data
+  return listOrEmpty(response.data)
 }
 
 export async function getPluginDeliveries(id: string, params?: { limit?: number; offset?: number; status?: string; alert_id?: string }): Promise<PluginDeliveryAttempt[]> {
-  const response = await apiClient.get<PluginDeliveryAttempt[]>(`/admin/plugins/${encodeURIComponent(id)}/deliveries`, { params })
-  return response.data
+  const response = await apiClient.get<PluginDeliveryAttempt[] | null>(`/admin/plugins/${encodeURIComponent(id)}/deliveries`, { params })
+  return listOrEmpty(response.data)
 }
 
 export async function getOfficialCatalogStatus(): Promise<OfficialCatalogStatus> {
@@ -148,8 +166,8 @@ export async function importOfficialLicense(payload: LicenseImportRequest): Prom
 }
 
 export async function getPluginPackages(id: string): Promise<PluginPackage[]> {
-  const response = await apiClient.get<PluginPackage[]>(`/admin/plugins/${encodeURIComponent(id)}/packages`)
-  return response.data
+  const response = await apiClient.get<PluginPackage[] | null>(`/admin/plugins/${encodeURIComponent(id)}/packages`)
+  return listOrEmpty(response.data)
 }
 
 export async function downloadPluginPackage(id: string, packageID: string, payload: PluginPackageDownloadRequest = {}): Promise<PluginPackageDownloadResult> {

@@ -1,4 +1,5 @@
 import { apiClient } from '@/api/client'
+import { listOrEmpty } from '@/api/normalizers'
 
 export interface CustomerPaymentChannel {
   id: 'wechat' | 'alipay'
@@ -90,19 +91,40 @@ export interface CustomerNotificationList {
   offset: number
 }
 
+function normalizeBillingOverview(overview: CustomerBillingOverview | null | undefined): CustomerBillingOverview {
+  const payload = overview ?? {} as CustomerBillingOverview
+  return {
+    ...payload,
+    recharge_options: listOrEmpty(payload.recharge_options),
+    payment_channels: listOrEmpty(payload.payment_channels),
+    vouchers: listOrEmpty(payload.vouchers)
+  }
+}
+
+function normalizeNotificationSettings(settings: CustomerNotificationSettings | null | undefined): CustomerNotificationSettings {
+  const payload = settings ?? {} as CustomerNotificationSettings
+  return {
+    ...payload,
+    preferences: listOrEmpty(payload.preferences).map((preference) => ({
+      ...preference,
+      channels: listOrEmpty(preference.channels)
+    }))
+  }
+}
+
 export async function getCustomerBilling(): Promise<CustomerBillingOverview> {
   const response = await apiClient.get<CustomerBillingOverview>('/customer/billing')
-  return response.data
+  return normalizeBillingOverview(response.data)
 }
 
 export async function getCustomerBillingEntries(query: CustomerBillingQuery = {}): Promise<CustomerBillingEntries> {
   const response = await apiClient.get<CustomerBillingEntries>('/customer/billing/entries', { params: query })
-  return response.data
+  return { ...response.data, items: listOrEmpty(response.data.items) }
 }
 
 export async function redeemCustomerCode(code: string): Promise<CustomerRedeemResult> {
   const response = await apiClient.post<CustomerRedeemResult>('/customer/billing/redeem', { code })
-  return response.data
+  return { ...response.data, overview: normalizeBillingOverview(response.data?.overview) }
 }
 
 export async function createCustomerRechargeOrder(payload: {
@@ -127,15 +149,16 @@ export async function downloadCustomerBillingCSV(query: CustomerBillingQuery = {
 }
 
 export async function getCustomerNotificationSettings(): Promise<CustomerNotificationSettings> {
-  return (await apiClient.get<CustomerNotificationSettings>('/customer/notification-settings')).data
+  return normalizeNotificationSettings((await apiClient.get<CustomerNotificationSettings>('/customer/notification-settings')).data)
 }
 
 export async function updateCustomerNotificationSettings(preferences: CustomerNotificationPreference[]): Promise<CustomerNotificationSettings> {
-  return (await apiClient.put<CustomerNotificationSettings>('/customer/notification-settings', { preferences })).data
+  return normalizeNotificationSettings((await apiClient.put<CustomerNotificationSettings>('/customer/notification-settings', { preferences })).data)
 }
 
 export async function getCustomerNotifications(limit = 20, offset = 0): Promise<CustomerNotificationList> {
-  return (await apiClient.get<CustomerNotificationList>('/customer/notifications', { params: { limit, offset } })).data
+  const response = (await apiClient.get<CustomerNotificationList>('/customer/notifications', { params: { limit, offset } })).data
+  return { ...response, items: listOrEmpty(response.items) }
 }
 
 export async function markCustomerNotificationRead(id: string): Promise<void> {

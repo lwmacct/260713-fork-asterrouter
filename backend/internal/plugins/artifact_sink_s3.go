@@ -458,6 +458,9 @@ func artifactSinkDestinationRecords(config configRecord) ([]artifactSinkDestinat
 	if err := json.Unmarshal([]byte(raw), &destinations); err != nil {
 		return nil, fmt.Errorf("%w: artifact sink destinations are invalid", ErrPluginConfigInvalid)
 	}
+	if destinations == nil {
+		destinations = []artifactSinkDestinationRecord{}
+	}
 	seen := map[string]struct{}{}
 	for _, destination := range destinations {
 		if err := validateArtifactSinkDestination(destination); err != nil {

@@ -48,7 +48,7 @@ func (s *Service) packageRevocation(ctx context.Context, record packageRecord) (
 func (s *Service) revokedAffectedVersions(ctx context.Context, record packageRecord) ([]affectedVersionRecord, error) {
 	keys := []string{record.PluginSlug, record.PluginPublicID, record.PluginID}
 	seen := map[string]struct{}{}
-	var out []affectedVersionRecord
+	out := make([]affectedVersionRecord, 0)
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
 		if key == "" {

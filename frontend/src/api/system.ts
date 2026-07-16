@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { listOrEmpty } from './normalizers'
 import type { S3BackupObject, SystemApplyResult, SystemArchiveInfo, SystemRestoreResult, SystemUpdateInfo } from '@/types'
 
 export interface SystemProfileBundle {
@@ -37,8 +38,8 @@ export async function restartSystem(): Promise<SystemApplyResult> {
 }
 
 export async function listSystemBackups(): Promise<SystemArchiveInfo[]> {
-  const response = await apiClient.get<SystemArchiveInfo[]>('/admin/system/backups')
-  return response.data || []
+  const response = await apiClient.get<SystemArchiveInfo[] | null>('/admin/system/backups')
+  return listOrEmpty(response.data)
 }
 
 export async function createSystemBackup(): Promise<SystemArchiveInfo> {
@@ -51,7 +52,7 @@ export async function testBackupS3(): Promise<void> {
 }
 
 export async function listS3Backups(): Promise<S3BackupObject[]> {
-  return (await apiClient.get<S3BackupObject[]>('/admin/system/backups/s3')).data || []
+  return listOrEmpty((await apiClient.get<S3BackupObject[] | null>('/admin/system/backups/s3')).data)
 }
 
 export async function restoreS3Backup(key: string): Promise<SystemRestoreResult> {

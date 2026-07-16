@@ -1,6 +1,6 @@
 # AsterRouter 全项目测试计划 v1
 
-> 状态：实施完成，等待环境证据（Phase 0-4 自动化已落地；发布验收等待本轮 Linux/PostgreSQL/Docker/nightly CI 证据）
+> 状态：Phase 0-4 实施与候选环境证据完成；等待将修正后的 Nightly 失败传播门禁推送并固化为 `main` required checks
 >
 > 制定日期：2026-07-13
 >

@@ -33,7 +33,7 @@ func (r *MemoryRepository) SaveWorkspaceUser(_ context.Context, user WorkspaceUs
 func (r *MemoryRepository) ListAuthIdentities(_ context.Context, userID string) ([]AuthIdentity, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var out []AuthIdentity
+	out := make([]AuthIdentity, 0)
 	for _, identity := range r.authIdentities {
 		if identity.UserID == userID {
 			out = append(out, identity)
@@ -121,7 +121,7 @@ ORDER BY u.status ASC, u.email ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []WorkspaceUser
+	out := make([]WorkspaceUser, 0)
 	for rows.Next() {
 		var user WorkspaceUser
 		var recovery string
@@ -171,7 +171,7 @@ func (r *PostgresRepository) ListAuthIdentities(ctx context.Context, userID stri
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AuthIdentity
+	out := make([]AuthIdentity, 0)
 	for rows.Next() {
 		var identity AuthIdentity
 		if err := rows.Scan(&identity.ID, &identity.UserID, &identity.Issuer, &identity.Subject, &identity.Email, &identity.CreatedAt, &identity.UpdatedAt); err != nil {
@@ -223,7 +223,7 @@ ORDER BY user_id ASC, scope_type ASC, scope_id ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []RoleBinding
+	out := make([]RoleBinding, 0)
 	for rows.Next() {
 		var binding RoleBinding
 		if err := rows.Scan(&binding.ID, &binding.UserID, &binding.Role, &binding.ScopeType, &binding.ScopeID, &binding.CreatedAt, &binding.UpdatedAt); err != nil {

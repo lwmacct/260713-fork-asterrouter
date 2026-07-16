@@ -45,6 +45,70 @@ describe('control API contracts', () => {
     expect(await control.getGovernancePolicies()).toEqual([])
   })
 
+  it('normalizes nullable collections used by every admin list page', async () => {
+    const loads: Array<() => Promise<unknown[]>> = [
+      control.getDepartments,
+      control.getOrganizationGroups,
+      control.getWorkspaceUsers,
+      control.getRoleBindings,
+      control.getModelPricings,
+      control.getAuditLogs,
+      control.getAlerts,
+      control.getGatewayTraces,
+      control.getExportJobs
+    ]
+
+    for (const load of loads) {
+      client.get.mockResolvedValueOnce({ data: null })
+      expect(await load()).toEqual([])
+    }
+  })
+
+  it('normalizes nested collections consumed directly by admin and portal views', async () => {
+    client.get.mockResolvedValueOnce({ data: [{ id: 'group-1', member_ids: null }] })
+    expect(await control.getOrganizationGroups()).toEqual([{ id: 'group-1', member_ids: [] }])
+
+    client.get.mockResolvedValueOnce({ data: [{ id: 'policy-1', model_allowlist: null, model_denylist: null }] })
+    expect(await control.getGovernancePolicies()).toEqual([{ id: 'policy-1', model_allowlist: [], model_denylist: [] }])
+
+    client.get.mockResolvedValueOnce({ data: [{ id: 'key-1', scopes: null, model_allowlist: null, allowed_modalities: null, allowed_operations: null, allowed_cidrs: null }] })
+    expect(await control.getAPIKeys()).toEqual([{
+      id: 'key-1', scopes: [], model_allowlist: [], allowed_modalities: [], allowed_operations: [], allowed_cidrs: []
+    }])
+
+    client.get.mockResolvedValueOnce({
+      data: {
+        api_keys: [{ id: 'key-1', scopes: null, model_allowlist: null, allowed_modalities: null, allowed_operations: null, allowed_cidrs: null }],
+        usage: { by_model: null, recent: null },
+        recent_traces: null,
+        alerts: null,
+        models: null
+      }
+    })
+    expect(await control.getPortalWorkspace()).toMatchObject({
+      api_keys: [{ model_allowlist: [] }],
+      usage: { by_model: [], recent: [] },
+      recent_traces: [],
+      alerts: [],
+      models: []
+    })
+
+    client.get.mockResolvedValueOnce({ data: { rows: [{ reason_codes: null, provider_billing_routing_health: { reason_codes: null } }], decisions: [{ reason_codes: null, last_evaluation_reason_codes: null }] } })
+    expect(await control.getEffectivePricingReport()).toMatchObject({
+      rows: [{ reason_codes: [], provider_billing_routing_health: { reason_codes: [] } }],
+      decisions: [{ reason_codes: [], last_evaluation_reason_codes: [] }]
+    })
+
+    client.post.mockResolvedValueOnce({ data: { usage_aggregates: null, warnings: null } })
+    expect(await control.inspectProviderBillingSource('account-1')).toMatchObject({ usage_aggregates: [], warnings: [] })
+
+    client.get.mockResolvedValueOnce({ data: [{ id: 'source-1', warnings: null, routing_health: { reason_codes: null } }] })
+    expect(await control.getProviderBillingSources()).toEqual([{ id: 'source-1', warnings: [], routing_health: { reason_codes: [] } }])
+
+    client.get.mockResolvedValueOnce({ data: { candidates: null } })
+    expect(await control.getAPIKeyPolicyExplanation('key-1')).toMatchObject({ candidates: [] })
+  })
+
   it('normalizes nullable provider mutation responses', async () => {
     const provider = { id: 'provider-1', models: null }
     client.post.mockResolvedValueOnce({ data: provider })

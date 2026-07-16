@@ -250,6 +250,9 @@ func parseStringList(value string) []string {
 	if err := json.Unmarshal([]byte(value), &out); err != nil {
 		return []string{}
 	}
+	if out == nil {
+		return []string{}
+	}
 	return out
 }
 

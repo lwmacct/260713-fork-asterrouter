@@ -2839,7 +2839,7 @@ ORDER BY priority ASC, name ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProviderConnection
+	out := make([]ProviderConnection, 0)
 	for rows.Next() {
 		var provider ProviderConnection
 		var models string
@@ -2882,7 +2882,7 @@ ORDER BY provider_id, checked_at DESC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProviderHealthCheck
+	out := make([]ProviderHealthCheck, 0)
 	for rows.Next() {
 		var check ProviderHealthCheck
 		var models string
@@ -2922,7 +2922,7 @@ ORDER BY sort_order ASC, name ASC
 	}
 	defer rows.Close()
 
-	var out []RoutingGroup
+	out := make([]RoutingGroup, 0)
 	for rows.Next() {
 		var group RoutingGroup
 		if err := rows.Scan(
@@ -3066,7 +3066,7 @@ ORDER BY priority ASC, name ASC
 	}
 	defer rows.Close()
 
-	var out []ProviderAccount
+	out := make([]ProviderAccount, 0)
 	for rows.Next() {
 		var account ProviderAccount
 		var models, groupIDs, tempUnschedulableRules string
@@ -3169,7 +3169,7 @@ func (r *PostgresRepository) ListProviderAccountModels(ctx context.Context, acco
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProviderAccountModel
+	out := make([]ProviderAccountModel, 0)
 	for rows.Next() {
 		var model ProviderAccountModel
 		var lastSeenAt sql.NullTime
@@ -3217,7 +3217,7 @@ ORDER BY account_id, checked_at DESC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProviderAccountHealthCheck
+	out := make([]ProviderAccountHealthCheck, 0)
 	for rows.Next() {
 		var check ProviderAccountHealthCheck
 		var models string
@@ -3250,7 +3250,7 @@ ORDER BY model ASC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ModelPricing
+	out := make([]ModelPricing, 0)
 	for rows.Next() {
 		var pricing ModelPricing
 		if err := rows.Scan(&pricing.ID, &pricing.Model, &pricing.Currency, &pricing.InputPriceCentsPer1MTokens, &pricing.OutputPriceCentsPer1MTokens, &pricing.Status, &pricing.CreatedAt, &pricing.UpdatedAt); err != nil {
@@ -3359,7 +3359,7 @@ ORDER BY created_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []APIKeyRecord
+	out := make([]APIKeyRecord, 0)
 	for rows.Next() {
 		key, err := scanAPIKey(rows)
 		if err != nil {
@@ -3566,7 +3566,7 @@ FROM usage_records`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []UsageRecord
+	out := make([]UsageRecord, 0)
 	for rows.Next() {
 		var record UsageRecord
 		var usageDimensionsJSON []byte
@@ -3717,7 +3717,7 @@ FROM gateway_traces`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []GatewayTrace
+	out := make([]GatewayTrace, 0)
 	for rows.Next() {
 		var trace GatewayTrace
 		if err := rows.Scan(&trace.ID, &trace.OperationID, &trace.AttemptID, &trace.RequestFingerprint, &trace.APIKeyID, &trace.APIFingerprint, &trace.ProfileScope, &trace.PlatformTenantID, &trace.PlatformTenantName, &trace.GatewayPrincipalID, &trace.GatewayPrincipalName, &trace.ExternalAuthIntegrationID, &trace.ExternalSubjectReference, &trace.Model, &trace.Stream, &trace.MessageCount, &trace.ProviderID, &trace.ProviderAccountID, &trace.GatewayModelID, &trace.RouteID, &trace.RouteGroup, &trace.UpstreamModel, &trace.RouteSource, &trace.RouteReason, &trace.PolicyID, &trace.PolicyName, &trace.PolicySource, &trace.PolicyVersion, &trace.PolicySnapshot, &trace.Status, &trace.HTTPStatus, &trace.ErrorType, &trace.LatencyMS, &trace.InputTokens, &trace.OutputTokens, &trace.RequestSummary, &trace.ResponseSummary, &trace.RouteAttempts, &trace.CreatedAt); err != nil {
@@ -3779,7 +3779,7 @@ FROM audit_logs`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AuditLog
+	out := make([]AuditLog, 0)
 	for rows.Next() {
 		var event AuditLog
 		if err := rows.Scan(&event.ID, &event.Actor, &event.Action, &event.ResourceType, &event.ResourceID, &event.Summary, &event.ProfileScope, &event.PlatformTenantID, &event.PlatformTenantName, &event.GatewayPrincipalID, &event.GatewayPrincipalName, &event.ExternalAuthIntegrationID, &event.ExternalSubjectReference, &event.CreatedAt); err != nil {
@@ -3846,6 +3846,9 @@ func parseStringList(value string) []string {
 	if err := json.Unmarshal([]byte(value), &out); err != nil {
 		return []string{}
 	}
+	if out == nil {
+		return []string{}
+	}
 	return out
 }
 
@@ -3860,6 +3863,9 @@ func marshalTempUnschedulableRules(rules []ProviderAccountTempUnschedulableRule)
 func parseTempUnschedulableRules(value string) []ProviderAccountTempUnschedulableRule {
 	var out []ProviderAccountTempUnschedulableRule
 	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return []ProviderAccountTempUnschedulableRule{}
+	}
+	if out == nil {
 		return []ProviderAccountTempUnschedulableRule{}
 	}
 	return out

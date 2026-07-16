@@ -81,7 +81,7 @@ func (s *S3BackupStore) List(ctx context.Context) ([]S3BackupObject, error) {
 	if prefix != "" {
 		prefix += "/"
 	}
-	var out []S3BackupObject
+	out := make([]S3BackupObject, 0)
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.config.Bucket), Prefix: aws.String(prefix)})
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)

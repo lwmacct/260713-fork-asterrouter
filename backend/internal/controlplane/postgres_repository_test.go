@@ -11,6 +11,57 @@ import (
 	"github.com/astercloud/asterrouter/backend/internal/testutil"
 )
 
+func assertEmptyList[T any](t *testing.T, name string, load func() ([]T, error)) {
+	t.Helper()
+	items, err := load()
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if items == nil {
+		t.Fatalf("%s returned a nil slice", name)
+	}
+	if len(items) != 0 {
+		t.Fatalf("%s returned %d items, want 0", name, len(items))
+	}
+}
+
+func TestPostgresRepositoryEmptyListContracts(t *testing.T) {
+	schema := testutil.NewPostgresSchema(t)
+	ctx := context.Background()
+	repo, err := NewPostgresRepository(ctx, schema.URL)
+	if err != nil {
+		t.Fatalf("NewPostgresRepository(): %v", err)
+	}
+	defer repo.Close()
+
+	assertEmptyList(t, "ListDepartments", func() ([]Department, error) { return repo.ListDepartments(ctx) })
+	assertEmptyList(t, "ListOrganizationGroups", func() ([]OrganizationGroup, error) { return repo.ListOrganizationGroups(ctx) })
+	assertEmptyList(t, "ListGovernancePolicies", func() ([]GovernancePolicy, error) { return repo.ListGovernancePolicies(ctx) })
+	assertEmptyList(t, "ListWorkspaceUsers", func() ([]WorkspaceUser, error) { return repo.ListWorkspaceUsers(ctx) })
+	assertEmptyList(t, "ListRoleBindings", func() ([]RoleBinding, error) { return repo.ListRoleBindings(ctx) })
+	assertEmptyList(t, "ListProviders", func() ([]ProviderConnection, error) { return repo.ListProviders(ctx) })
+	assertEmptyList(t, "ListLatestProviderHealthChecks", func() ([]ProviderHealthCheck, error) { return repo.ListLatestProviderHealthChecks(ctx) })
+	assertEmptyList(t, "ListRoutingGroups", func() ([]RoutingGroup, error) { return repo.ListRoutingGroups(ctx) })
+	assertEmptyList(t, "ListProviderAccounts", func() ([]ProviderAccount, error) { return repo.ListProviderAccounts(ctx) })
+	assertEmptyList(t, "ListLatestProviderAccountHealthChecks", func() ([]ProviderAccountHealthCheck, error) { return repo.ListLatestProviderAccountHealthChecks(ctx) })
+	assertEmptyList(t, "ListGatewayModels", func() ([]GatewayModel, error) { return repo.ListGatewayModels(ctx) })
+	assertEmptyList(t, "ListModelRoutes", func() ([]ModelRoute, error) { return repo.ListModelRoutes(ctx) })
+	assertEmptyList(t, "ListModelPricings", func() ([]ModelPricing, error) { return repo.ListModelPricings(ctx) })
+	assertEmptyList(t, "ListAPIKeys", func() ([]APIKeyRecord, error) { return repo.ListAPIKeys(ctx) })
+	assertEmptyList(t, "ListUsageRecords", func() ([]UsageRecord, error) { return repo.ListUsageRecords(ctx, 100) })
+	assertEmptyList(t, "ListGatewayTraces", func() ([]GatewayTrace, error) { return repo.ListGatewayTraces(ctx, 100) })
+	assertEmptyList(t, "ListAuditLogs", func() ([]AuditLog, error) { return repo.ListAuditLogs(ctx, 100) })
+}
+
+func TestListParsersNormalizeJSONNull(t *testing.T) {
+	if values := parseStringList("null"); values == nil || len(values) != 0 {
+		t.Fatalf("parseStringList(null) = %#v, want []", values)
+	}
+	if rules := parseTempUnschedulableRules("null"); rules == nil || len(rules) != 0 {
+		t.Fatalf("parseTempUnschedulableRules(null) = %#v, want []", rules)
+	}
+}
+
 func TestPostgresRepositoryPersistsCoreRecordsAcrossRestart(t *testing.T) {
 	schema := testutil.NewPostgresSchema(t)
 	ctx := context.Background()

@@ -46,7 +46,7 @@ func mapRemoteCatalogPlugins(index remoteCatalogIndex, now time.Time) []Plugin {
 }
 
 func mapRemoteCatalogPackages(index remoteCatalogIndex, now time.Time) []packageRecord {
-	var out []packageRecord
+	out := make([]packageRecord, 0)
 	for _, item := range index.Plugins {
 		slug := sanitizeCatalogSlug(item.Slug)
 		if slug == "" {

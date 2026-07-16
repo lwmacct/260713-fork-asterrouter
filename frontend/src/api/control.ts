@@ -1,5 +1,33 @@
 import { apiClient } from './client'
-import { listOrEmpty, normalizeDashboard, type DashboardPayload, type NullableList } from './normalizers'
+import {
+  listOrEmpty,
+  normalizeAIJobAdminDetail,
+  normalizeAPIKeyCreateResponse,
+  normalizeAPIKeyRecord,
+  normalizeArtifactAdminDetail,
+  normalizeDashboard,
+  normalizeEffectivePricingDecision,
+  normalizeEffectivePricingDecisionEvaluation,
+  normalizeEffectivePricingReport,
+  normalizeGatewayPolicyExplanation,
+  normalizeProviderBillingSource,
+  normalizeProviderBillingSourceInspection,
+  normalizeProviderBillingSyncResult,
+  normalizeUsageReport,
+  stringListOrEmpty,
+  type AIJobAdminDetailPayload,
+  type APIKeyCreateResponsePayload,
+  type APIKeyRecordPayload,
+  type ArtifactAdminDetailPayload,
+  type DashboardPayload,
+  type EffectivePricingDecisionEvaluationPayload,
+  type EffectivePricingDecisionPayload,
+  type EffectivePricingReportPayload,
+  type ProviderBillingSourceInspectionPayload,
+  type ProviderBillingSourcePayload,
+  type ProviderBillingSyncResultPayload,
+  type UsageReportPayload
+} from './normalizers'
 import type {
   APIKeyCreateRequest,
   APIKeyCreateResponse,
@@ -92,9 +120,18 @@ type ProviderAccountPayload = Omit<ProviderAccount, 'models' | 'group_ids' | 'te
   temp_unschedulable_rules?: ProviderAccount['temp_unschedulable_rules'] | null
 }
 type ProviderAccountHealthCheckPayload = Omit<ProviderAccountHealthCheck, 'models'> & { models?: string[] | null }
-
-function stringListOrEmpty(value: NullableList<string>): string[] {
-  return listOrEmpty(value).filter((item): item is string => typeof item === 'string')
+type OrganizationGroupPayload = Omit<OrganizationGroup, 'member_ids'> & { member_ids?: string[] | null }
+type GovernancePolicyPayload = Omit<GovernancePolicy, 'model_allowlist' | 'model_denylist'> & {
+  model_allowlist?: string[] | null
+  model_denylist?: string[] | null
+}
+type GatewaySimulationPayload = Omit<GatewaySimulation, 'candidates'> & { candidates?: GatewaySimulation['candidates'] | null }
+type CostAllocationReportPayload = Omit<CostAllocationReport, 'rows'> & { rows?: CostAllocationReport['rows'] | null }
+type ProviderBillingSourceEvidencePayload = Omit<ProviderBillingSourceEvidence, 'source' | 'runs' | 'balances' | 'aggregates'> & {
+  source: ProviderBillingSourcePayload
+  runs?: ProviderBillingSourceEvidence['runs'] | null
+  balances?: ProviderBillingSourceEvidence['balances'] | null
+  aggregates?: ProviderBillingSourceEvidence['aggregates'] | null
 }
 
 function normalizeProvider(provider: ProviderConnectionPayload): ProviderConnection {
@@ -125,6 +162,18 @@ function normalizeProviderAccountHealthCheck(check: ProviderAccountHealthCheckPa
   return {
     ...check,
     models: stringListOrEmpty(check.models)
+  }
+}
+
+function normalizeOrganizationGroup(group: OrganizationGroupPayload): OrganizationGroup {
+  return { ...group, member_ids: stringListOrEmpty(group.member_ids) }
+}
+
+function normalizeGovernancePolicy(policy: GovernancePolicyPayload): GovernancePolicy {
+  return {
+    ...policy,
+    model_allowlist: stringListOrEmpty(policy.model_allowlist),
+    model_denylist: stringListOrEmpty(policy.model_denylist)
   }
 }
 
@@ -159,20 +208,21 @@ export async function checkProvider(id: string): Promise<ProviderHealthCheck> {
 }
 
 export async function getDepartments(): Promise<Department[]> {
-  const response = await apiClient.get<Department[]>('/admin/departments')
-  return response.data
+  const response = await apiClient.get<Department[] | null>('/admin/departments')
+  return listOrEmpty(response.data)
 }
 
 export async function getOrganizationGroups(): Promise<OrganizationGroup[]> {
-	return (await apiClient.get<OrganizationGroup[]>('/admin/organization-groups')).data
+		const response = await apiClient.get<OrganizationGroupPayload[] | null>('/admin/organization-groups')
+		return listOrEmpty(response.data).map(normalizeOrganizationGroup)
 }
 
 export async function createOrganizationGroup(payload: OrganizationGroupRequest): Promise<OrganizationGroup> {
-	return (await apiClient.post<OrganizationGroup>('/admin/organization-groups', payload)).data
+	return normalizeOrganizationGroup((await apiClient.post<OrganizationGroupPayload>('/admin/organization-groups', payload)).data)
 }
 
 export async function updateOrganizationGroup(id: string, payload: OrganizationGroupRequest): Promise<OrganizationGroup> {
-	return (await apiClient.put<OrganizationGroup>(`/admin/organization-groups/${id}`, payload)).data
+	return normalizeOrganizationGroup((await apiClient.put<OrganizationGroupPayload>(`/admin/organization-groups/${id}`, payload)).data)
 }
 
 export async function deleteOrganizationGroup(id: string): Promise<void> {
@@ -190,23 +240,23 @@ export async function updateDepartment(id: string, payload: DepartmentRequest): 
 }
 
 export async function getGovernancePolicies(): Promise<GovernancePolicy[]> {
-  const response = await apiClient.get<GovernancePolicy[] | null>('/admin/policies')
-  return listOrEmpty(response.data)
+  const response = await apiClient.get<GovernancePolicyPayload[] | null>('/admin/policies')
+  return listOrEmpty(response.data).map(normalizeGovernancePolicy)
 }
 
 export async function createGovernancePolicy(payload: GovernancePolicyRequest): Promise<GovernancePolicy> {
-  const response = await apiClient.post<GovernancePolicy>('/admin/policies', payload)
-  return response.data
+  const response = await apiClient.post<GovernancePolicyPayload>('/admin/policies', payload)
+  return normalizeGovernancePolicy(response.data)
 }
 
 export async function updateGovernancePolicy(id: string, payload: GovernancePolicyRequest): Promise<GovernancePolicy> {
-  const response = await apiClient.put<GovernancePolicy>(`/admin/policies/${id}`, payload)
-  return response.data
+  const response = await apiClient.put<GovernancePolicyPayload>(`/admin/policies/${id}`, payload)
+  return normalizeGovernancePolicy(response.data)
 }
 
 export async function getWorkspaceUsers(): Promise<WorkspaceUser[]> {
-  const response = await apiClient.get<WorkspaceUser[]>('/admin/users')
-  return response.data
+  const response = await apiClient.get<WorkspaceUser[] | null>('/admin/users')
+  return listOrEmpty(response.data)
 }
 
 export async function createWorkspaceUser(payload: WorkspaceUserRequest): Promise<WorkspaceUser> {
@@ -220,8 +270,8 @@ export async function updateWorkspaceUser(id: string, payload: WorkspaceUserRequ
 }
 
 export async function getRoleBindings(): Promise<RoleBinding[]> {
-  const response = await apiClient.get<RoleBinding[]>('/admin/role-bindings')
-  return response.data
+  const response = await apiClient.get<RoleBinding[] | null>('/admin/role-bindings')
+  return listOrEmpty(response.data)
 }
 
 export async function createRoleBinding(payload: RoleBindingRequest): Promise<RoleBinding> {
@@ -345,8 +395,8 @@ export async function createModelRoute(payload: ModelRouteRequest): Promise<Mode
 }
 
 export async function bulkCreateModelRoutes(payload: ModelRouteBulkCreateRequest): Promise<ModelRouteBulkCreateResult> {
-  const response = await apiClient.post<ModelRouteBulkCreateResult>('/admin/model-routes/bulk', payload)
-  return response.data
+  const response = await apiClient.post<Omit<ModelRouteBulkCreateResult, 'routes'> & { routes?: ModelRoute[] | null }>('/admin/model-routes/bulk', payload)
+  return { ...response.data, routes: listOrEmpty(response.data.routes) }
 }
 
 export async function updateModelRoute(id: string, payload: ModelRouteRequest): Promise<ModelRoute> {
@@ -359,16 +409,16 @@ export async function deleteModelRoute(id: string): Promise<void> {
 }
 
 export async function simulateGatewayRouting(model: string, estimatedTokens: number): Promise<GatewaySimulation> {
-  const response = await apiClient.post<GatewaySimulation>('/admin/gateway-simulator', {
+  const response = await apiClient.post<GatewaySimulationPayload>('/admin/gateway-simulator', {
     model,
     estimated_tokens: estimatedTokens
   })
-  return response.data
+  return { ...response.data, candidates: listOrEmpty(response.data.candidates) }
 }
 
 export async function getModelPricings(): Promise<ModelPricing[]> {
-  const response = await apiClient.get<ModelPricing[]>('/admin/model-pricings')
-  return response.data
+  const response = await apiClient.get<ModelPricing[] | null>('/admin/model-pricings')
+  return listOrEmpty(response.data)
 }
 
 export async function createModelPricing(payload: ModelPricingRequest): Promise<ModelPricing> {
@@ -382,8 +432,8 @@ export async function updateModelPricing(id: string, payload: ModelPricingReques
 }
 
 export async function getEffectivePricingReport(params?: { model?: string; protocol?: string; window_hours?: number }): Promise<EffectivePricingReport> {
-  const response = await apiClient.get<EffectivePricingReport>('/admin/effective-pricing/report', { params })
-  return response.data
+  const response = await apiClient.get<EffectivePricingReportPayload>('/admin/effective-pricing/report', { params })
+  return normalizeEffectivePricingReport(response.data)
 }
 
 export async function getEffectivePricingPolicy(): Promise<EffectivePricingPolicy> {
@@ -422,31 +472,37 @@ export async function createProviderBillingLine(payload: ProviderBillingLineRequ
 }
 
 export async function inspectProviderBillingSource(providerAccountID: string, adapterID = 'auto'): Promise<ProviderBillingSourceInspection> {
-  const response = await apiClient.post<ProviderBillingSourceInspection>('/admin/provider-billing-sources/inspect', {
+  const response = await apiClient.post<ProviderBillingSourceInspectionPayload>('/admin/provider-billing-sources/inspect', {
     provider_account_id: providerAccountID,
     adapter_id: adapterID
   })
-  return response.data
+  return normalizeProviderBillingSourceInspection(response.data)
 }
 
 export async function getProviderBillingSources(): Promise<ProviderBillingSource[]> {
-  const response = await apiClient.get<ProviderBillingSource[] | null>('/admin/provider-billing-sources')
-  return listOrEmpty(response.data)
+  const response = await apiClient.get<ProviderBillingSourcePayload[] | null>('/admin/provider-billing-sources')
+  return listOrEmpty(response.data).map(normalizeProviderBillingSource)
 }
 
 export async function updateProviderBillingSource(payload: ProviderBillingSourceRequest): Promise<ProviderBillingSource> {
-  const response = await apiClient.put<ProviderBillingSource>('/admin/provider-billing-sources', payload)
-  return response.data
+  const response = await apiClient.put<ProviderBillingSourcePayload>('/admin/provider-billing-sources', payload)
+  return normalizeProviderBillingSource(response.data)
 }
 
 export async function syncProviderBillingSource(id: string): Promise<ProviderBillingSyncResult> {
-  const response = await apiClient.post<ProviderBillingSyncResult>(`/admin/provider-billing-sources/${id}/sync`)
-  return response.data
+  const response = await apiClient.post<ProviderBillingSyncResultPayload>(`/admin/provider-billing-sources/${id}/sync`)
+  return normalizeProviderBillingSyncResult(response.data)
 }
 
 export async function getProviderBillingSourceEvidence(id: string, limit = 100): Promise<ProviderBillingSourceEvidence> {
-  const response = await apiClient.get<ProviderBillingSourceEvidence>(`/admin/provider-billing-sources/${id}/evidence`, { params: { limit } })
-  return response.data
+  const response = await apiClient.get<ProviderBillingSourceEvidencePayload>(`/admin/provider-billing-sources/${id}/evidence`, { params: { limit } })
+  return {
+    ...response.data,
+    source: normalizeProviderBillingSource(response.data.source),
+    runs: listOrEmpty(response.data.runs),
+    balances: listOrEmpty(response.data.balances),
+    aggregates: listOrEmpty(response.data.aggregates)
+  }
 }
 
 export async function getProviderCacheCapabilities(): Promise<ProviderCacheCapability[]> {
@@ -470,48 +526,48 @@ export async function runProviderCacheProbe(payload: CacheProbeRequest): Promise
 }
 
 export async function getEffectivePricingDecisions(): Promise<EffectivePricingDecision[]> {
-  const response = await apiClient.get<EffectivePricingDecision[] | null>('/admin/effective-pricing/decisions')
-  return listOrEmpty(response.data)
+  const response = await apiClient.get<EffectivePricingDecisionPayload[] | null>('/admin/effective-pricing/decisions')
+  return listOrEmpty(response.data).map(normalizeEffectivePricingDecision)
 }
 
 export async function getEffectivePricingDecisionEvaluations(id: string, limit = 100): Promise<EffectivePricingDecisionEvaluation[]> {
-  const response = await apiClient.get<EffectivePricingDecisionEvaluation[] | null>(`/admin/effective-pricing/decisions/${id}/evaluations`, { params: { limit } })
-  return listOrEmpty(response.data)
+  const response = await apiClient.get<EffectivePricingDecisionEvaluationPayload[] | null>(`/admin/effective-pricing/decisions/${id}/evaluations`, { params: { limit } })
+  return listOrEmpty(response.data).map(normalizeEffectivePricingDecisionEvaluation)
 }
 
 export async function evaluateEffectivePricingDecision(payload: EffectivePricingDecisionEvaluationRequest): Promise<EffectivePricingDecision> {
-  const response = await apiClient.post<EffectivePricingDecision>('/admin/effective-pricing/decisions/evaluate', payload)
-  return response.data
+  const response = await apiClient.post<EffectivePricingDecisionPayload>('/admin/effective-pricing/decisions/evaluate', payload)
+  return normalizeEffectivePricingDecision(response.data)
 }
 
 export async function actOnEffectivePricingDecision(id: string, action: string, canaryPercent = 0): Promise<EffectivePricingDecision> {
-  const response = await apiClient.post<EffectivePricingDecision>(`/admin/effective-pricing/decisions/${id}/action`, { action, canary_percent: canaryPercent })
-  return response.data
+  const response = await apiClient.post<EffectivePricingDecisionPayload>(`/admin/effective-pricing/decisions/${id}/action`, { action, canary_percent: canaryPercent })
+  return normalizeEffectivePricingDecision(response.data)
 }
 
 export async function getAPIKeys(): Promise<APIKeyRecord[]> {
   const response = await apiClient.get<APIKeyRecord[] | null>('/admin/api-keys')
-  return listOrEmpty(response.data)
+  return listOrEmpty(response.data).map((record) => normalizeAPIKeyRecord(record as APIKeyRecordPayload))
 }
 
 export async function getAPIKeyPolicyExplanation(id: string): Promise<GatewayPolicyExplanation> {
   const response = await apiClient.get<GatewayPolicyExplanation>(`/admin/api-keys/${id}/policy-explanation`)
-  return response.data
+  return normalizeGatewayPolicyExplanation(response.data)
 }
 
 export async function createAPIKey(payload: APIKeyCreateRequest): Promise<APIKeyCreateResponse> {
-  const response = await apiClient.post<APIKeyCreateResponse>('/admin/api-keys', payload)
-  return response.data
+  const response = await apiClient.post<APIKeyCreateResponsePayload>('/admin/api-keys', payload)
+  return normalizeAPIKeyCreateResponse(response.data)
 }
 
 export async function updateAPIKey(id: string, payload: APIKeyUpdateRequest): Promise<APIKeyRecord> {
-  const response = await apiClient.put<APIKeyRecord>(`/admin/api-keys/${id}`, payload)
-  return response.data
+  const response = await apiClient.put<APIKeyRecordPayload>(`/admin/api-keys/${id}`, payload)
+  return normalizeAPIKeyRecord(response.data)
 }
 
 export async function rotateAPIKey(id: string, gracePeriodSeconds = 0): Promise<APIKeyCreateResponse> {
-	const response = await apiClient.post<APIKeyCreateResponse>(`/admin/api-keys/${id}/rotate`, { grace_period_seconds: gracePeriodSeconds })
-  return response.data
+		const response = await apiClient.post<APIKeyCreateResponsePayload>(`/admin/api-keys/${id}/rotate`, { grace_period_seconds: gracePeriodSeconds })
+  return normalizeAPIKeyCreateResponse(response.data)
 }
 
 export async function disableAPIKey(id: string): Promise<void> {
@@ -519,8 +575,8 @@ export async function disableAPIKey(id: string): Promise<void> {
 }
 
 export async function getAuditLogs(params?: RecordListQuery): Promise<AuditLog[]> {
-  const response = await apiClient.get<AuditLog[]>('/admin/audit-logs', { params })
-  return response.data
+  const response = await apiClient.get<AuditLog[] | null>('/admin/audit-logs', { params })
+  return listOrEmpty(response.data)
 }
 
 export async function getAuditLogSummary(params?: RecordListQuery): Promise<AuditLogSummary> {
@@ -529,8 +585,8 @@ export async function getAuditLogSummary(params?: RecordListQuery): Promise<Audi
 }
 
 export async function getAlerts(params?: RecordListQuery): Promise<AlertEvent[]> {
-  const response = await apiClient.get<AlertEvent[]>('/admin/alerts', { params })
-  return response.data
+  const response = await apiClient.get<AlertEvent[] | null>('/admin/alerts', { params })
+  return listOrEmpty(response.data)
 }
 
 export async function getAlertSummary(params?: RecordListQuery): Promise<AlertSummary> {
@@ -553,8 +609,8 @@ export async function exportAuditLogsCSV(params?: RecordListQuery): Promise<void
 }
 
 export async function getUsageReport(params?: RecordListQuery): Promise<UsageReport> {
-  const response = await apiClient.get<UsageReport>('/admin/usage', { params })
-  return response.data
+  const response = await apiClient.get<UsageReportPayload>('/admin/usage', { params })
+  return normalizeUsageReport(response.data)
 }
 
 export async function exportUsageCSV(params?: RecordListQuery): Promise<void> {
@@ -562,8 +618,8 @@ export async function exportUsageCSV(params?: RecordListQuery): Promise<void> {
 }
 
 export async function getCostAllocationReport(params?: RecordListQuery): Promise<CostAllocationReport> {
-  const response = await apiClient.get<CostAllocationReport>('/admin/cost-allocation', { params })
-  return response.data
+  const response = await apiClient.get<CostAllocationReportPayload>('/admin/cost-allocation', { params })
+  return { ...response.data, rows: listOrEmpty(response.data.rows) }
 }
 
 export async function exportCostAllocationCSV(params?: RecordListQuery): Promise<void> {
@@ -571,8 +627,8 @@ export async function exportCostAllocationCSV(params?: RecordListQuery): Promise
 }
 
 export async function getGatewayTraces(params?: RecordListQuery): Promise<GatewayTrace[]> {
-  const response = await apiClient.get<GatewayTrace[]>('/admin/gateway-traces', { params })
-  return response.data
+  const response = await apiClient.get<GatewayTrace[] | null>('/admin/gateway-traces', { params })
+  return listOrEmpty(response.data)
 }
 
 export async function getGatewayTraceSummary(params?: RecordListQuery): Promise<GatewayTraceSummary> {
@@ -591,8 +647,8 @@ export async function getArtifactSummary(params?: ArtifactListQuery): Promise<Ar
 }
 
 export async function getArtifact(id: string): Promise<ArtifactAdminDetail> {
-  const response = await apiClient.get<ArtifactAdminDetail>(`/admin/artifacts/${id}`)
-  return response.data
+  const response = await apiClient.get<ArtifactAdminDetailPayload>(`/admin/artifacts/${id}`)
+  return normalizeArtifactAdminDetail(response.data)
 }
 
 export async function getArtifactRuntimes(): Promise<ArtifactRuntime[]> {
@@ -621,8 +677,8 @@ export async function getAIJobRuntime(): Promise<AIJobRuntimeStatus> {
 }
 
 export async function getAIJob(id: string): Promise<AIJobAdminDetail> {
-  const response = await apiClient.get<AIJobAdminDetail>(`/admin/ai-jobs/${id}`)
-  return response.data
+  const response = await apiClient.get<AIJobAdminDetailPayload>(`/admin/ai-jobs/${id}`)
+  return normalizeAIJobAdminDetail(response.data)
 }
 
 export async function cancelAIJob(id: string): Promise<AIJobAdminActionResult> {
@@ -645,8 +701,8 @@ export async function createExportJob(kind: ExportJobKind, params?: RecordListQu
 }
 
 export async function getExportJobs(limit = 50): Promise<ExportJob[]> {
-  const response = await apiClient.get<ExportJob[]>('/admin/export-jobs', { params: { limit } })
-  return response.data
+  const response = await apiClient.get<ExportJob[] | null>('/admin/export-jobs', { params: { limit } })
+  return listOrEmpty(response.data)
 }
 
 export async function getExportJob(id: string): Promise<ExportJob> {
@@ -659,18 +715,26 @@ export async function downloadExportJob(job: ExportJob): Promise<void> {
 }
 
 export async function getPortalWorkspace(): Promise<PortalWorkspace> {
-	const response = await apiClient.get<PortalWorkspace>(`${selfServiceAPIBase()}/workspace`)
-	return response.data
+		const response = await apiClient.get<PortalWorkspace>(`${selfServiceAPIBase()}/workspace`)
+		const payload = response.data ?? {} as PortalWorkspace
+		return {
+			...payload,
+			api_keys: listOrEmpty(payload.api_keys).map((record) => normalizeAPIKeyRecord(record as APIKeyRecordPayload)),
+			usage: normalizeUsageReport(payload.usage as UsageReportPayload),
+			recent_traces: listOrEmpty(payload.recent_traces),
+			alerts: listOrEmpty(payload.alerts),
+			models: stringListOrEmpty(payload.models)
+		}
 }
 
 export async function createPortalAPIKey(payload: APIKeyCreateRequest): Promise<APIKeyCreateResponse> {
-	const response = await apiClient.post<APIKeyCreateResponse>(`${selfServiceAPIBase()}/api-keys`, payload)
-	return response.data
+		const response = await apiClient.post<APIKeyCreateResponsePayload>(`${selfServiceAPIBase()}/api-keys`, payload)
+		return normalizeAPIKeyCreateResponse(response.data)
 }
 
 export async function rotatePortalAPIKey(id: string, gracePeriodSeconds = 0): Promise<APIKeyCreateResponse> {
-	const response = await apiClient.post<APIKeyCreateResponse>(`${selfServiceAPIBase()}/api-keys/${id}/rotate`, { grace_period_seconds: gracePeriodSeconds })
-	return response.data
+		const response = await apiClient.post<APIKeyCreateResponsePayload>(`${selfServiceAPIBase()}/api-keys/${id}/rotate`, { grace_period_seconds: gracePeriodSeconds })
+		return normalizeAPIKeyCreateResponse(response.data)
 }
 
 export async function disablePortalAPIKey(id: string): Promise<void> {

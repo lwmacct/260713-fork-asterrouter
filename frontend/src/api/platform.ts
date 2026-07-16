@@ -1,5 +1,18 @@
 import { apiClient } from './client'
-import { listOrEmpty, normalizeDashboard, type DashboardPayload } from './normalizers'
+import {
+  listOrEmpty,
+  normalizeAIJobAdminDetail,
+  normalizeAPIKeyCreateResponse,
+  normalizeAPIKeyRecord,
+  normalizeArtifactAdminDetail,
+  normalizeDashboard,
+  stringListOrEmpty,
+  type AIJobAdminDetailPayload,
+  type APIKeyCreateResponsePayload,
+  type APIKeyRecordPayload,
+  type ArtifactAdminDetailPayload,
+  type DashboardPayload
+} from './normalizers'
 import type {
   APIKeyCreateRequest,
   APIKeyCreateResponse,
@@ -50,7 +63,8 @@ export async function getPlatformAIJobRuntime(): Promise<AIJobRuntimeStatus> {
 }
 
 export async function getPlatformAIJob(id: string): Promise<AIJobAdminDetail> {
-  return (await apiClient.get<AIJobAdminDetail>(`/platform/ai-jobs/${encodeURIComponent(id)}`)).data
+  const response = await apiClient.get<AIJobAdminDetailPayload>(`/platform/ai-jobs/${encodeURIComponent(id)}`)
+  return normalizeAIJobAdminDetail(response.data)
 }
 
 export async function cancelPlatformAIJob(id: string): Promise<AIJobAdminActionResult> {
@@ -72,7 +86,8 @@ export async function getPlatformArtifactSummary(params?: ArtifactListQuery): Pr
 }
 
 export async function getPlatformArtifact(id: string): Promise<ArtifactAdminDetail> {
-  return (await apiClient.get<ArtifactAdminDetail>(`/platform/artifacts/${encodeURIComponent(id)}`)).data
+  const response = await apiClient.get<ArtifactAdminDetailPayload>(`/platform/artifacts/${encodeURIComponent(id)}`)
+  return normalizeArtifactAdminDetail(response.data)
 }
 
 export async function getPlatformArtifactRuntimes(): Promise<ArtifactRuntime[]> {
@@ -84,19 +99,19 @@ export async function retryPlatformArtifactDelivery(id: string): Promise<Artifac
 }
 
 export async function getPlatformAPIKeys(): Promise<APIKeyRecord[]> {
-  return listOrEmpty((await apiClient.get<APIKeyRecord[] | null>('/platform/api-keys')).data)
+  return listOrEmpty((await apiClient.get<APIKeyRecordPayload[] | null>('/platform/api-keys')).data).map(normalizeAPIKeyRecord)
 }
 
 export async function createPlatformAPIKey(payload: APIKeyCreateRequest): Promise<APIKeyCreateResponse> {
-  return (await apiClient.post<APIKeyCreateResponse>('/platform/api-keys', payload)).data
+  return normalizeAPIKeyCreateResponse((await apiClient.post<APIKeyCreateResponsePayload>('/platform/api-keys', payload)).data)
 }
 
 export async function updatePlatformAPIKey(id: string, payload: APIKeyUpdateRequest): Promise<APIKeyRecord> {
-  return (await apiClient.put<APIKeyRecord>(`/platform/api-keys/${encodeURIComponent(id)}`, payload)).data
+  return normalizeAPIKeyRecord((await apiClient.put<APIKeyRecordPayload>(`/platform/api-keys/${encodeURIComponent(id)}`, payload)).data)
 }
 
 export async function rotatePlatformAPIKey(id: string, gracePeriodSeconds = 0): Promise<APIKeyCreateResponse> {
-  return (await apiClient.post<APIKeyCreateResponse>(`/platform/api-keys/${encodeURIComponent(id)}/rotate`, { grace_period_seconds: gracePeriodSeconds })).data
+  return normalizeAPIKeyCreateResponse((await apiClient.post<APIKeyCreateResponsePayload>(`/platform/api-keys/${encodeURIComponent(id)}/rotate`, { grace_period_seconds: gracePeriodSeconds })).data)
 }
 
 export async function disablePlatformAPIKey(id: string): Promise<void> {
@@ -129,14 +144,17 @@ export async function updateGatewayPrincipal(id: string, payload: GatewayPrincip
 
 export async function getExternalAuthIntegrations(): Promise<ExternalAuthIntegration[]> {
   return listOrEmpty((await apiClient.get<ExternalAuthIntegration[] | null>('/platform/external-auth-integrations')).data)
+    .map((integration) => ({ ...integration, model_allowlist: stringListOrEmpty(integration.model_allowlist) }))
 }
 
 export async function createExternalAuthIntegration(payload: ExternalAuthIntegrationRequest): Promise<ExternalAuthIntegrationCreateResponse> {
-  return (await apiClient.post<ExternalAuthIntegrationCreateResponse>('/platform/external-auth-integrations', payload)).data
+  const response = (await apiClient.post<ExternalAuthIntegrationCreateResponse>('/platform/external-auth-integrations', payload)).data
+  return { ...response, record: { ...response.record, model_allowlist: stringListOrEmpty(response.record?.model_allowlist) } }
 }
 
 export async function updateExternalAuthIntegration(id: string, payload: ExternalAuthIntegrationRequest): Promise<ExternalAuthIntegration> {
-  return (await apiClient.put<ExternalAuthIntegration>(`/platform/external-auth-integrations/${encodeURIComponent(id)}`, payload)).data
+  const response = (await apiClient.put<ExternalAuthIntegration>(`/platform/external-auth-integrations/${encodeURIComponent(id)}`, payload)).data
+  return { ...response, model_allowlist: stringListOrEmpty(response.model_allowlist) }
 }
 
 export async function rotateExternalAuthIntegrationSecret(id: string): Promise<ExternalAuthIntegrationCreateResponse> {
