@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 )
 
 func TestAdminArtifactEndpointsReturnFilteredRedactedRecords(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	artifact := createAdminRouteArtifact(t, control)
 	if err := control.SetArtifactSink(serverArtifactSink{id: "customer-sink"}); err != nil {
 		t.Fatal(err)
@@ -81,7 +80,7 @@ func TestAdminArtifactEndpointsReturnFilteredRedactedRecords(t *testing.T) {
 }
 
 func TestAdminArtifactRBACSeparatesReadAndRetryAndRequiresGlobalScope(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	ctx := context.Background()
 	auditor, err := control.CreateWorkspaceUser(ctx, "tester", controlplane.WorkspaceUserRequest{
 		Email: "artifact-auditor@example.test", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleReadOnlyAuditor,

@@ -6,12 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestManualRetentionCleanupEndpointReturnsEvidence(t *testing.T) {
-	handler, _ := newTestRuntime(t, config.Config{})
+	handler, _ := newTestRuntime(t, RuntimeConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/settings/retention/cleanup", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/astercloud/asterrouter/backend/internal/auth"
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
@@ -97,7 +96,7 @@ func TestPortalChannelVisibilityOnlyHidesModelCatalog(t *testing.T) {
 }
 
 func TestPortalForeignAPIKeyUsesNotFoundSemantics(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	owner, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{Email: "owner@example.test", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper})
 	if err != nil {
 		t.Fatal(err)

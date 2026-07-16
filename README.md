@@ -84,7 +84,7 @@ Choose one business deployment role during installation. This controls the initi
 
 AI Platform is separate from relay operations. Both can issue or accept API credentials, but a relay operator owns customer balances, plans, and risk workflows. An AI platform owns the gateway boundary for developer API Keys or delegated product access; the connected product remains the source of truth for its users, sessions, subscriptions, and orders. Enterprise owns employee and department governance; Personal owns only its workspace. These are different business roots, not four pages of one customer model.
 
-Linux Release installation requires `--deployment` (or `ASTERROUTER_DEPLOYMENT_ROLE`); Docker and source development use `/setup`, which requires an explicit choice and does not preselect a role. Production and Docker deployments persist the selection in PostgreSQL and fix it for that instance. Source development without `DATABASE_URL` uses temporary in-memory storage, so its setup is intentionally lost when the process restarts and must not be treated as a production installation. At later PostgreSQL-backed starts, a configured role must match the persisted role or startup fails; an environment variable can never switch Enterprise to Platform, or any other role. This protects Provider, credential, usage, and audit data from being mixed across business models. Run another instance when a second model is needed. Existing multi-profile installations remain compatible but their profile configuration is frozen. Multi-profile operation for new deployments is a future migration capability, gated on end-to-end `profile_scope`, explicit Provider Sharing Binding, and tenant isolation.
+Linux Release installation requires `--deployment` (or installer input `ASTERROUTER_DEPLOYMENT_ROLE`); Docker and source development use `/setup`, which requires an explicit choice and does not preselect a role. Production and Docker deployments persist the selection in PostgreSQL and fix it for that instance. Source development without `ASTERROUTER_SERVER_STORAGE_DATABASE_URL` uses temporary in-memory storage, so its setup is intentionally lost when the process restarts and must not be treated as a production installation. At later PostgreSQL-backed starts, a configured role must match the persisted role or startup fails. Run another instance when a second model is needed.
 
 ### Linux release
 
@@ -100,7 +100,7 @@ Replace `enterprise` with `personal`, `relay_operator`, or `platform` as appropr
 docker compose up --build
 ```
 
-Open `http://localhost:8080/setup` to choose one deployment role and review its business boundary before completing setup. After installation, AsterRouter clears any browser session left by another deployment role and asks you to sign in again before opening the selected console. Retrying the same installation choice is safe. A system administrator can switch the active role later from Settings; the previous role is hidden but its data is retained. For non-interactive deployment, set `ASTER_DEPLOYMENT_ROLE=platform`; the older matching `ASTER_PROFILES=platform` and `ASTER_DEFAULT_PROFILE=platform` pair remains compatible as bootstrap input.
+Open `http://localhost:8080/setup` to choose one deployment role and review its business boundary before completing setup. After installation, AsterRouter clears any browser session left by another deployment role and asks you to sign in again before opening the selected console. Retrying the same installation choice is safe. A system administrator can switch the active role later from Settings; the previous role is hidden but its data is retained. For non-interactive runtime deployment, set `ASTERROUTER_SERVER_BOOTSTRAP_DEPLOYMENT_ROLE=platform`.
 
 ## Private deployment and managed delivery
 
@@ -141,7 +141,7 @@ To expose the one-click demo entry on the sign-in page, start the isolated demo 
 bash scripts/dev.sh --demo
 ```
 
-Demo mode enables the built-in demo account and must only be used locally or on an isolated public demo instance. Docker users can enable it with `ASTER_DEMO_MODE=true docker compose up --build`; production instances should keep it disabled.
+Demo mode enables the built-in demo account and must only be used locally or on an isolated public demo instance. Docker users can enable it with `ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true docker compose up --build`; production instances should keep it disabled.
 
 Run backend tests:
 

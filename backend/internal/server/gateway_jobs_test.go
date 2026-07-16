@@ -10,13 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 )
 
 func TestGatewayDurableJobLifecycleAndIdempotency(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "public-image-job", Name: "Public image job", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -82,7 +81,7 @@ func TestGatewayDurableJobLifecycleAndIdempotency(t *testing.T) {
 }
 
 func TestGatewayJobActionCreatesOwnedIdempotentChildJob(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "action-image", controlplane.GatewayModelRequest{
 		ModelID: "action-image", Name: "Action image", Modality: controlplane.GatewayModalityImage, Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -153,7 +152,7 @@ func TestGatewayJobActionCreatesOwnedIdempotentChildJob(t *testing.T) {
 }
 
 func TestGatewayMediaGenerationRoutesUseDurableJobContract(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	for _, test := range []struct {
 		path      string
 		model     string
@@ -197,7 +196,7 @@ func TestGatewayMediaGenerationRoutesUseDurableJobContract(t *testing.T) {
 }
 
 func TestGatewayMediaDirectModesFailClosedWithoutCreatingJobs(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "direct-video", controlplane.GatewayModelRequest{
 		ModelID: "direct-video", Name: "Direct video", Modality: controlplane.GatewayModalityVideo, Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -233,7 +232,7 @@ func TestGatewayMediaDirectModesFailClosedWithoutCreatingJobs(t *testing.T) {
 }
 
 func TestGatewayMediaGenerationRouteFailsClosedWithoutAdapter(t *testing.T) {
-	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{}, nil)
+	handler, control := newTestRuntimeWithDurableAdmission(t, RuntimeConfig{}, nil)
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "unavailable-video", Name: "Unavailable video", Modality: controlplane.GatewayModalityVideo, Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -262,7 +261,7 @@ func TestGatewayMediaGenerationRouteFailsClosedWithoutAdapter(t *testing.T) {
 }
 
 func TestGatewayDurableJobQueueBackpressure(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "limited-image-job", Name: "Limited image job", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -289,7 +288,7 @@ func TestGatewayDurableJobQueueBackpressure(t *testing.T) {
 }
 
 func TestGatewayDurableJobFailsClosedWithoutExecutableAdapter(t *testing.T) {
-	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{}, nil)
+	handler, control := newTestRuntimeWithDurableAdmission(t, RuntimeConfig{}, nil)
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "unavailable-image-job", Name: "Unavailable image job", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -320,7 +319,7 @@ func TestGatewayDurableJobCapabilityRejectionPersistsInternalTraceEvidence(t *te
 			UpstreamModel: "upstream-internal", Reason: controlplane.DurableAIJobCapabilityModalityUnsupported,
 		}},
 	}
-	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{}, rejectingDurableAIJobAdmission{evaluation: evaluation})
+	handler, control := newTestRuntimeWithDurableAdmission(t, RuntimeConfig{}, rejectingDurableAIJobAdmission{evaluation: evaluation})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "trace-video-job", Name: "Trace video job", Modality: controlplane.GatewayModalityVideo, Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -359,7 +358,7 @@ func TestGatewayDurableJobCapabilityRejectionPersistsInternalTraceEvidence(t *te
 }
 
 func TestGatewayDurableJobAuthorizationAndNonDisclosure(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "isolated-image-job", Name: "Isolated image job", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {

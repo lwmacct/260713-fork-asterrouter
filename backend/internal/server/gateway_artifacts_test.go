@@ -10,12 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestGatewayArtifactAuthorizationRangeAndDeletion(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "artifact-image-model", Name: "Artifact image model", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {
@@ -138,7 +137,7 @@ func TestPublicArtifactResponseExposesOnlyDeliveredCustomerSinkReference(t *test
 }
 
 func TestGatewayProxyArtifactContentAndUnavailablePlugin(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if _, err := control.CreateGatewayModel(context.Background(), "test", controlplane.GatewayModelRequest{
 		ModelID: "proxy-image-model", Name: "Proxy image model", Modality: "image", Status: controlplane.GatewayModelStatusActive,
 	}); err != nil {

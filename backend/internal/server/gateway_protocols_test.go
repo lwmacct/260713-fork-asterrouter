@@ -11,7 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
@@ -62,7 +61,7 @@ func newNativeProtocolFixture(t *testing.T) *nativeProtocolFixture {
 		}
 	}))
 	t.Cleanup(upstream.Close)
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	fixture.handler, fixture.control = handler, control
 	provider, err := control.CreateProvider(context.Background(), "test", controlplane.ProviderRequest{
 		Name: "Native protocol provider", Type: "openai_compatible", BaseURL: upstream.URL + "/v1", Status: controlplane.ProviderStatusActive, Models: []string{"native-upstream"}, APIKey: "provider-secret",

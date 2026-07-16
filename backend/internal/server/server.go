@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/auth"
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/httpx"
 	operatorcore "github.com/astercloud/asterrouter/backend/internal/operator"
@@ -20,7 +19,7 @@ import (
 )
 
 type Options struct {
-	Config             config.Config
+	Runtime            RuntimeConfig
 	AuthService        *auth.Service
 	OIDCService        *auth.OIDCService
 	FeishuService      *auth.FeishuService
@@ -36,6 +35,12 @@ type Options struct {
 	DurableAIJobs      DurableAIJobAdmission
 	AIJobRuntime       AIJobRuntimeStatusProvider
 	authBindingStore   *authBindingStore
+}
+
+type RuntimeConfig struct {
+	AdminToken  string
+	DemoMode    bool
+	FrontendDir string
 }
 
 type AIJobRuntimeStatusProvider interface {
@@ -320,7 +325,7 @@ func New(opts Options) http.Handler {
 			httpx.Error(c, http.StatusBadRequest, 1322, err.Error())
 			return
 		}
-		if policy.EmailVerification && !opts.Config.DemoMode {
+		if policy.EmailVerification && !opts.Runtime.DemoMode {
 			public, _ := opts.SettingsService.Public(c.Request.Context())
 			verifyURL := strings.TrimRight(public.PublicBaseURL, "/") + "/login?verify=" + url.QueryEscape(token)
 			if mailErr := sendConfiguredEmail(c.Request.Context(), opts.SettingsService, "email_verification", user.Email, user.DisplayName, verifyURL); mailErr != nil {
@@ -329,7 +334,7 @@ func New(opts Options) http.Handler {
 			}
 		}
 		data := gin.H{"user_id": user.ID, "verification_required": policy.EmailVerification}
-		if policy.EmailVerification && opts.Config.DemoMode {
+		if policy.EmailVerification && opts.Runtime.DemoMode {
 			data["verification_token"] = token
 		}
 		httpx.OK(c, data)
@@ -703,11 +708,11 @@ func New(opts Options) http.Handler {
 			"uuid":         "",
 		})
 	})
-	api.GET("/auth/me", requireAdminAuth(opts.Config.AdminToken, opts.AuthService), func(c *gin.Context) {
+	api.GET("/auth/me", requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService), func(c *gin.Context) {
 		httpx.OK(c, currentAuthUser(c, opts))
 	})
 	registerAccountRoutes(api, opts)
-	api.POST("/auth/totp/setup", requireAdminAuth(opts.Config.AdminToken, opts.AuthService), func(c *gin.Context) {
+	api.POST("/auth/totp/setup", requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService), func(c *gin.Context) {
 		data, err := opts.ControlService.BeginTOTPSetup(c.Request.Context(), actor(c))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1312, err.Error())
@@ -715,7 +720,7 @@ func New(opts Options) http.Handler {
 		}
 		httpx.OK(c, data)
 	})
-	api.POST("/auth/totp/confirm", requireAdminAuth(opts.Config.AdminToken, opts.AuthService), func(c *gin.Context) {
+	api.POST("/auth/totp/confirm", requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService), func(c *gin.Context) {
 		var req struct {
 			Code string `json:"code"`
 		}
@@ -738,7 +743,7 @@ func New(opts Options) http.Handler {
 		response.Codes = codes
 		httpx.OK(c, response)
 	})
-	api.POST("/auth/totp/disable", requireAdminAuth(opts.Config.AdminToken, opts.AuthService), func(c *gin.Context) {
+	api.POST("/auth/totp/disable", requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService), func(c *gin.Context) {
 		var req struct {
 			Code string `json:"code"`
 		}
@@ -759,7 +764,7 @@ func New(opts Options) http.Handler {
 		response.Enabled = &enabled
 		httpx.OK(c, response)
 	})
-	api.POST("/auth/totp/recovery-codes", requireAdminAuth(opts.Config.AdminToken, opts.AuthService), func(c *gin.Context) {
+	api.POST("/auth/totp/recovery-codes", requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService), func(c *gin.Context) {
 		codes, err := opts.ControlService.GenerateTOTPRecoveryCodes(c.Request.Context(), actor(c))
 		if err != nil {
 			httpx.Error(c, http.StatusBadRequest, 1318, err.Error())
@@ -776,7 +781,7 @@ func New(opts Options) http.Handler {
 	registerPluginOpenRoutes(api.Group("/open/plugins"), opts.PluginService, opts.ControlService)
 	registerPluginHostRoutes(api.Group("/plugin-host"), opts.PluginService, opts.ControlService)
 	systemAPI := api.Group("/system")
-	systemAPI.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	systemAPI.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	systemAPI.Use(requireSystemAdministrator(opts.ControlService))
 	systemAPI.GET("/profiles", func(c *gin.Context) {
 		current, err := opts.SettingsService.Admin(c.Request.Context())
@@ -807,7 +812,7 @@ func New(opts Options) http.Handler {
 	})
 
 	admin := api.Group("/admin")
-	admin.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	admin.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	admin.Use(requireProfile(opts.SettingsService, "enterprise"))
 	admin.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfaceEnterprise))
 	admin.Use(requireRBAC(opts.ControlService))
@@ -933,20 +938,20 @@ func New(opts Options) http.Handler {
 	})
 
 	portal := api.Group("/portal")
-	portal.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	portal.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	portal.Use(requireProfile(opts.SettingsService, "enterprise"))
 	portal.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfacePortal))
 	registerPortalRoutes(portal, opts.ControlService, opts.SettingsService)
 
 	customer := api.Group("/customer")
-	customer.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	customer.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	customer.Use(requireProfile(opts.SettingsService, "relay_operator"))
 	customer.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfaceCustomer))
 	registerPortalRoutes(customer, opts.ControlService, opts.SettingsService)
 	registerCustomerRoutes(customer, opts.ControlService)
 
 	operatorAPI := api.Group("/operator")
-	operatorAPI.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	operatorAPI.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	operatorAPI.Use(requireProfile(opts.SettingsService, "relay_operator"))
 	operatorAPI.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfaceRelayOperator))
 	registerOperatorRoutes(operatorAPI, opts.OperatorService)
@@ -956,7 +961,7 @@ func New(opts Options) http.Handler {
 	registerPluginRoutes(operatorAPI.Group("/plugins"), opts.PluginService, opts.ControlService, "relay_operator")
 
 	consoleAPI := api.Group("/console")
-	consoleAPI.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	consoleAPI.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	consoleAPI.Use(requireProfile(opts.SettingsService, "personal"))
 	consoleAPI.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfacePersonal))
 	registerSharedCoreRoutes(consoleAPI, opts.ControlService, true)
@@ -969,7 +974,7 @@ func New(opts Options) http.Handler {
 	registerPluginRoutes(consoleAPI.Group("/plugins"), opts.PluginService, opts.ControlService, "personal")
 
 	platformAPI := api.Group("/platform")
-	platformAPI.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	platformAPI.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	platformAPI.Use(requireProfile(opts.SettingsService, "platform"))
 	platformAPI.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfacePlatform))
 	platformAPI.Use(requireSurfaceRBAC(opts.ControlService, controlplane.SurfacePlatform))
@@ -978,7 +983,7 @@ func New(opts Options) http.Handler {
 	registerSystemRoutes(platformAPI.Group("/system"), opts.SystemService, opts.SettingsService, opts.ControlService)
 	registerGatewayRoutes(r, opts.ControlService, opts.DurableAIJobs, opts.PluginService)
 
-	serveSPA(r, opts.Config.FrontendDir)
+	serveSPA(r, opts.Runtime.FrontendDir)
 	return r
 }
 

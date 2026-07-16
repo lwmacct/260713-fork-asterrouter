@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -20,9 +20,9 @@ func TestConfigureAIJobInfrastructureSupportsRedisAffinityWithMemoryQueue(t *tes
 	}
 	namespace := fmt.Sprintf("affinity-wiring-%d", time.Now().UnixNano())
 	service := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1", "affinity-wiring-secret")
-	queue, closeInfrastructure, err := configureAIJobInfrastructure(context.Background(), config.Config{
-		AIJobQueueDriver: "memory", RoutingAffinityDriver: "redis", RedisURL: rawURL, RedisNamespace: namespace,
-	}, service)
+	queue, closeInfrastructure, err := configureAIJobInfrastructure(t.Context(), config.Jobs{
+		Queue: config.JobQueue{Driver: "memory"}, RoutingAffinityDriver: "redis",
+	}, config.Redis{URL: rawURL, Namespace: namespace}, service)
 	if err != nil {
 		t.Fatalf("configureAIJobInfrastructure(): %v", err)
 	}
@@ -34,7 +34,7 @@ func TestConfigureAIJobInfrastructureSupportsRedisAffinityWithMemoryQueue(t *tes
 		TenantID: "tenant", PrincipalID: "principal", CredentialID: "credential", Model: "model",
 		Protocol: "openai_chat_completions", RouteGroup: "default", PolicyVersion: 1,
 	}
-	if err := service.BindGatewayCandidateAffinity(context.Background(), input, controlplane.GatewayProvider{ID: "provider-a"}); err != nil {
+	if err = service.BindGatewayCandidateAffinity(t.Context(), input, controlplane.GatewayProvider{ID: "provider-a"}); err != nil {
 		t.Fatal(err)
 	}
 	options, err := redis.ParseURL(rawURL)
@@ -44,7 +44,7 @@ func TestConfigureAIJobInfrastructureSupportsRedisAffinityWithMemoryQueue(t *tes
 	client := redis.NewClient(options)
 	t.Cleanup(func() { _ = client.Close() })
 	pattern := "asterrouter:{" + namespace + ":routing_affinity}:*"
-	keys, err := client.Keys(context.Background(), pattern).Result()
+	keys, err := client.Keys(t.Context(), pattern).Result()
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("routing affinity keys=%v err=%v", keys, err)
 	}
@@ -53,14 +53,4 @@ func TestConfigureAIJobInfrastructureSupportsRedisAffinityWithMemoryQueue(t *tes
 		defer cancel()
 		_ = client.Del(cleanupCtx, keys...).Err()
 	})
-}
-
-func TestConfigureAIJobInfrastructureRejectsUnknownDrivers(t *testing.T) {
-	service := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
-	if _, _, err := configureAIJobInfrastructure(context.Background(), config.Config{AIJobQueueDriver: "unknown"}, service); err == nil {
-		t.Fatal("unknown AI Job queue driver was accepted")
-	}
-	if _, _, err := configureAIJobInfrastructure(context.Background(), config.Config{RoutingAffinityDriver: "unknown"}, service); err == nil {
-		t.Fatal("unknown routing affinity driver was accepted")
-	}
 }

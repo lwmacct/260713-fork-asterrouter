@@ -8,14 +8,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/settings"
 	"github.com/astercloud/asterrouter/backend/internal/system"
 )
 
 func TestCustomerNotificationRoutesPersistAndMarkRead(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, _, err := control.RegisterWorkspaceUser(context.Background(), "notify-routes@example.test", "long-password", "Notify", false)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +86,7 @@ func TestCustomerNotificationRoutesPersistAndMarkRead(t *testing.T) {
 }
 
 func TestCustomerBillingRoutesAreSeparateFromOperator(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email: "relay-customer@example.test", DisplayName: "Relay Customer",
 		Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper,
@@ -135,7 +134,7 @@ func TestCustomerRoutesRequireRelayOperatorProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(Options{
-		Config: config.Config{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control,
+		Runtime: RuntimeConfig{AdminToken: "secret"}, SettingsService: settingsService, ControlService: control,
 		SystemService: system.NewService(system.Config{Version: "test", BuildType: "source"}),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/customer/billing", nil)

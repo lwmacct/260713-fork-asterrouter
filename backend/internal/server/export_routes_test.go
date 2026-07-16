@@ -10,12 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestAdminRecordExportEndpointsSupportQueryParameters(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "export key",
 		ModelAllowlist:    []string{"model-a", "model-b"},
@@ -77,7 +76,7 @@ func TestAdminRecordExportEndpointsSupportQueryParameters(t *testing.T) {
 }
 
 func TestAdminAsyncExportJobLifecycle(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
 		Name:              "async export key",
 		ModelAllowlist:    []string{"model-a"},

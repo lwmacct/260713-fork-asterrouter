@@ -1,349 +1,153 @@
 package config
 
-import (
-	"errors"
-	"net"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-
-	"github.com/astercloud/asterrouter/backend/internal/buildinfo"
-)
-
-const localDevelopmentSecret = "asterrouter-local-development-secret"
+import "github.com/lwmacct/251207-go-pkg-cfgm/pkg/cfgm"
 
 type Config struct {
-	Addr                     string
-	AdminToken               string
-	AdminUsername            string
-	AdminPassword            string
-	DatabaseURL              string
-	DeploymentRole           string
-	FrontendDir              string
-	DefaultProfile           string
-	Profiles                 []string
-	PublicBase               string
-	SecretKey                string
-	Version                  string
-	BuildType                string
-	UpdateManifestURL        string
-	CatalogMode              string
-	CatalogBootstrapURL      string
-	CatalogURL               string
-	OfficialServicesURL      string
-	CatalogKeyID             string
-	CatalogPublicKey         string
-	LicenseURL               string
-	RedeemURL                string
-	LicenseKeyID             string
-	LicensePublicKey         string
-	InstanceID               string
-	InstanceFingerprint      string
-	InstanceDisplayName      string
-	PluginCacheDir           string
-	PluginActiveDir          string
-	PluginHostURL            string
-	BackupDir                string
-	DiagnosticDir            string
-	MaxArchiveBytes          int64
-	AIJobQueueProfileLimit   int
-	AIJobQueueTenantLimit    int
-	AIJobQueuePrincipalLimit int
-	AIJobQueueDriver         string
-	RoutingAffinityDriver    string
-	RedisURL                 string
-	RedisNamespace           string
-	ArtifactStoreDriver      string
-	ArtifactLocalRoot        string
-	ArtifactS3Endpoint       string
-	ArtifactS3Region         string
-	ArtifactS3Bucket         string
-	ArtifactS3Prefix         string
-	ArtifactS3AccessKey      string
-	ArtifactS3SecretKey      string
-	ArtifactS3PathStyle      bool
-	AllowRestart             bool
-	DemoMode                 bool
+	Server Server `json:"server" desc:"AsterRouter service configuration"`
 }
 
-func Load() Config {
-	addr := getEnv("ASTER_ADDR", ":8080")
-	profiles := normalizeProfiles(os.Getenv("ASTER_PROFILES"))
-	defaultProfile := normalizeProfile(os.Getenv("ASTER_DEFAULT_PROFILE"))
-	deploymentRole := strings.TrimSpace(os.Getenv("ASTER_DEPLOYMENT_ROLE"))
-	if normalizedRole := normalizeProfile(deploymentRole); normalizedRole != "" && len(profiles) == 0 {
-		profiles = []string{normalizedRole}
-		if defaultProfile == "" {
-			defaultProfile = normalizedRole
-		}
-	}
-	if defaultProfile == "" && len(profiles) > 0 {
-		defaultProfile = profiles[0]
-	}
-	pluginCacheDir := getEnv("ASTER_PLUGIN_CACHE_DIR", "data/plugin-cache")
-	pluginActiveDir := getEnv("ASTER_PLUGIN_ACTIVE_DIR", filepath.Join(filepath.Dir(pluginCacheDir), "plugin-active"))
-	return Config{
-		Addr:                     addr,
-		AdminToken:               strings.TrimSpace(os.Getenv("ASTER_ADMIN_TOKEN")),
-		AdminUsername:            getEnv("ASTER_ADMIN_USERNAME", "admin"),
-		AdminPassword:            strings.TrimSpace(os.Getenv("ASTER_ADMIN_PASSWORD")),
-		DatabaseURL:              strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		DeploymentRole:           deploymentRole,
-		FrontendDir:              getEnv("ASTER_FRONTEND_DIR", "../frontend/dist"),
-		DefaultProfile:           defaultProfile,
-		Profiles:                 profiles,
-		PublicBase:               strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")),
-		SecretKey:                getEnv("ASTER_SECRET_KEY", localDevelopmentSecret),
-		Version:                  getEnv("ASTER_VERSION", buildinfo.Version),
-		BuildType:                getEnv("ASTER_BUILD_TYPE", buildinfo.BuildType),
-		UpdateManifestURL:        strings.TrimSpace(os.Getenv("ASTER_UPDATE_MANIFEST_URL")),
-		CatalogMode:              getEnv("ASTER_CATALOG_MODE", "disabled"),
-		CatalogBootstrapURL:      strings.TrimSpace(os.Getenv("ASTER_CATALOG_BOOTSTRAP_URL")),
-		CatalogURL:               strings.TrimSpace(os.Getenv("ASTER_CATALOG_URL")),
-		OfficialServicesURL:      strings.TrimSpace(os.Getenv("ASTER_OFFICIAL_SERVICES_URL")),
-		CatalogKeyID:             strings.TrimSpace(os.Getenv("ASTER_CATALOG_KEY_ID")),
-		CatalogPublicKey:         strings.TrimSpace(os.Getenv("ASTER_CATALOG_PUBLIC_KEY")),
-		LicenseURL:               strings.TrimSpace(os.Getenv("ASTER_LICENSE_URL")),
-		RedeemURL:                strings.TrimSpace(os.Getenv("ASTER_REDEEM_URL")),
-		LicenseKeyID:             strings.TrimSpace(os.Getenv("ASTER_LICENSE_KEY_ID")),
-		LicensePublicKey:         strings.TrimSpace(os.Getenv("ASTER_LICENSE_PUBLIC_KEY")),
-		InstanceID:               strings.TrimSpace(os.Getenv("ASTER_INSTANCE_ID")),
-		InstanceFingerprint:      strings.TrimSpace(os.Getenv("ASTER_INSTANCE_FINGERPRINT")),
-		InstanceDisplayName:      strings.TrimSpace(os.Getenv("ASTER_INSTANCE_DISPLAY_NAME")),
-		PluginCacheDir:           pluginCacheDir,
-		PluginActiveDir:          pluginActiveDir,
-		PluginHostURL:            defaultString(strings.TrimSpace(os.Getenv("ASTER_PLUGIN_HOST_URL")), defaultPluginHostURL(addr)),
-		BackupDir:                getEnv("ASTER_BACKUP_DIR", "data/backups"),
-		DiagnosticDir:            getEnv("ASTER_DIAGNOSTIC_DIR", "data/diagnostics"),
-		MaxArchiveBytes:          getInt64Env("ASTER_MAX_ARCHIVE_BYTES", 2<<30),
-		AIJobQueueProfileLimit:   getNonNegativeIntEnv("ASTER_AI_JOB_QUEUE_PROFILE_LIMIT"),
-		AIJobQueueTenantLimit:    getNonNegativeIntEnv("ASTER_AI_JOB_QUEUE_TENANT_LIMIT"),
-		AIJobQueuePrincipalLimit: getNonNegativeIntEnv("ASTER_AI_JOB_QUEUE_PRINCIPAL_LIMIT"),
-		AIJobQueueDriver:         getEnv("ASTER_AI_JOB_QUEUE_DRIVER", "memory"),
-		RoutingAffinityDriver:    getEnv("ASTER_ROUTING_AFFINITY_DRIVER", "repository"),
-		RedisURL:                 strings.TrimSpace(os.Getenv("ASTER_REDIS_URL")),
-		RedisNamespace:           getEnv("ASTER_REDIS_NAMESPACE", "asterrouter"),
-		ArtifactStoreDriver:      getEnv("ASTER_ARTIFACT_STORE_DRIVER", "none"),
-		ArtifactLocalRoot:        getEnv("ASTER_ARTIFACT_LOCAL_ROOT", "data/artifacts"),
-		ArtifactS3Endpoint:       strings.TrimSpace(os.Getenv("ASTER_ARTIFACT_S3_ENDPOINT")),
-		ArtifactS3Region:         getEnv("ASTER_ARTIFACT_S3_REGION", "auto"),
-		ArtifactS3Bucket:         strings.TrimSpace(os.Getenv("ASTER_ARTIFACT_S3_BUCKET")),
-		ArtifactS3Prefix:         strings.Trim(strings.TrimSpace(os.Getenv("ASTER_ARTIFACT_S3_PREFIX")), "/"),
-		ArtifactS3AccessKey:      strings.TrimSpace(os.Getenv("ASTER_ARTIFACT_S3_ACCESS_KEY")),
-		ArtifactS3SecretKey:      strings.TrimSpace(os.Getenv("ASTER_ARTIFACT_S3_SECRET_KEY")),
-		ArtifactS3PathStyle:      getBoolEnv("ASTER_ARTIFACT_S3_PATH_STYLE"),
-		AllowRestart:             getBoolEnv("ASTER_ALLOW_RESTART"),
-		DemoMode:                 getBoolEnv("ASTER_DEMO_MODE"),
-	}
+type Server struct {
+	HTTP        HTTP        `json:"http"        desc:"HTTP service configuration"`
+	Bootstrap   Bootstrap   `json:"bootstrap"   desc:"First-run bootstrap configuration"`
+	Security    Security    `json:"security"    desc:"Authentication and encryption configuration"`
+	Storage     Storage     `json:"storage"     desc:"Persistent storage and Redis configuration"`
+	Official    Official    `json:"official"    desc:"Official catalog and license services"`
+	Plugins     Plugins     `json:"plugins"     desc:"Plugin runtime configuration"`
+	Jobs        Jobs        `json:"jobs"        desc:"Durable AI job infrastructure"`
+	Artifacts   Artifacts   `json:"artifacts"   desc:"Artifact storage configuration"`
+	Maintenance Maintenance `json:"maintenance" desc:"Backup, diagnostics, and process management"`
 }
 
-func defaultPluginHostURL(addr string) string {
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		return ""
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		if strings.HasPrefix(addr, ":") {
-			port = strings.TrimPrefix(addr, ":")
-		} else {
-			return ""
-		}
-	}
-	host = strings.Trim(host, "[]")
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	if port == "" {
-		return ""
-	}
-	return "http://" + net.JoinHostPort(host, port) + "/api/v1/plugin-host"
+type HTTP struct {
+	Listen      string `json:"listen"       desc:"HTTP listen address"`
+	FrontendDir string `json:"frontend-dir" desc:"Built frontend asset directory"`
 }
 
-func defaultString(value string, fallback string) string {
-	if strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	return fallback
+type Bootstrap struct {
+	DeploymentRole string `json:"deployment-role" desc:"Optional unattended deployment role: personal, relay_operator, enterprise, or platform"`
+	DemoMode       bool   `json:"demo-mode"       desc:"Enable the isolated demonstration login flow"`
 }
 
-func ValidateRuntime(cfg Config) error {
-	if cfg.AIJobQueueProfileLimit < 0 || cfg.AIJobQueueTenantLimit < 0 || cfg.AIJobQueuePrincipalLimit < 0 {
-		return errors.New("ASTER_AI_JOB_QUEUE_PROFILE_LIMIT, ASTER_AI_JOB_QUEUE_TENANT_LIMIT, and ASTER_AI_JOB_QUEUE_PRINCIPAL_LIMIT must be non-negative integers")
-	}
-	switch strings.TrimSpace(cfg.AIJobQueueDriver) {
-	case "", "memory":
-	case "redis":
-		if strings.TrimSpace(cfg.RedisURL) == "" {
-			return errors.New("ASTER_REDIS_URL is required when ASTER_AI_JOB_QUEUE_DRIVER=redis")
-		}
-	default:
-		return errors.New("ASTER_AI_JOB_QUEUE_DRIVER must be memory or redis")
-	}
-	switch strings.TrimSpace(cfg.RoutingAffinityDriver) {
-	case "", "repository":
-	case "redis":
-		if strings.TrimSpace(cfg.RedisURL) == "" {
-			return errors.New("ASTER_REDIS_URL is required when ASTER_ROUTING_AFFINITY_DRIVER=redis")
-		}
-	default:
-		return errors.New("ASTER_ROUTING_AFFINITY_DRIVER must be repository or redis")
-	}
-	if strings.TrimSpace(cfg.RedisNamespace) != "" && !validRuntimeNamespace(cfg.RedisNamespace) {
-		return errors.New("ASTER_REDIS_NAMESPACE must contain only letters, numbers, dots, underscores, or hyphens")
-	}
-	if strings.TrimSpace(cfg.DeploymentRole) != "" {
-		deploymentRole := normalizeProfile(cfg.DeploymentRole)
-		if !isDeploymentProfile(deploymentRole) {
-			return errors.New("ASTER_DEPLOYMENT_ROLE must be one of personal, relay_operator, enterprise, or platform")
-		}
-		if len(cfg.Profiles) != 1 || cfg.Profiles[0] != deploymentRole || cfg.DefaultProfile != deploymentRole {
-			return errors.New("ASTER_DEPLOYMENT_ROLE must match the legacy ASTER_PROFILES and ASTER_DEFAULT_PROFILE values when they are also set")
-		}
-	}
-	for _, profile := range cfg.Profiles {
-		if !isDeploymentProfile(profile) {
-			return errors.New("ASTER_PROFILES must contain only personal, relay_operator, enterprise, or platform")
-		}
-	}
-	if cfg.DefaultProfile != "" && !isDeploymentProfile(cfg.DefaultProfile) {
-		return errors.New("ASTER_DEFAULT_PROFILE must be one of personal, relay_operator, enterprise, or platform")
-	}
-	if len(cfg.Profiles) > 1 {
-		return errors.New("ASTER_PROFILES accepts one bootstrap profile; deploy a separate instance for a different business model")
-	}
-	if len(cfg.Profiles) == 1 && cfg.DefaultProfile != "" && cfg.DefaultProfile != cfg.Profiles[0] {
-		return errors.New("ASTER_DEFAULT_PROFILE must match the single ASTER_PROFILES bootstrap profile")
-	}
-	switch strings.TrimSpace(cfg.ArtifactStoreDriver) {
-	case "", "none":
-	case "local":
-		if strings.TrimSpace(cfg.ArtifactLocalRoot) == "" {
-			return errors.New("ASTER_ARTIFACT_LOCAL_ROOT is required when ASTER_ARTIFACT_STORE_DRIVER=local")
-		}
-	case "s3":
-		if strings.TrimSpace(cfg.ArtifactS3Bucket) == "" || strings.TrimSpace(cfg.ArtifactS3AccessKey) == "" || strings.TrimSpace(cfg.ArtifactS3SecretKey) == "" {
-			return errors.New("ASTER_ARTIFACT_S3_BUCKET, ASTER_ARTIFACT_S3_ACCESS_KEY, and ASTER_ARTIFACT_S3_SECRET_KEY are required when ASTER_ARTIFACT_STORE_DRIVER=s3")
-		}
-	default:
-		return errors.New("ASTER_ARTIFACT_STORE_DRIVER must be none, local, or s3")
-	}
-	if cfg.BuildType != "release" {
-		return nil
-	}
-	if strings.TrimSpace(cfg.DatabaseURL) == "" {
-		return errors.New("DATABASE_URL is required for release deployments")
-	}
-	if strings.TrimSpace(cfg.SecretKey) == localDevelopmentSecret {
-		return errors.New("ASTER_SECRET_KEY must be set to a stable production secret")
-	}
-	if strings.TrimSpace(cfg.AdminPassword) == "" && strings.TrimSpace(cfg.AdminToken) == "" && !cfg.DemoMode {
-		return errors.New("ASTER_ADMIN_PASSWORD or ASTER_ADMIN_TOKEN is required for release deployments")
-	}
-	switch strings.TrimSpace(cfg.CatalogMode) {
-	case "online", "private_mirror":
-		if strings.TrimSpace(cfg.CatalogBootstrapURL) == "" {
-			if strings.TrimSpace(cfg.CatalogURL) == "" {
-				return errors.New("ASTER_CATALOG_URL or ASTER_CATALOG_BOOTSTRAP_URL is required when ASTER_CATALOG_MODE=online or private_mirror")
-			}
-			if strings.TrimSpace(cfg.CatalogKeyID) == "" || strings.TrimSpace(cfg.CatalogPublicKey) == "" {
-				return errors.New("ASTER_CATALOG_KEY_ID and ASTER_CATALOG_PUBLIC_KEY are required when ASTER_CATALOG_BOOTSTRAP_URL is not set")
-			}
-		}
-		if (strings.TrimSpace(cfg.LicenseKeyID) == "") != (strings.TrimSpace(cfg.LicensePublicKey) == "") {
-			return errors.New("ASTER_LICENSE_KEY_ID and ASTER_LICENSE_PUBLIC_KEY must be set together")
-		}
-	case "offline":
-		if strings.TrimSpace(cfg.CatalogKeyID) == "" || strings.TrimSpace(cfg.CatalogPublicKey) == "" {
-			return errors.New("ASTER_CATALOG_KEY_ID and ASTER_CATALOG_PUBLIC_KEY are required when ASTER_CATALOG_MODE=offline")
-		}
-	}
-	return nil
+type Security struct {
+	Admin     Admin  `json:"admin"      desc:"Bootstrap administrator credentials"`
+	SecretKey string `json:"secret-key" desc:"Stable application encryption and signing secret"`
 }
 
-func validRuntimeNamespace(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 96 {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || strings.ContainsRune("._-", character) {
-			continue
-		}
-		return false
-	}
-	return true
+type Admin struct {
+	Username string `json:"username" desc:"Bootstrap administrator username"`
+	Password string `json:"password" desc:"Bootstrap administrator password"`
+	Token    string `json:"token"    desc:"Legacy administrator bearer token"`
 }
 
-func getEnv(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
+type Storage struct {
+	DatabaseURL string `json:"database-url" desc:"PostgreSQL connection URL; empty uses in-memory storage for source development"`
+	Redis       Redis  `json:"redis"        desc:"Shared Redis configuration"`
 }
 
-func normalizeProfile(value string) string {
-	return strings.TrimSpace(value)
+type Redis struct {
+	URL       string `json:"url"       desc:"Redis connection URL"`
+	Namespace string `json:"namespace" desc:"Redis key namespace"`
 }
 
-func isDeploymentProfile(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "personal", "relay_operator", "enterprise", "platform":
-		return true
-	default:
-		return false
-	}
+type Official struct {
+	UpdateManifestURL string          `json:"update-manifest-url" desc:"Release update manifest URL"`
+	Catalog           OfficialCatalog `json:"catalog"             desc:"Official plugin catalog configuration"`
+	License           OfficialLicense `json:"license"             desc:"Official license service configuration"`
+	Instance          Instance        `json:"instance"            desc:"Stable installation identity"`
 }
 
-func normalizeProfiles(value string) []string {
-	fields := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ';' || r == '|' || r == ' ' || r == '\n' || r == '\t'
-	})
-	out := make([]string, 0, len(fields))
-	seen := map[string]bool{}
-	for _, field := range fields {
-		profile := normalizeProfile(field)
-		if seen[profile] {
-			continue
-		}
-		seen[profile] = true
-		out = append(out, profile)
-	}
-	return out
+type OfficialCatalog struct {
+	Mode         string `json:"mode"          desc:"Catalog mode: disabled, online, private_mirror, or offline"`
+	BootstrapURL string `json:"bootstrap-url" desc:"Signed catalog bootstrap URL"`
+	URL          string `json:"url"           desc:"Catalog index URL"`
+	ServicesURL  string `json:"services-url"  desc:"Official services base URL"`
+	KeyID        string `json:"key-id"        desc:"Catalog signature key ID"`
+	PublicKey    string `json:"public-key"    desc:"Catalog signature public key"`
 }
 
-func getBoolEnv(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
+type OfficialLicense struct {
+	URL       string `json:"url"        desc:"License service URL"`
+	RedeemURL string `json:"redeem-url" desc:"License redemption URL"`
+	KeyID     string `json:"key-id"     desc:"License signature key ID"`
+	PublicKey string `json:"public-key" desc:"License signature public key"`
 }
 
-func getInt64Env(key string, fallback int64) int64 {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
+type Instance struct {
+	ID          string `json:"id"          desc:"Stable installation ID"`
+	Fingerprint string `json:"fingerprint" desc:"Installation fingerprint"`
+	DisplayName string `json:"display-name" desc:"Installation display name"`
 }
 
-func getNonNegativeIntEnv(key string) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return 0
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 0 {
-		return -1
-	}
-	return parsed
+type Plugins struct {
+	CacheDir  string `json:"cache-dir"  desc:"Downloaded plugin package cache"`
+	ActiveDir string `json:"active-dir" desc:"Activated plugin runtime directory; derived from cache-dir when empty"`
+	HostURL   string `json:"host-url"   desc:"Plugin host callback URL; derived from http.listen when empty"`
 }
+
+type Jobs struct {
+	Queue                 JobQueue `json:"queue"                   desc:"Durable AI job delivery queue"`
+	RoutingAffinityDriver string   `json:"routing-affinity-driver" desc:"Routing affinity driver: repository or redis"`
+}
+
+type JobQueue struct {
+	Driver string    `json:"driver" desc:"Queue driver: memory or redis"`
+	Limits JobLimits `json:"limits" desc:"Concurrent queued job admission limits; zero disables a limit"`
+}
+
+type JobLimits struct {
+	Profile   int `json:"profile"   desc:"Maximum queued jobs per profile"`
+	Tenant    int `json:"tenant"    desc:"Maximum queued jobs per tenant"`
+	Principal int `json:"principal" desc:"Maximum queued jobs per principal"`
+}
+
+type Artifacts struct {
+	Driver    string     `json:"driver"     desc:"Artifact store driver: none, local, or s3"`
+	LocalRoot string     `json:"local-root" desc:"Local artifact root directory"`
+	S3        ArtifactS3 `json:"s3"         desc:"S3-compatible artifact store"`
+}
+
+type ArtifactS3 struct {
+	Endpoint  string `json:"endpoint"   desc:"S3-compatible endpoint URL"`
+	Region    string `json:"region"     desc:"S3 region"`
+	Bucket    string `json:"bucket"     desc:"S3 bucket"`
+	Prefix    string `json:"prefix"     desc:"S3 object key prefix"`
+	AccessKey string `json:"access-key" desc:"S3 access key"`
+	SecretKey string `json:"secret-key" desc:"S3 secret key"`
+	PathStyle bool   `json:"path-style" desc:"Use path-style S3 addressing"`
+}
+
+type Maintenance struct {
+	BackupDir       string `json:"backup-dir"        desc:"Local backup directory"`
+	DiagnosticDir   string `json:"diagnostic-dir"    desc:"Diagnostic bundle directory"`
+	MaxArchiveBytes int64  `json:"max-archive-bytes" desc:"Maximum backup or diagnostic archive size"`
+	AllowRestart    bool   `json:"allow-restart"     desc:"Allow managed process restart operations"`
+}
+
+func DefaultConfig() Config {
+	return Config{Server: Server{
+		HTTP:     HTTP{Listen: ":8080", FrontendDir: "../frontend/dist"},
+		Security: Security{Admin: Admin{Username: "admin"}},
+		Storage:  Storage{Redis: Redis{Namespace: "asterrouter"}},
+		Official: Official{Catalog: OfficialCatalog{Mode: "disabled"}},
+		Plugins:  Plugins{CacheDir: "data/plugin-cache"},
+		Jobs: Jobs{
+			Queue:                 JobQueue{Driver: "memory"},
+			RoutingAffinityDriver: "repository",
+		},
+		Artifacts: Artifacts{
+			Driver:    "none",
+			LocalRoot: "data/artifacts",
+			S3:        ArtifactS3{Region: "auto"},
+		},
+		Maintenance: Maintenance{
+			BackupDir:       "data/backups",
+			DiagnosticDir:   "data/diagnostics",
+			MaxArchiveBytes: 2 << 30,
+		},
+	}}
+}
+
+var Manager = cfgm.New(
+	DefaultConfig(),
+	cfgm.AppName("asterrouter"),
+)

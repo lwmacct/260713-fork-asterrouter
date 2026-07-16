@@ -206,30 +206,27 @@ create_env_if_missing() {
 
   cat > "$ENV_FILE" <<EOF
 GIN_MODE=release
-ASTER_ADDR=${DEFAULT_ADDR}
-ASTER_FRONTEND_DIR=${INSTALL_DIR}/frontend/dist
+ASTERROUTER_SERVER_HTTP_LISTEN=${DEFAULT_ADDR}
+ASTERROUTER_SERVER_HTTP_FRONTEND_DIR=${INSTALL_DIR}/frontend/dist
 # This value is selected during Linux installation and persisted on first start.
 # It is exactly one of personal, relay_operator, enterprise, or platform.
-# ASTER_PROFILES and ASTER_DEFAULT_PROFILE remain supported for existing deployments.
-ASTER_DEPLOYMENT_ROLE=${deployment_role}
-PUBLIC_BASE_URL=
+ASTERROUTER_SERVER_BOOTSTRAP_DEPLOYMENT_ROLE=${deployment_role}
 
-ASTER_ADMIN_USERNAME=admin
-ASTER_ADMIN_PASSWORD=${admin_password}
-ASTER_ADMIN_TOKEN=
+ASTERROUTER_SERVER_SECURITY_ADMIN_USERNAME=admin
+ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD=${admin_password}
+ASTERROUTER_SERVER_SECURITY_ADMIN_TOKEN=
 
 # Required before the service can start.
-DATABASE_URL=
-ASTER_SECRET_KEY=${secret}
+ASTERROUTER_SERVER_STORAGE_DATABASE_URL=
+ASTERROUTER_SERVER_SECURITY_SECRET_KEY=${secret}
 
-ASTER_BUILD_TYPE=release
-ASTER_UPDATE_MANIFEST_URL=https://github.com/${GITHUB_REPO}/releases/latest/download/asterrouter_update_manifest.json
-ASTER_ALLOW_RESTART=true
+ASTERROUTER_SERVER_OFFICIAL_UPDATE_MANIFEST_URL=https://github.com/${GITHUB_REPO}/releases/latest/download/asterrouter_update_manifest.json
+ASTERROUTER_SERVER_MAINTENANCE_ALLOW_RESTART=true
 EOF
 
   chmod 0640 "$ENV_FILE"
   chown "${SERVICE_USER}:${SERVICE_USER}" "$ENV_FILE"
-  warn "Created ${ENV_FILE}. Set DATABASE_URL before starting AsterRouter."
+  warn "Created ${ENV_FILE}. Set ASTERROUTER_SERVER_STORAGE_DATABASE_URL before starting AsterRouter."
   warn "Generated admin login: admin / ${admin_password}"
 }
 
@@ -244,16 +241,16 @@ load_env() {
 
 env_ready_for_start() {
   load_env
-  if [ -z "${DATABASE_URL:-}" ]; then
-    warn "DATABASE_URL is empty in ${ENV_FILE}; service start is skipped."
+  if [ -z "${ASTERROUTER_SERVER_STORAGE_DATABASE_URL:-}" ]; then
+    warn "ASTERROUTER_SERVER_STORAGE_DATABASE_URL is empty in ${ENV_FILE}; service start is skipped."
     return 1
   fi
-  if [ -z "${ASTER_SECRET_KEY:-}" ] || [ "${ASTER_SECRET_KEY:-}" = "asterrouter-local-development-secret" ]; then
-    warn "ASTER_SECRET_KEY is missing or uses the development default; service start is skipped."
+  if [ -z "${ASTERROUTER_SERVER_SECURITY_SECRET_KEY:-}" ]; then
+    warn "ASTERROUTER_SERVER_SECURITY_SECRET_KEY is missing; service start is skipped."
     return 1
   fi
-  if [ -z "${ASTER_ADMIN_PASSWORD:-}" ] && [ -z "${ASTER_ADMIN_TOKEN:-}" ]; then
-    warn "ASTER_ADMIN_PASSWORD or ASTER_ADMIN_TOKEN is required; service start is skipped."
+  if [ -z "${ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD:-}" ] && [ -z "${ASTERROUTER_SERVER_SECURITY_ADMIN_TOKEN:-}" ]; then
+    warn "ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD or ASTERROUTER_SERVER_SECURITY_ADMIN_TOKEN is required; service start is skipped."
     return 1
   fi
   return 0
@@ -262,7 +259,7 @@ env_ready_for_start() {
 health_url() {
   load_env
   local addr host port
-  addr="${ASTER_ADDR:-${DEFAULT_ADDR}}"
+  addr="${ASTERROUTER_SERVER_HTTP_LISTEN:-${DEFAULT_ADDR}}"
   case "$addr" in
     :*)
       host="127.0.0.1"

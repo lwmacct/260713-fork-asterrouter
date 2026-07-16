@@ -1,271 +1,155 @@
 package config
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 
-func TestValidateRuntimeAllowsSourceBuildWithoutDatabase(t *testing.T) {
-	cfg := Config{BuildType: "source"}
+	"github.com/lwmacct/251207-go-pkg-cfgm/pkg/cfgm"
+)
 
-	if err := ValidateRuntime(cfg); err != nil {
-		t.Fatalf("ValidateRuntime() = %v, want nil", err)
+var files = cfgm.ConfigFiles[Config]{
+	Manager:     Manager,
+	ExampleFile: "config/config.example.yaml",
+	RuntimeFile: "config/config.yaml",
+}
+
+func TestWriteConfigExample(t *testing.T)     { files.WriteExample(t) }
+func TestRuntimeConfigKeysValid(t *testing.T) { files.ValidateRuntimeConfig(t) }
+
+func TestManagerLoadsStrictServerHierarchy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "server:\n  http:\n    listen: 127.0.0.1:19090\n  jobs:\n    queue:\n      limits:\n        tenant: 25\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Manager.Load(t.Context(), cfgm.File(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Server.HTTP.Listen != "127.0.0.1:19090" || loaded.Server.Jobs.Queue.Limits.Tenant != 25 {
+		t.Fatalf("unexpected loaded config: %#v", loaded.Server)
+	}
+
+	if err := os.WriteFile(path, []byte("http:\n  listen: :9999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Manager.Load(t.Context(), cfgm.File(path)); err == nil || !strings.Contains(err.Error(), "http") {
+		t.Fatalf("root-level legacy config must be rejected, got %v", err)
 	}
 }
 
-func TestValidateRuntimeRequiresReleaseDatabase(t *testing.T) {
-	cfg := Config{
-		BuildType:     "release",
-		SecretKey:     "stable-secret",
-		AdminPassword: "change-me",
+func TestManagerLoadsCanonicalEnvironment(t *testing.T) {
+	t.Setenv("ASTERROUTER_SERVER_HTTP_LISTEN", "127.0.0.1:18081")
+	t.Setenv("ASTERROUTER_SERVER_JOBS_QUEUE_LIMITS_PROFILE", "12")
+	t.Setenv("ASTERROUTER_SERVER_ARTIFACTS_S3_PATH_STYLE", "true")
+	loaded, err := Manager.Load(t.Context(), cfgm.Env("ASTERROUTER_"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatalf("ValidateRuntime() = nil, want error")
-	}
-}
-
-func TestValidateRuntimeAllowsDemoModeAsReleaseAuthMechanism(t *testing.T) {
-	cfg := Config{
-		BuildType:   "release",
-		DatabaseURL: "postgres://asterrouter:pass@localhost:5432/asterrouter?sslmode=disable",
-		SecretKey:   "stable-secret",
-		DemoMode:    true,
-	}
-
-	if err := ValidateRuntime(cfg); err != nil {
-		t.Fatalf("ValidateRuntime() = %v, want nil", err)
+	if loaded.Server.HTTP.Listen != "127.0.0.1:18081" || loaded.Server.Jobs.Queue.Limits.Profile != 12 || !loaded.Server.Artifacts.S3.PathStyle {
+		t.Fatalf("unexpected environment config: %#v", loaded.Server)
 	}
 }
 
-func TestValidateRuntimeRequiresProductionSecret(t *testing.T) {
-	cfg := Config{
-		BuildType:     "release",
-		DatabaseURL:   "postgres://asterrouter:pass@localhost:5432/asterrouter?sslmode=disable",
-		SecretKey:     localDevelopmentSecret,
-		AdminPassword: "change-me",
+func TestManagerDoesNotReadLegacyEnvironment(t *testing.T) {
+	t.Setenv("ASTER_ADDR", "127.0.0.1:19999")
+	t.Setenv("DATABASE_URL", "postgres://legacy.example/ignored")
+	loaded, err := Manager.Load(t.Context(), cfgm.Env("ASTERROUTER_"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatalf("ValidateRuntime() = nil, want error")
-	}
-}
-
-func TestValidateRuntimeRequiresCatalogTrustMaterialWhenOnline(t *testing.T) {
-	cfg := Config{
-		BuildType:     "release",
-		DatabaseURL:   "postgres://asterrouter:pass@localhost:5432/asterrouter?sslmode=disable",
-		SecretKey:     "stable-secret",
-		AdminPassword: "change-me",
-		CatalogMode:   "online",
-		CatalogURL:    "https://catalog.example.test/official/v1/catalog/index",
-	}
-
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatalf("ValidateRuntime() = nil, want error")
+	if loaded.Server.HTTP.Listen != ":8080" || loaded.Server.Storage.DatabaseURL != "" {
+		t.Fatalf("legacy environment affected config: %#v", loaded.Server)
 	}
 }
 
-func TestValidateRuntimeRequiresCatalogTrustMaterialWhenPrivateMirror(t *testing.T) {
-	cfg := Config{
-		BuildType:     "release",
-		DatabaseURL:   "postgres://asterrouter:pass@localhost:5432/asterrouter?sslmode=disable",
-		SecretKey:     "stable-secret",
-		AdminPassword: "change-me",
-		CatalogMode:   "private_mirror",
-		CatalogURL:    "https://mirror.example.test/official/v1/catalog/index",
+func TestValidateNormalizesDerivedValues(t *testing.T) {
+	cfg := DefaultConfig().Server
+	cfg.HTTP.Listen = " 0.0.0.0:18090 "
+	cfg.Plugins.CacheDir = " /var/lib/asterrouter/plugins/cache "
+	cfg.Plugins.ActiveDir = ""
+	cfg.Plugins.HostURL = ""
+	validated, err := Validate(cfg, "source")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatalf("ValidateRuntime() = nil, want error")
+	if validated.Plugins.ActiveDir != "/var/lib/asterrouter/plugins/plugin-active" {
+		t.Fatalf("active dir = %q", validated.Plugins.ActiveDir)
 	}
-}
-
-func TestValidateRuntimeRequiresCatalogTrustMaterialWhenOffline(t *testing.T) {
-	cfg := Config{
-		BuildType:     "release",
-		DatabaseURL:   "postgres://asterrouter:pass@localhost:5432/asterrouter?sslmode=disable",
-		SecretKey:     "stable-secret",
-		AdminPassword: "change-me",
-		CatalogMode:   "offline",
-	}
-
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatalf("ValidateRuntime() = nil, want error")
+	if validated.Plugins.HostURL != "http://127.0.0.1:18090/api/v1/plugin-host" {
+		t.Fatalf("host URL = %q", validated.Plugins.HostURL)
 	}
 }
 
-func TestDefaultPluginHostURLUsesLoopbackForWildcardListenAddress(t *testing.T) {
-	if got := defaultPluginHostURL(":8080"); got != "http://127.0.0.1:8080/api/v1/plugin-host" {
-		t.Fatalf("defaultPluginHostURL(:8080) = %q", got)
+func TestValidateReleaseFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Server)
+		want error
+	}{
+		{name: "database", edit: func(cfg *Server) { cfg.Storage.DatabaseURL = "" }, want: ErrInvalidStorage},
+		{name: "secret", edit: func(cfg *Server) { cfg.Security.SecretKey = "" }, want: ErrInvalidSecurity},
+		{name: "admin", edit: func(cfg *Server) { cfg.Security.Admin.Password = "" }, want: ErrInvalidSecurity},
 	}
-	if got := defaultPluginHostURL("0.0.0.0:18090"); got != "http://127.0.0.1:18090/api/v1/plugin-host" {
-		t.Fatalf("defaultPluginHostURL(0.0.0.0:18090) = %q", got)
-	}
-}
-
-func TestNormalizeProfilesPreservesUnknownValuesForValidation(t *testing.T) {
-	profiles := normalizeProfiles("platform, enterprise, platform, unknown")
-	want := []string{"platform", "enterprise", "unknown"}
-	if len(profiles) != len(want) {
-		t.Fatalf("normalizeProfiles() = %v, want %v", profiles, want)
-	}
-	for index, profile := range want {
-		if profiles[index] != profile {
-			t.Fatalf("normalizeProfiles() = %v, want %v", profiles, want)
-		}
-	}
-}
-
-func TestValidateRuntimeRejectsUnknownLegacyProfiles(t *testing.T) {
-	for _, cfg := range []Config{
-		{BuildType: "source", Profiles: []string{"unknown"}, DefaultProfile: "unknown"},
-		{BuildType: "source", DefaultProfile: "unknown"},
-	} {
-		if err := ValidateRuntime(cfg); err == nil {
-			t.Fatalf("ValidateRuntime(%+v) accepted an unknown legacy profile", cfg)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validReleaseConfig()
+			test.edit(&cfg)
+			_, err := Validate(cfg, "release")
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 
-func TestLoadPreservesUnknownLegacyProfileForValidation(t *testing.T) {
-	t.Setenv("ASTER_DEPLOYMENT_ROLE", "")
-	t.Setenv("ASTER_PROFILES", "unknown")
-	t.Setenv("ASTER_DEFAULT_PROFILE", "")
-
-	cfg := Load()
-	if len(cfg.Profiles) != 1 || cfg.Profiles[0] != "unknown" || cfg.DefaultProfile != "unknown" {
-		t.Fatalf("Load() silently discarded an unknown legacy profile: %+v", cfg)
-	}
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatal("ValidateRuntime() accepted the unknown legacy profile loaded from the environment")
+func TestValidateRequiresSecretForPersistentSourceBuild(t *testing.T) {
+	cfg := DefaultConfig().Server
+	cfg.Storage.DatabaseURL = "postgres://asterrouter:test@localhost/asterrouter"
+	if _, err := Validate(cfg, "source"); !errors.Is(err, ErrInvalidSecurity) {
+		t.Fatalf("Validate() error = %v, want security error", err)
 	}
 }
 
-func TestValidateRuntimeRejectsMultipleBootstrapProfiles(t *testing.T) {
-	cfg := Config{BuildType: "source", Profiles: []string{"enterprise", "platform"}}
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatal("ValidateRuntime() accepted multiple bootstrap profiles")
+func TestValidateJobsAndArtifacts(t *testing.T) {
+	cfg := DefaultConfig().Server
+	cfg.Jobs.Queue.Driver = "redis"
+	if _, err := Validate(cfg, "source"); !errors.Is(err, ErrInvalidJobs) {
+		t.Fatalf("missing Redis error = %v", err)
+	}
+	cfg.Storage.Redis.URL = "redis://127.0.0.1:6379/0"
+	cfg.Artifacts.Driver = "s3"
+	if _, err := Validate(cfg, "source"); !errors.Is(err, ErrInvalidArtifacts) {
+		t.Fatalf("missing S3 credentials error = %v", err)
+	}
+	cfg.Artifacts.S3.Bucket = "artifacts"
+	cfg.Artifacts.S3.AccessKey = "access"
+	cfg.Artifacts.S3.SecretKey = "secret"
+	if _, err := Validate(cfg, "source"); err != nil {
+		t.Fatalf("valid Redis/S3 config: %v", err)
 	}
 }
 
-func TestValidateRuntimeAcceptsDeploymentRoleAndRejectsLegacyMismatch(t *testing.T) {
-	valid := Config{
-		BuildType:      "source",
-		DeploymentRole: "platform",
-		Profiles:       []string{"platform"},
-		DefaultProfile: "platform",
+func TestValidateOfficialTrustModes(t *testing.T) {
+	cfg := DefaultConfig().Server
+	cfg.Official.Catalog.Mode = "offline"
+	if _, err := Validate(cfg, "source"); !errors.Is(err, ErrInvalidOfficial) {
+		t.Fatalf("missing offline trust material error = %v", err)
 	}
-	if err := ValidateRuntime(valid); err != nil {
-		t.Fatalf("ValidateRuntime() deployment role: %v", err)
-	}
-
-	mismatched := valid
-	mismatched.Profiles = []string{"enterprise"}
-	mismatched.DefaultProfile = "enterprise"
-	if err := ValidateRuntime(mismatched); err == nil {
-		t.Fatal("ValidateRuntime() accepted mismatched deployment role and legacy profile")
-	}
-
-	invalid := valid
-	invalid.DeploymentRole = "unknown"
-	if err := ValidateRuntime(invalid); err == nil {
-		t.Fatal("ValidateRuntime() accepted an unknown deployment role")
+	cfg.Official.Catalog.KeyID = "catalog-v1"
+	cfg.Official.Catalog.PublicKey = "public-key"
+	if _, err := Validate(cfg, "source"); err != nil {
+		t.Fatalf("valid offline config: %v", err)
 	}
 }
 
-func TestLoadDeploymentRoleBootstrapsCompatibleProfiles(t *testing.T) {
-	t.Setenv("ASTER_DEPLOYMENT_ROLE", "platform")
-	t.Setenv("ASTER_PROFILES", "")
-	t.Setenv("ASTER_DEFAULT_PROFILE", "")
-
-	cfg := Load()
-	if cfg.DeploymentRole != "platform" || len(cfg.Profiles) != 1 || cfg.Profiles[0] != "platform" || cfg.DefaultProfile != "platform" {
-		t.Fatalf("Load() deployment role configuration = %+v", cfg)
-	}
-	if err := ValidateRuntime(cfg); err != nil {
-		t.Fatalf("ValidateRuntime() loaded deployment role: %v", err)
-	}
-}
-
-func TestLoadDurableAIJobQueueLimits(t *testing.T) {
-	t.Setenv("ASTER_AI_JOB_QUEUE_PROFILE_LIMIT", "1000")
-	t.Setenv("ASTER_AI_JOB_QUEUE_TENANT_LIMIT", "100")
-	t.Setenv("ASTER_AI_JOB_QUEUE_PRINCIPAL_LIMIT", "10")
-
-	cfg := Load()
-	if cfg.AIJobQueueProfileLimit != 1000 || cfg.AIJobQueueTenantLimit != 100 || cfg.AIJobQueuePrincipalLimit != 10 {
-		t.Fatalf("Load() durable job limits = %+v", cfg)
-	}
-}
-
-func TestValidateRuntimeRejectsInvalidDurableAIJobQueueLimit(t *testing.T) {
-	t.Setenv("ASTER_AI_JOB_QUEUE_PRINCIPAL_LIMIT", "invalid")
-	cfg := Load()
-	if cfg.AIJobQueuePrincipalLimit != -1 {
-		t.Fatalf("invalid limit=%d", cfg.AIJobQueuePrincipalLimit)
-	}
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatal("ValidateRuntime() accepted an invalid durable job queue limit")
-	}
-}
-
-func TestDurableAIJobInfrastructureConfiguration(t *testing.T) {
-	t.Setenv("ASTER_AI_JOB_QUEUE_DRIVER", "redis")
-	t.Setenv("ASTER_ROUTING_AFFINITY_DRIVER", "redis")
-	t.Setenv("ASTER_REDIS_URL", "redis://127.0.0.1:6379/0")
-	t.Setenv("ASTER_REDIS_NAMESPACE", "tenant-a.runtime")
-	cfg := Load()
-	if cfg.AIJobQueueDriver != "redis" || cfg.RoutingAffinityDriver != "redis" || cfg.RedisURL == "" || cfg.RedisNamespace != "tenant-a.runtime" {
-		t.Fatalf("Load() durable runtime config=%+v", cfg)
-	}
-	if err := ValidateRuntime(cfg); err != nil {
-		t.Fatalf("ValidateRuntime()=%v", err)
-	}
-	for _, invalid := range []Config{
-		{BuildType: "source", AIJobQueueDriver: "redis"},
-		{BuildType: "source", AIJobQueueDriver: "unsupported"},
-		{BuildType: "source", RoutingAffinityDriver: "redis"},
-		{BuildType: "source", RoutingAffinityDriver: "unsupported"},
-		{BuildType: "source", AIJobQueueDriver: "memory", RedisNamespace: "invalid namespace"},
-	} {
-		if err := ValidateRuntime(invalid); err == nil {
-			t.Fatalf("ValidateRuntime(%+v) accepted invalid durable runtime configuration", invalid)
-		}
-	}
-}
-
-func TestArtifactStoreConfigurationIsOptionalAndValidated(t *testing.T) {
-	if err := ValidateRuntime(Config{BuildType: "source", ArtifactStoreDriver: "none"}); err != nil {
-		t.Fatalf("optional artifact store: %v", err)
-	}
-	if err := ValidateRuntime(Config{BuildType: "source", ArtifactStoreDriver: "local", ArtifactLocalRoot: "data/artifacts"}); err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
-	if err := ValidateRuntime(Config{BuildType: "source", ArtifactStoreDriver: "s3", ArtifactS3Bucket: "bucket", ArtifactS3AccessKey: "access", ArtifactS3SecretKey: "secret"}); err != nil {
-		t.Fatalf("S3 artifact store: %v", err)
-	}
-	for _, cfg := range []Config{
-		{BuildType: "source", ArtifactStoreDriver: "local"},
-		{BuildType: "source", ArtifactStoreDriver: "s3", ArtifactS3Bucket: "bucket"},
-		{BuildType: "source", ArtifactStoreDriver: "unsupported"},
-	} {
-		if err := ValidateRuntime(cfg); err == nil {
-			t.Fatalf("ValidateRuntime(%+v) accepted invalid artifact configuration", cfg)
-		}
-	}
-}
-
-func TestLoadArtifactStoreConfiguration(t *testing.T) {
-	t.Setenv("ASTER_ARTIFACT_STORE_DRIVER", "s3")
-	t.Setenv("ASTER_ARTIFACT_S3_ENDPOINT", "https://objects.example.test")
-	t.Setenv("ASTER_ARTIFACT_S3_REGION", "auto")
-	t.Setenv("ASTER_ARTIFACT_S3_BUCKET", "media")
-	t.Setenv("ASTER_ARTIFACT_S3_PREFIX", "/aster/artifacts/")
-	t.Setenv("ASTER_ARTIFACT_S3_ACCESS_KEY", "access")
-	t.Setenv("ASTER_ARTIFACT_S3_SECRET_KEY", "secret")
-	t.Setenv("ASTER_ARTIFACT_S3_PATH_STYLE", "true")
-	cfg := Load()
-	if cfg.ArtifactStoreDriver != "s3" || cfg.ArtifactS3Endpoint != "https://objects.example.test" || cfg.ArtifactS3Region != "auto" ||
-		cfg.ArtifactS3Bucket != "media" || cfg.ArtifactS3Prefix != "aster/artifacts" || cfg.ArtifactS3AccessKey != "access" ||
-		cfg.ArtifactS3SecretKey != "secret" || !cfg.ArtifactS3PathStyle {
-		t.Fatalf("Load() artifact config=%+v", cfg)
-	}
+func validReleaseConfig() Server {
+	cfg := DefaultConfig().Server
+	cfg.Storage.DatabaseURL = "postgres://asterrouter:test@localhost/asterrouter"
+	cfg.Security.SecretKey = "stable-secret"
+	cfg.Security.Admin.Password = "change-me"
+	return cfg
 }

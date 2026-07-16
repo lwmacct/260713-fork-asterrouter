@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 	"github.com/astercloud/asterrouter/backend/internal/settings"
@@ -18,7 +17,7 @@ import (
 
 func TestPlatformAPIRequiresEnabledProfileAndExplicitSurfaceBinding(t *testing.T) {
 	t.Run("disabled profile is not exposed", func(t *testing.T) {
-		handler := newTestHandler(t, config.Config{AdminToken: "secret"})
+		handler := newTestHandler(t, RuntimeConfig{AdminToken: "secret"})
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/dashboard", nil)
 		req.Header.Set("Authorization", "Bearer secret")
 		rec := httptest.NewRecorder()
@@ -42,7 +41,7 @@ func TestPlatformAPIRequiresEnabledProfileAndExplicitSurfaceBinding(t *testing.T
 		t.Fatal(err)
 	}
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
@@ -95,7 +94,7 @@ func TestSystemProfileChangesRequireSystemAdministrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
@@ -153,7 +152,7 @@ func TestProfileBundleChangesAreDeniedAcrossSurfaceSettings(t *testing.T) {
 		}
 	}
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
@@ -191,7 +190,7 @@ func TestPlatformAPIKeysAllowOnlyWorkspaceOrServiceOwnership(t *testing.T) {
 	})
 	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
@@ -242,7 +241,7 @@ func TestPlatformOperationsAreProfileScopedAndDoNotDiscloseForeignResources(t *t
 	platformJob, platformArtifact := createScopedOperationsFixture(t, control, model.ModelID, "platform", controlplane.ProfileScopePlatform)
 	foreignJob, foreignArtifact := createScopedOperationsFixture(t, control, model.ModelID, "enterprise", "enterprise")
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),
@@ -350,7 +349,7 @@ func TestPlatformControlPlaneScopesPlatformDomainAndObservability(t *testing.T) 
 	})
 	control := controlplane.NewService(controlplane.NewMemoryRepository(), "/v1")
 	handler := New(Options{
-		Config:          config.Config{AdminToken: "secret"},
+		Runtime:         RuntimeConfig{AdminToken: "secret"},
 		SettingsService: settingsService,
 		ControlService:  control,
 		SystemService:   system.NewService(system.Config{Version: "test", BuildType: "source"}),

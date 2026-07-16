@@ -38,7 +38,7 @@ type accountSecurityResponse struct {
 
 func registerAccountRoutes(api *gin.RouterGroup, opts Options) {
 	account := api.Group("/account")
-	account.Use(requireAdminAuth(opts.Config.AdminToken, opts.AuthService))
+	account.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 
 	account.GET("/profile", func(c *gin.Context) {
 		data, err := currentAccountProfile(c, opts)

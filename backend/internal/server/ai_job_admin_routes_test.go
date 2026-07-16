@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
 )
@@ -24,7 +23,7 @@ func (testAIJobRuntime) Status() controlplane.DurableAIJobRuntimeStatus {
 }
 
 func TestAdminAIJobEndpointsProvideRuntimeDetailAndSafeActions(t *testing.T) {
-	handler, control := newTestRuntimeWithDurableAdmission(t, config.Config{AdminToken: "secret"}, testAIJobRuntime{})
+	handler, control := newTestRuntimeWithDurableAdmission(t, RuntimeConfig{AdminToken: "secret"}, testAIJobRuntime{})
 	ctx := context.Background()
 	model, err := control.CreateGatewayModel(ctx, "tester", controlplane.GatewayModelRequest{
 		ModelID: "admin-job-model", Name: "Admin job model", Modality: "image", Status: controlplane.GatewayModelStatusActive,
@@ -93,7 +92,7 @@ func TestAdminAIJobEndpointsProvideRuntimeDetailAndSafeActions(t *testing.T) {
 }
 
 func TestAdminAIJobRBACRequiresGlobalScope(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	ctx := context.Background()
 	department, err := control.CreateDepartment(ctx, "tester", controlplane.DepartmentRequest{Name: "Job team", Code: "job-team", Status: controlplane.DepartmentStatusActive})
 	if err != nil {

@@ -12,12 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestGatewayUploadCreatesOwnedInputArtifactAndReplaysIdempotently(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if err := control.SetArtifactStore(controlplane.NewMemoryArtifactStore()); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +98,7 @@ func TestGatewayUploadCreatesOwnedInputArtifactAndReplaysIdempotently(t *testing
 }
 
 func TestGatewayUploadFailsClosedWithoutStoreOrChecksum(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	key, err := control.CreateAPIKey(context.Background(), "test", controlplane.APIKeyCreateRequest{
 		Name: "upload caller", ModelAllowlist: []string{"upload-model"},
 		Scopes: []string{controlplane.GatewayScopeArtifactsWrite}, ArtifactPolicy: controlplane.GatewayArtifactPolicyTemporary,
@@ -140,7 +139,7 @@ func TestGatewayUploadFailsClosedWithoutStoreOrChecksum(t *testing.T) {
 }
 
 func TestGatewayResumableUploadChunksAreOrderedIdempotentAndOwnerScoped(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if err := control.SetArtifactStore(controlplane.NewMemoryArtifactStore()); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +247,7 @@ func TestGatewayResumableUploadChunksAreOrderedIdempotentAndOwnerScoped(t *testi
 }
 
 func TestGatewayResumableUploadRejectsIncompleteAndTotalChecksumMismatch(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	if err := control.SetArtifactStore(controlplane.NewMemoryArtifactStore()); err != nil {
 		t.Fatal(err)
 	}

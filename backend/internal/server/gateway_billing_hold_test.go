@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
@@ -95,7 +94,7 @@ func TestGatewayBillingHoldLifecycle(t *testing.T) {
 
 func setupGatewayBillingHoldRuntime(t *testing.T, upstreamURL string) (http.Handler, *controlplane.Service, string) {
 	t.Helper()
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "Billing provider", Type: "openai_compatible", BaseURL: upstreamURL + "/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"billing-upstream"}, APIKey: "billing-provider-secret",

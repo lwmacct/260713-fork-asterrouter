@@ -44,11 +44,11 @@ fi
 mkdir -p "${RUN_DIR}"
 tar -C "${RUN_DIR}" -xzf "${ARCHIVE}"
 
-if "${PACKAGE_DIR}/asterrouter" >"${RUN_DIR}/fail-closed.log" 2>&1; then
+if "${PACKAGE_DIR}/asterrouter" server >"${RUN_DIR}/fail-closed.log" 2>&1; then
   echo "Release binary unexpectedly started without required configuration." >&2
   exit 1
 fi
-grep -q 'DATABASE_URL is required for release deployments' "${RUN_DIR}/fail-closed.log"
+grep -q 'server.storage.database-url is required in release builds' "${RUN_DIR}/fail-closed.log"
 
 cleanup() {
   if [ -n "${PID}" ] && kill -0 "${PID}" >/dev/null 2>&1; then
@@ -61,16 +61,16 @@ trap cleanup EXIT INT TERM
 (
   cd "${PACKAGE_DIR}"
   exec env \
-    ASTER_ADDR="127.0.0.1:${PORT}" \
-    ASTER_FRONTEND_DIR="${PACKAGE_DIR}/frontend/dist" \
-    ASTER_DEMO_MODE=true \
-    ASTER_SECRET_KEY=asterrouter-release-runtime-test-secret \
-    ASTER_PLUGIN_CACHE_DIR="${RUN_DIR}/data/plugin-cache" \
-    ASTER_PLUGIN_ACTIVE_DIR="${RUN_DIR}/data/plugin-active" \
-    ASTER_BACKUP_DIR="${RUN_DIR}/data/backups" \
-    ASTER_DIAGNOSTIC_DIR="${RUN_DIR}/data/diagnostics" \
-    DATABASE_URL="${DATABASE_URL}" \
-    ./asterrouter >"${RUN_DIR}/runtime.log" 2>&1
+    ASTERROUTER_SERVER_HTTP_LISTEN="127.0.0.1:${PORT}" \
+    ASTERROUTER_SERVER_HTTP_FRONTEND_DIR="${PACKAGE_DIR}/frontend/dist" \
+    ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true \
+    ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-release-runtime-test-secret \
+    ASTERROUTER_SERVER_PLUGINS_CACHE_DIR="${RUN_DIR}/data/plugin-cache" \
+    ASTERROUTER_SERVER_PLUGINS_ACTIVE_DIR="${RUN_DIR}/data/plugin-active" \
+    ASTERROUTER_SERVER_MAINTENANCE_BACKUP_DIR="${RUN_DIR}/data/backups" \
+    ASTERROUTER_SERVER_MAINTENANCE_DIAGNOSTIC_DIR="${RUN_DIR}/data/diagnostics" \
+    ASTERROUTER_SERVER_STORAGE_DATABASE_URL="${DATABASE_URL}" \
+    ./asterrouter server >"${RUN_DIR}/runtime.log" 2>&1
 ) &
 PID="$!"
 

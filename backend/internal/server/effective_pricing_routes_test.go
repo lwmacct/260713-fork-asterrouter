@@ -10,12 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 )
 
 func TestEffectivePricingAdminEndpointsCreatePriceAndReconcileBilling(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "pricing provider", Type: "openai_compatible", BaseURL: "https://provider.example/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"upstream-model"}, APIKey: "provider-secret",
@@ -85,7 +84,7 @@ func TestEffectivePricingAdminEndpointsCreatePriceAndReconcileBilling(t *testing
 }
 
 func TestEffectivePricingPolicyEndpointRejectsUnsafeValues(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/effective-pricing/policy", bytes.NewBufferString(`{"mode":"canary","window_hours":24,"min_sample_count":0,"min_metrics_coverage":0.8,"min_billing_consistency":0.95,"min_cost_improvement":0.08,"max_error_rate_regression":0.005,"max_p95_latency_regression":0.2,"canary_percent":5,"supplier_affinity_ttl_seconds":86400,"account_affinity_ttl_seconds":1800}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -105,7 +104,7 @@ func TestProviderBillingSourceInspectionEndpointDetectsSub2APIWithoutInventingLi
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "billing source", Type: "openai_compatible", BaseURL: upstream.URL + "/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"model"}, APIKey: "provider-secret",
@@ -188,7 +187,7 @@ func TestProviderBillingSourceInspectionEndpointDetectsSub2APIWithoutInventingLi
 }
 
 func TestEffectivePricingDecisionEvaluationsEndpointReturnsEmptyHistory(t *testing.T) {
-	handler := newTestHandler(t, config.Config{})
+	handler := newTestHandler(t, RuntimeConfig{})
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/effective-pricing/decisions/decision-missing/evaluations?limit=20", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -210,7 +209,7 @@ func TestProviderCacheProbeEndpointRunsControlledSequenceAndRejectsMissingConfir
 	}))
 	defer upstream.Close()
 
-	handler, control := newTestRuntime(t, config.Config{})
+	handler, control := newTestRuntime(t, RuntimeConfig{})
 	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
 		Name: "probe provider", Type: "openai_compatible", BaseURL: upstream.URL + "/v1",
 		Status: controlplane.ProviderStatusActive, Models: []string{"probe-model"}, APIKey: "provider-secret",

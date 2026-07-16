@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astercloud/asterrouter/backend/internal/config"
 	"github.com/astercloud/asterrouter/backend/internal/controlplane"
 	"github.com/gin-gonic/gin"
 )
 
 func TestAdminRBACAllowsGlobalAuditorReadAndBlocksWrites(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email:  "auditor@example.com",
 		Status: controlplane.WorkspaceUserStatusActive,
@@ -53,7 +52,7 @@ func TestAdminRBACAllowsGlobalAuditorReadAndBlocksWrites(t *testing.T) {
 }
 
 func TestAdminRBACBlocksDeveloperButPortalStillWorks(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email:  "dev@example.com",
 		Status: controlplane.WorkspaceUserStatusActive,
@@ -101,7 +100,7 @@ func TestAdminRBACBlocksDeveloperButPortalStillWorks(t *testing.T) {
 }
 
 func TestAdminRBACResourceBindingOnlyGrantsMatchingResource(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email: "key-scope@example.com", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper,
 	})
@@ -145,7 +144,7 @@ func TestAdminRBACResourceBindingOnlyGrantsMatchingResource(t *testing.T) {
 }
 
 func TestDepartmentScopedAdministratorOnlySeesDepartmentUsersAndKeys(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	ctx := context.Background()
 	engineering, err := control.CreateDepartment(ctx, "tester", controlplane.DepartmentRequest{Name: "Engineering", Code: "eng", Status: controlplane.DepartmentStatusActive})
 	if err != nil {
@@ -337,7 +336,7 @@ func TestDepartmentScopedAdministratorOnlySeesDepartmentUsersAndKeys(t *testing.
 }
 
 func TestSurfaceBindingExplicitlyGrantsOperatorAccess(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email: "operator@example.com", Status: controlplane.WorkspaceUserStatusActive, Role: controlplane.RoleDeveloper,
 	})
@@ -387,7 +386,7 @@ func TestAdminRoutesResolveResourceDomains(t *testing.T) {
 }
 
 func TestAdminRBACProtectsPluginAndSystemWrites(t *testing.T) {
-	handler, control := newTestRuntime(t, config.Config{AdminToken: "secret"})
+	handler, control := newTestRuntime(t, RuntimeConfig{AdminToken: "secret"})
 	user, err := control.CreateWorkspaceUser(context.Background(), "tester", controlplane.WorkspaceUserRequest{
 		Email:  "auditor@example.com",
 		Status: controlplane.WorkspaceUserStatusActive,

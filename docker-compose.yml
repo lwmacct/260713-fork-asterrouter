@@ -2,15 +2,15 @@ services:
   asterrouter:
     build: .
     environment:
-      ASTER_ADDR: ":8080"
-      ASTER_ADMIN_USERNAME: "admin"
-      ASTER_ADMIN_PASSWORD: "change-me"
-      ASTER_DEMO_MODE: "${ASTER_DEMO_MODE:-false}"
+      ASTERROUTER_SERVER_HTTP_LISTEN: ":8080"
+      ASTERROUTER_SERVER_SECURITY_ADMIN_USERNAME: "admin"
+      ASTERROUTER_SERVER_SECURITY_ADMIN_PASSWORD: "change-me"
+      ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE: "${ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE:-false}"
       # Leave the deployment role unset for interactive first-run selection at /setup.
-      # For unattended installation, set ASTER_DEPLOYMENT_ROLE to personal,
+      # For unattended installation, set ASTERROUTER_SERVER_BOOTSTRAP_DEPLOYMENT_ROLE to personal,
       # relay_operator, enterprise, or platform. The role is immutable after first boot.
-      ASTER_SECRET_KEY: "replace-with-a-stable-random-secret"
-      DATABASE_URL: "postgres://asterrouter:asterrouter@postgres:5432/asterrouter?sslmode=disable"
+      ASTERROUTER_SERVER_SECURITY_SECRET_KEY: "replace-with-a-stable-random-secret"
+      ASTERROUTER_SERVER_STORAGE_DATABASE_URL: "postgres://asterrouter:asterrouter@postgres:5432/asterrouter?sslmode=disable"
     ports:
       - "8080:8080"
     depends_on:

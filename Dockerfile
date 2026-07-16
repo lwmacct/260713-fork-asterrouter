@@ -7,7 +7,7 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS backend
+FROM golang:1.26-alpine AS backend
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -25,8 +25,9 @@ WORKDIR /app
 RUN adduser -D -H -u 10001 asterrouter
 COPY --from=backend /out/asterrouter /app/asterrouter
 COPY --from=frontend /src/frontend/dist /app/frontend/dist
-ENV ASTER_ADDR=:8080 \
-    ASTER_FRONTEND_DIR=/app/frontend/dist
+ENV ASTERROUTER_SERVER_HTTP_LISTEN=:8080 \
+    ASTERROUTER_SERVER_HTTP_FRONTEND_DIR=/app/frontend/dist
 EXPOSE 8080
 USER asterrouter
 ENTRYPOINT ["/app/asterrouter"]
+CMD ["server"]

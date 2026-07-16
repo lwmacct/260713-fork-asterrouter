@@ -6,6 +6,7 @@ dist/
 *.test
 coverage.out
 backend/data/
+backend/config/config.yaml
 
 # Frontend
 frontend/dist/
