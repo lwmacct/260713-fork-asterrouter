@@ -237,12 +237,12 @@ function formatTokens(value: number): string {
   return new Intl.NumberFormat().format(value)
 }
 
-function formatCostCents(value: number): string {
+function formatUsageCostMicros(value: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2
-  }).format(value / 100)
+  }).format(value / 1_000_000)
 }
 
 function statusClass(status: string): string {
@@ -561,7 +561,7 @@ onMounted(load)
             <article class="metric-card">
               <div>
                 <span>{{ t('usage.cost') }}</span>
-                <strong>{{ detailLoading ? '-' : formatCostCents(detailUsage?.total_cost_cents || 0) }}</strong>
+                <strong>{{ detailLoading ? '-' : formatUsageCostMicros(detailUsage?.total_usage_cost_micros || 0) }}</strong>
                 <small>{{ t('usage.estimatedCost') }}</small>
               </div>
             </article>

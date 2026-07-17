@@ -56,12 +56,12 @@ var usageDimensionUnits = map[string]string{
 }
 
 type UsageDimension struct {
-	Quantity        int64             `json:"quantity"`
-	Unit            string            `json:"unit"`
-	Source          string            `json:"source"`
-	Confidence      string            `json:"confidence"`
-	PriceSnapshotID string            `json:"price_snapshot_id,omitempty"`
-	Attributes      map[string]string `json:"attributes,omitempty"`
+	Quantity                   int64             `json:"quantity"`
+	Unit                       string            `json:"unit"`
+	Source                     string            `json:"source"`
+	Confidence                 string            `json:"confidence"`
+	ProcurementPriceSnapshotID string            `json:"procurement_price_snapshot_id,omitempty"`
+	Attributes                 map[string]string `json:"attributes,omitempty"`
 }
 
 type UsageDimensions map[string]UsageDimension
@@ -87,10 +87,10 @@ func NormalizeUsageDimensions(values UsageDimensions) (UsageDimensions, error) {
 		value.Unit = strings.ToLower(strings.TrimSpace(value.Unit))
 		value.Source = strings.ToLower(strings.TrimSpace(value.Source))
 		value.Confidence = strings.ToLower(strings.TrimSpace(value.Confidence))
-		value.PriceSnapshotID = strings.TrimSpace(value.PriceSnapshotID)
+		value.ProcurementPriceSnapshotID = strings.TrimSpace(value.ProcurementPriceSnapshotID)
 		if !supported || value.Quantity < 0 || value.Unit != expectedUnit || !validUsageDimensionToken(value.Source) ||
 			!oneOf(value.Confidence, UsageConfidenceEstimated, UsageConfidenceObserved, UsageConfidenceReported, UsageConfidenceReconciled) ||
-			len(value.PriceSnapshotID) > 160 {
+			len(value.ProcurementPriceSnapshotID) > 160 {
 			return nil, ErrUsageDimensionsInvalid
 		}
 		attributes, err := normalizeUsageDimensionAttributes(value.Attributes)

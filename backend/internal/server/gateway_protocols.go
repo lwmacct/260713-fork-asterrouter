@@ -145,6 +145,7 @@ func executeGatewayProtocolDirect(c *gin.Context, control *controlplane.Service,
 	}
 	operation, created, err := control.BeginCanonicalOperation(c.Request.Context(), canonicalAuth, request)
 	if err != nil {
+		recordGatewayAdmissionRejected(c, control, auth, request, startedAt, err)
 		writeGatewayError(c, err)
 		return
 	}

@@ -113,7 +113,7 @@ func (r *MemoryRepository) DeleteRoleBinding(_ context.Context, id string) error
 
 func (r *PostgresRepository) ListWorkspaceUsers(ctx context.Context) ([]WorkspaceUser, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT u.id, u.email, u.display_name, u.avatar_data_url, u.status, u.role, u.balance_cents, u.concurrency_limit, u.rpm_limit, u.external_issuer, u.external_subject, u.department_id, u.totp_enabled, u.totp_secret_ciphertext, u.totp_recovery_hashes, u.password_hash, u.email_verified, u.email_verify_hash, u.email_verify_expires_at, u.password_reset_hash, u.password_reset_expires_at, u.session_version, u.created_at, u.updated_at
+SELECT u.id, u.email, u.display_name, u.avatar_data_url, u.status, u.role, u.balance_micros, u.concurrency_limit, u.rpm_limit, u.external_issuer, u.external_subject, u.department_id, u.totp_enabled, u.totp_secret_ciphertext, u.totp_recovery_hashes, u.password_hash, u.email_verified, u.email_verify_hash, u.email_verify_expires_at, u.password_reset_hash, u.password_reset_expires_at, u.session_version, u.created_at, u.updated_at
 FROM workspace_users u
 ORDER BY u.status ASC, u.email ASC
 `)
@@ -125,7 +125,7 @@ ORDER BY u.status ASC, u.email ASC
 	for rows.Next() {
 		var user WorkspaceUser
 		var recovery string
-		if err := rows.Scan(&user.ID, &user.Email, &user.DisplayName, &user.AvatarDataURL, &user.Status, &user.Role, &user.BalanceCents, &user.ConcurrencyLimit, &user.RPMLimit, &user.ExternalIssuer, &user.ExternalSubject, &user.DepartmentID, &user.TOTPEnabled, &user.TOTPSecretCiphertext, &recovery, &user.PasswordHash, &user.EmailVerified, &user.EmailVerifyHash, &user.EmailVerifyExpiresAt, &user.PasswordResetHash, &user.PasswordResetExpiresAt, &user.SessionVersion, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Email, &user.DisplayName, &user.AvatarDataURL, &user.Status, &user.Role, &user.BalanceMicros, &user.ConcurrencyLimit, &user.RPMLimit, &user.ExternalIssuer, &user.ExternalSubject, &user.DepartmentID, &user.TOTPEnabled, &user.TOTPSecretCiphertext, &recovery, &user.PasswordHash, &user.EmailVerified, &user.EmailVerifyHash, &user.EmailVerifyExpiresAt, &user.PasswordResetHash, &user.PasswordResetExpiresAt, &user.SessionVersion, &user.CreatedAt, &user.UpdatedAt); err != nil {
 			return nil, err
 		}
 		user.TOTPRecoveryHashes = parseStringList(recovery)
@@ -136,7 +136,7 @@ ORDER BY u.status ASC, u.email ASC
 
 func (r *PostgresRepository) SaveWorkspaceUser(ctx context.Context, user WorkspaceUser) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO workspace_users(id, email, display_name, avatar_data_url, status, role, balance_cents, concurrency_limit, rpm_limit, external_issuer, external_subject, department_id, totp_enabled, totp_secret_ciphertext, totp_recovery_hashes, password_hash, email_verified, email_verify_hash, email_verify_expires_at, password_reset_hash, password_reset_expires_at, session_version, created_at, updated_at)
+INSERT INTO workspace_users(id, email, display_name, avatar_data_url, status, role, balance_micros, concurrency_limit, rpm_limit, external_issuer, external_subject, department_id, totp_enabled, totp_secret_ciphertext, totp_recovery_hashes, password_hash, email_verified, email_verify_hash, email_verify_expires_at, password_reset_hash, password_reset_expires_at, session_version, created_at, updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 ON CONFLICT(id) DO UPDATE SET
   email = EXCLUDED.email,
@@ -144,7 +144,7 @@ ON CONFLICT(id) DO UPDATE SET
 	  avatar_data_url = EXCLUDED.avatar_data_url,
   status = EXCLUDED.status,
   role = EXCLUDED.role,
-  balance_cents = EXCLUDED.balance_cents,
+  balance_micros = EXCLUDED.balance_micros,
   concurrency_limit = EXCLUDED.concurrency_limit,
   rpm_limit = EXCLUDED.rpm_limit,
   external_issuer = EXCLUDED.external_issuer,
@@ -161,7 +161,7 @@ ON CONFLICT(id) DO UPDATE SET
   password_reset_expires_at = EXCLUDED.password_reset_expires_at,
 	 session_version = EXCLUDED.session_version,
   updated_at = EXCLUDED.updated_at
-	`, user.ID, user.Email, user.DisplayName, user.AvatarDataURL, user.Status, user.Role, user.BalanceCents, user.ConcurrencyLimit, user.RPMLimit, user.ExternalIssuer, user.ExternalSubject, user.DepartmentID, user.TOTPEnabled, user.TOTPSecretCiphertext, marshalStringList(user.TOTPRecoveryHashes), user.PasswordHash, user.EmailVerified, user.EmailVerifyHash, user.EmailVerifyExpiresAt, user.PasswordResetHash, user.PasswordResetExpiresAt, user.SessionVersion, user.CreatedAt, user.UpdatedAt)
+	`, user.ID, user.Email, user.DisplayName, user.AvatarDataURL, user.Status, user.Role, user.BalanceMicros, user.ConcurrencyLimit, user.RPMLimit, user.ExternalIssuer, user.ExternalSubject, user.DepartmentID, user.TOTPEnabled, user.TOTPSecretCiphertext, marshalStringList(user.TOTPRecoveryHashes), user.PasswordHash, user.EmailVerified, user.EmailVerifyHash, user.EmailVerifyExpiresAt, user.PasswordResetHash, user.PasswordResetExpiresAt, user.SessionVersion, user.CreatedAt, user.UpdatedAt)
 	return err
 }
 

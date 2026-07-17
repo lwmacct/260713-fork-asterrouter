@@ -1,1 +1,10 @@
-<script setup lang="ts">import{onMounted,ref,computed}from'vue';import OperatorCrudPage,{type CrudField,type CrudColumn}from'@/components/operator/OperatorCrudPage.vue';import{listOperatorResource}from'@/api/operator';import type{OperatorPlan}from'@/types';import{useI18n}from'vue-i18n';const{t}=useI18n();const plans=ref<OperatorPlan[]>([]);onMounted(async()=>plans.value=await listOperatorResource('plans') as OperatorPlan[]);const fields=computed<CrudField[]>(()=>[{key:'name',label:t('operatorDomain.name'),required:true},{key:'plan_id',label:t('operatorDomain.plan'),type:'select',options:[{value:'',label:t('operatorDomain.global')},...plans.value.map(v=>({value:v.id,label:v.name}))]},{key:'model',label:t('usage.model'),required:true},{key:'input_price_cents_per_1m_tokens',label:t('modelPricings.inputPrice'),type:'number',min:0},{key:'output_price_cents_per_1m_tokens',label:t('modelPricings.outputPrice'),type:'number',min:0},{key:'rate_multiplier',label:t('operatorDomain.rateMultiplier'),type:'number',min:0,step:.01,default:1},{key:'status',label:t('providers.status'),type:'select',options:[{value:'active',label:'active'},{value:'disabled',label:'disabled'}],default:'active'}]);const columns:CrudColumn[]=[{key:'name',label:t('operatorDomain.name')},{key:'model',label:t('usage.model')},{key:'input_price_cents_per_1m_tokens',label:t('modelPricings.inputPrice'),format:'money'},{key:'output_price_cents_per_1m_tokens',label:t('modelPricings.outputPrice'),format:'money'},{key:'status',label:t('providers.status'),format:'status'}];</script><template><OperatorCrudPage resource="pricing-rules" :title="t('operatorDomain.pricing')" :subtitle="t('operatorDomain.pricingHelp')" :create-label="t('operatorDomain.newPricing')" :fields="fields" :columns="columns"/></template>
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import PricingRulesView from '@/components/pricing/PricingRulesView.vue'
+
+const { t } = useI18n()
+</script>
+
+<template>
+  <PricingRulesView surface="operator" :title="t('pricingRules.operatorTitle')" :subtitle="t('pricingRules.operatorSubtitle')" />
+</template>

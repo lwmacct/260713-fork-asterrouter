@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { adminPost, createGatewayFixture, envelope, loginDemo } from './fixtures'
+import { adminPost, createGatewayFixture, createPublishedPricingRule, envelope, loginDemo } from './fixtures'
 
 type PolicyAlert = {
   id: string
@@ -14,7 +14,7 @@ async function invokeWithSyntheticUsage(page: Page, key: string, model: string, 
   return page.request.post('/v1/chat/completions', {
     data: {
       model,
-      max_cost_cents: 1,
+      max_cost_micros: 1,
       messages: [{ role: 'user', content: `synthetic ${tokens}-token policy request` }],
       synthetic_usage: { prompt_tokens: tokens, completion_tokens: 0 }
     },
@@ -31,15 +31,15 @@ async function policyAlert(page: Page, adminToken: string, keyID: string, type: 
   return alert!
 }
 
-async function expectUsageCost(page: Page, adminToken: string, keyID: string, expectedCostCents: number) {
+async function expectUsageCost(page: Page, adminToken: string, keyID: string, expectedCostMicros: number) {
   await expect.poll(async () => {
     const usage = await envelope<{ recent: Array<Record<string, unknown>> }>(await page.request.get('/api/v1/admin/usage?limit=100', {
       headers: { Authorization: `Bearer ${adminToken}` }
     }))
     return usage.recent
       .filter((item) => item.api_key_id === keyID && item.status !== 'error')
-      .reduce((sum, item) => sum + Number(item.cost_cents || 0), 0)
-  }, { message: `usage cost for ${keyID}` }).toBe(expectedCostCents)
+      .reduce((sum, item) => sum + Number(item.usage_cost_micros || 0), 0)
+  }, { message: `usage cost for ${keyID}` }).toBe(expectedCostMicros)
 }
 
 test('@smoke @j01 provider-to-gateway request records evidence', async ({ page }, testInfo) => {
@@ -152,12 +152,13 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
 
   const budgetModel = `e2e-budget-${runID}`
   await createGatewayFixture(page, token, `${runID}-budget`, budgetModel)
-  await adminPost(page, token, '/model-pricings', {
+  await createPublishedPricingRule(page, token, 'admin', {
+    name: `E2E usage cost ${runID}`,
+    purpose: 'usage_cost',
+    scope_type: 'global',
+    scope_id: '',
     model: budgetModel,
-    currency: 'USD',
-    input_price_cents_per_1m_tokens: 1000000,
-    output_price_cents_per_1m_tokens: 0,
-    status: 'active'
+    expression: 'v1: token_line("input", uncached_input_tokens, 10000000000)'
   })
   const budgetKey = await adminPost<{ key: string; record: { id: string } }>(page, token, '/api-keys', {
     name: `E2E Budget Key ${runID}`,
@@ -173,7 +174,7 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
     model_denylist: [],
     qps_limit: 0,
     monthly_token_limit: 0,
-    monthly_budget_cents: 400,
+    monthly_budget_micros: 4_000_000,
     overage_action: 'block',
     prompt_logging_mode: 'metadata_only',
     retention_days: 30,
@@ -184,32 +185,32 @@ test('@smoke @j05 quota and budget warn, deduplicate, escalate, and reject with 
   expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 160)).status()).toBe(200)
   const budgetWarning = await policyAlert(page, token, budgetKey.record.id, 'api_key_budget')
   expect(budgetWarning).toMatchObject({ severity: 'warning', status: 'active' })
-  expect(budgetWarning.metadata).toMatchObject({ current_month_cost_cents: '320', budget_used_percent: '80' })
-  await expectUsageCost(page, token, budgetKey.record.id, 320)
+  expect(budgetWarning.metadata).toMatchObject({ current_month_usage_cost_micros: '3200000', budget_used_percent: '80' })
+  await expectUsageCost(page, token, budgetKey.record.id, 3_200_000)
 
   expect((await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 80)).status()).toBe(200)
   const budgetCritical = await policyAlert(page, token, budgetKey.record.id, 'api_key_budget')
   expect(budgetCritical).toMatchObject({ id: budgetWarning.id, severity: 'critical', status: 'active' })
-  expect(budgetCritical.metadata).toMatchObject({ current_month_cost_cents: '400', budget_used_percent: '100' })
+  expect(budgetCritical.metadata).toMatchObject({ current_month_usage_cost_micros: '4000000', budget_used_percent: '100' })
 
   const budgetRejected = await invokeWithSyntheticUsage(page, budgetKey.key, budgetModel, 1)
-  expect(budgetRejected.status()).toBe(429)
+  expect(budgetRejected.status()).toBe(402)
   await expect(budgetRejected.json()).resolves.toMatchObject({
-    error: { type: 'insufficient_quota', message: 'workspace key monthly budget exceeded' }
+    error: { type: 'budget_hold_failed' }
   })
 
   const usage = await envelope<{ recent: Array<Record<string, unknown>> }>(await page.request.get('/api/v1/admin/usage?limit=100', {
     headers: { Authorization: `Bearer ${token}` }
   }))
   expect(usage.recent).toContainEqual(expect.objectContaining({ api_key_id: quotaKey.record.id, model: quotaModel, status: 'error', error_type: 'quota_exceeded' }))
-  expect(usage.recent).toContainEqual(expect.objectContaining({ api_key_id: budgetKey.record.id, model: budgetModel, status: 'error', error_type: 'budget_exceeded' }))
-  expect(usage.recent.filter((item) => item.api_key_id === budgetKey.record.id).reduce((sum, item) => sum + Number(item.cost_cents || 0), 0)).toBe(400)
+  expect(usage.recent).toContainEqual(expect.objectContaining({ api_key_id: budgetKey.record.id, model: budgetModel, status: 'error', error_type: 'budget_hold_failed' }))
+  expect(usage.recent.filter((item) => item.api_key_id === budgetKey.record.id).reduce((sum, item) => sum + Number(item.usage_cost_micros || 0), 0)).toBe(4_000_000)
 
   const traces = await envelope<Array<Record<string, unknown>>>(await page.request.get('/api/v1/admin/gateway-traces?limit=100', {
     headers: { Authorization: `Bearer ${token}` }
   }))
   expect(traces).toContainEqual(expect.objectContaining({ api_key_id: quotaKey.record.id, model: quotaModel, status: 'error', http_status: 429, error_type: 'quota_exceeded' }))
-  expect(traces).toContainEqual(expect.objectContaining({ api_key_id: budgetKey.record.id, model: budgetModel, status: 'error', http_status: 429, error_type: 'budget_exceeded' }))
+  expect(traces).toContainEqual(expect.objectContaining({ api_key_id: budgetKey.record.id, model: budgetModel, status: 'error', http_status: 402, error_type: 'budget_hold_failed' }))
 
   const audit = await envelope<Array<Record<string, unknown>>>(await page.request.get('/api/v1/admin/audit-logs?limit=100', {
     headers: { Authorization: `Bearer ${token}` }

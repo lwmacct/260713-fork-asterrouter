@@ -18,9 +18,6 @@ type Repository interface {
 	ListPlans(context.Context) ([]Plan, error)
 	SavePlan(context.Context, Plan) error
 	DeletePlan(context.Context, string) error
-	ListPricingRules(context.Context) ([]PricingRule, error)
-	SavePricingRule(context.Context, PricingRule) error
-	DeletePricingRule(context.Context, string) error
 	ListBalanceEntries(context.Context) ([]BalanceEntry, error)
 	ApplyBalanceEntry(context.Context, BalanceEntry) (BalanceEntry, error)
 	ListRiskRules(context.Context) ([]RiskRule, error)
@@ -38,14 +35,13 @@ type MemoryRepository struct {
 	groups    map[string]CustomerGroup
 	customers map[string]Customer
 	plans     map[string]Plan
-	pricing   map[string]PricingRule
 	balances  map[string]BalanceEntry
 	risks     map[string]RiskRule
 	notices   map[string]Notice
 }
 
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{groups: map[string]CustomerGroup{}, customers: map[string]Customer{}, plans: map[string]Plan{}, pricing: map[string]PricingRule{}, balances: map[string]BalanceEntry{}, risks: map[string]RiskRule{}, notices: map[string]Notice{}}
+	return &MemoryRepository{groups: map[string]CustomerGroup{}, customers: map[string]Customer{}, plans: map[string]Plan{}, balances: map[string]BalanceEntry{}, risks: map[string]RiskRule{}, notices: map[string]Notice{}}
 }
 
 func (r *MemoryRepository) ListGroups(context.Context) ([]CustomerGroup, error) {
@@ -99,23 +95,6 @@ func (r *MemoryRepository) DeletePlan(_ context.Context, id string) error {
 	delete(r.plans, id)
 	return nil
 }
-func (r *MemoryRepository) ListPricingRules(context.Context) ([]PricingRule, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return mapValues(r.pricing), nil
-}
-func (r *MemoryRepository) SavePricingRule(_ context.Context, v PricingRule) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.pricing[v.ID] = v
-	return nil
-}
-func (r *MemoryRepository) DeletePricingRule(_ context.Context, id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.pricing, id)
-	return nil
-}
 func (r *MemoryRepository) ListBalanceEntries(context.Context) ([]BalanceEntry, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -124,16 +103,16 @@ func (r *MemoryRepository) ListBalanceEntries(context.Context) ([]BalanceEntry, 
 func (r *MemoryRepository) ApplyBalanceEntry(_ context.Context, v BalanceEntry) (BalanceEntry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if v.Reference != "" {
+	if v.BillingLedgerID != "" || v.Reference != "" {
 		for _, existing := range r.balances {
-			if existing.CustomerID == v.CustomerID && existing.Reference == v.Reference {
+			if v.BillingLedgerID != "" && existing.BillingLedgerID == v.BillingLedgerID || v.Reference != "" && existing.CustomerID == v.CustomerID && existing.Reference == v.Reference {
 				return existing, nil
 			}
 		}
 	}
 	customer := r.customers[v.CustomerID]
-	v.BalanceAfter = customer.BalanceCents + v.AmountCents
-	customer.BalanceCents = v.BalanceAfter
+	v.BalanceAfter = customer.BalanceMicros + v.AmountMicros
+	customer.BalanceMicros = v.BalanceAfter
 	customer.UpdatedAt = v.CreatedAt
 	r.customers[v.CustomerID] = customer
 	r.balances[v.ID] = v
@@ -216,14 +195,16 @@ func (r *PostgresRepository) migrate(ctx context.Context) error {
 
 const operatorSchema = `
 CREATE TABLE IF NOT EXISTS operator_customer_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
-CREATE TABLE IF NOT EXISTS operator_plans (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', monthly_fee_cents BIGINT NOT NULL DEFAULT 0, included_tokens BIGINT NOT NULL DEFAULT 0, monthly_limit_cents BIGINT NOT NULL DEFAULT 0, rate_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
-CREATE TABLE IF NOT EXISTS operator_customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT '', plan_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0, credit_cents BIGINT NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
-CREATE TABLE IF NOT EXISTS operator_pricing_rules (id TEXT PRIMARY KEY, name TEXT NOT NULL, plan_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, input_price_cents_per_1m_tokens BIGINT NOT NULL DEFAULT 0, output_price_cents_per_1m_tokens BIGINT NOT NULL DEFAULT 0, rate_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
-CREATE TABLE IF NOT EXISTS operator_balance_entries (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES operator_customers(id) ON DELETE CASCADE, kind TEXT NOT NULL, amount_cents BIGINT NOT NULL, balance_after_cents BIGINT NOT NULL, reference TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL);
+CREATE TABLE IF NOT EXISTS operator_plans (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', monthly_fee_micros BIGINT NOT NULL DEFAULT 0, included_tokens BIGINT NOT NULL DEFAULT 0, monthly_limit_micros BIGINT NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+CREATE TABLE IF NOT EXISTS operator_customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT '', plan_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, balance_micros BIGINT NOT NULL DEFAULT 0, credit_micros BIGINT NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
+CREATE TABLE IF NOT EXISTS operator_balance_entries (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES operator_customers(id) ON DELETE CASCADE, kind TEXT NOT NULL, amount_micros BIGINT NOT NULL, balance_after_micros BIGINT NOT NULL, currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'), billing_ledger_id TEXT NOT NULL DEFAULT '', reference TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL);
+ALTER TABLE operator_balance_entries ADD COLUMN IF NOT EXISTS billing_ledger_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE operator_balance_entries ADD COLUMN IF NOT EXISTS reference TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS operator_risk_rules (id TEXT PRIMARY KEY, name TEXT NOT NULL, rule_type TEXT NOT NULL, threshold DOUBLE PRECISION NOT NULL DEFAULT 0, window_minutes INTEGER NOT NULL DEFAULT 60, action TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
 CREATE TABLE IF NOT EXISTS operator_notices (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'all', status TEXT NOT NULL, publish_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
 CREATE INDEX IF NOT EXISTS operator_customers_group_idx ON operator_customers(group_id, status);
 CREATE INDEX IF NOT EXISTS operator_customers_plan_idx ON operator_customers(plan_id, status);
 CREATE INDEX IF NOT EXISTS operator_balance_customer_created_idx ON operator_balance_entries(customer_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS operator_balance_reference_idx ON operator_balance_entries(customer_id, reference) WHERE reference <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS operator_balance_ledger_idx ON operator_balance_entries(billing_ledger_id) WHERE billing_ledger_id <> '';
 `

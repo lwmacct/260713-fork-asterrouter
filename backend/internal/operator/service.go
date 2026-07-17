@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -56,7 +56,7 @@ func (s *Service) Dashboard(ctx context.Context) (Dashboard, error) {
 	out.Plans = len(plans)
 	out.RiskRules = len(risks)
 	for _, v := range customers {
-		out.BalanceCents += v.BalanceCents
+		out.BalanceMicros += v.BalanceMicros
 		if v.Status == StatusActive {
 			out.ActiveCustomers++
 		}
@@ -131,8 +131,8 @@ func (s *Service) SaveCustomer(ctx context.Context, id string, req CustomerReque
 	if err != nil {
 		return Customer{}, err
 	}
-	if req.CreditCents < 0 {
-		return Customer{}, errors.New("credit_cents must be greater than or equal to 0")
+	if req.CreditMicros < 0 {
+		return Customer{}, errors.New("credit_micros must be greater than or equal to 0")
 	}
 	if req.GroupID != "" {
 		items, err := s.repo.ListGroups(ctx)
@@ -153,7 +153,7 @@ func (s *Service) SaveCustomer(ctx context.Context, id string, req CustomerReque
 		}
 	}
 	now := time.Now().UTC()
-	v := Customer{ID: id, Name: name, Email: strings.TrimSpace(req.Email), GroupID: strings.TrimSpace(req.GroupID), PlanID: strings.TrimSpace(req.PlanID), Status: status, CreditCents: req.CreditCents, Notes: strings.TrimSpace(req.Notes), CreatedAt: now, UpdatedAt: now}
+	v := Customer{ID: id, Name: name, Email: strings.TrimSpace(req.Email), GroupID: strings.TrimSpace(req.GroupID), PlanID: strings.TrimSpace(req.PlanID), Status: status, CreditMicros: req.CreditMicros, Notes: strings.TrimSpace(req.Notes), CreatedAt: now, UpdatedAt: now}
 	if id == "" {
 		v.ID = "cust_" + randomID()
 	} else {
@@ -166,7 +166,7 @@ func (s *Service) SaveCustomer(ctx context.Context, id string, req CustomerReque
 			return Customer{}, err
 		}
 		v.CreatedAt = old.CreatedAt
-		v.BalanceCents = old.BalanceCents
+		v.BalanceMicros = old.BalanceMicros
 	}
 	if err := s.repo.SaveCustomer(ctx, v); err != nil {
 		return Customer{}, err
@@ -258,64 +258,12 @@ func (s *Service) Usage(ctx context.Context, query controlplane.UsageQuery) (con
 	return s.control.UsageReportQuery(ctx, query)
 }
 
-// OnGatewayUsage turns a successful customer request into one idempotent
-// balance debit. The gateway remains unaware of operator pricing; it only
-// publishes the durable usage record to this observer.
-func (s *Service) OnGatewayUsage(ctx context.Context, record controlplane.UsageRecord) error {
+// EvaluateUsageRisk evaluates durable Usage events without calculating prices or writing balances.
+func (s *Service) EvaluateUsageRisk(ctx context.Context, record controlplane.UsageRecord) error {
 	if err := s.evaluateRiskRules(ctx, record); err != nil {
 		return err
 	}
-	if record.CustomerID == "" || record.Status != "forwarded" {
-		return nil
-	}
-	if record.InputTokens <= 0 && record.OutputTokens <= 0 {
-		return nil
-	}
-
-	customers, err := s.repo.ListCustomers(ctx)
-	if err != nil {
-		return err
-	}
-	customer, err := findByID(customers, record.CustomerID)
-	if err != nil {
-		return err
-	}
-	pricing, err := s.repo.ListPricingRules(ctx)
-	if err != nil {
-		return err
-	}
-	rule, ok := selectPricingRule(pricing, customer.PlanID, record.Model)
-	if !ok {
-		return nil
-	}
-	plans, err := s.repo.ListPlans(ctx)
-	if err != nil {
-		return err
-	}
-	multiplier := rule.RateMultiplier
-	if multiplier == 0 {
-		multiplier = 1
-	}
-	if customer.PlanID != "" {
-		if plan, planErr := findByID(plans, customer.PlanID); planErr == nil && plan.RateMultiplier > 0 {
-			multiplier *= plan.RateMultiplier
-		}
-	}
-	charge := usageChargeCents(record.InputTokens, record.OutputTokens, rule.InputPrice, rule.OutputPrice, multiplier)
-	if charge <= 0 {
-		return nil
-	}
-	_, err = s.repo.ApplyBalanceEntry(ctx, BalanceEntry{
-		ID:          "bal_usage_" + record.ID,
-		CustomerID:  customer.ID,
-		Kind:        "usage",
-		AmountCents: -charge,
-		Reference:   record.ID,
-		Note:        fmt.Sprintf("Gateway usage: %s", record.Model),
-		Actor:       "system:gateway",
-		CreatedAt:   record.CreatedAt,
-	})
-	return err
+	return nil
 }
 
 func (s *Service) evaluateRiskRules(ctx context.Context, record controlplane.UsageRecord) error {
@@ -369,7 +317,7 @@ func riskRuleValue(ruleType string, windowMins int, report controlplane.UsageRep
 	case "tokens":
 		return float64(report.TotalTokens), true
 	case "spend":
-		return float64(report.TotalCostCents), true
+		return float64(report.TotalUsageCostMicros), true
 	case "error_rate":
 		if report.TotalRequests == 0 {
 			return 0, true
@@ -378,43 +326,6 @@ func riskRuleValue(ruleType string, windowMins int, report controlplane.UsageRep
 	default:
 		return 0, false
 	}
-}
-
-func selectPricingRule(rules []PricingRule, planID, model string) (PricingRule, bool) {
-	var selected PricingRule
-	bestScore := -1
-	for _, rule := range rules {
-		if rule.Status != StatusActive || (rule.PlanID != "" && rule.PlanID != planID) {
-			continue
-		}
-		if rule.Model != model && rule.Model != "*" {
-			continue
-		}
-		score := 0
-		if rule.PlanID != "" {
-			score += 2
-		}
-		if rule.Model == model {
-			score++
-		}
-		if score > bestScore || (score == bestScore && rule.ID < selected.ID) {
-			selected = rule
-			bestScore = score
-		}
-	}
-	return selected, bestScore >= 0
-}
-
-func usageChargeCents(inputTokens, outputTokens int, inputPrice, outputPrice int64, multiplier float64) int64 {
-	if multiplier <= 0 {
-		return 0
-	}
-	base := float64(maxInt(inputTokens, 0))*float64(inputPrice) + float64(maxInt(outputTokens, 0))*float64(outputPrice)
-	charge := int64(math.Round(base * multiplier / 1_000_000))
-	if charge == 0 && base > 0 {
-		return 1
-	}
-	return charge
 }
 
 func maxInt(value, minimum int) int {
@@ -429,25 +340,18 @@ func (s *Service) SavePlan(ctx context.Context, id string, req PlanRequest) (Pla
 	if strings.TrimSpace(req.Name) == "" {
 		return Plan{}, errors.New("name is required")
 	}
-	if req.MonthlyFeeCents < 0 || req.IncludedTokens < 0 || req.MonthlyLimitCents < 0 {
+	if req.MonthlyFeeMicros < 0 || req.IncludedTokens < 0 || req.MonthlyLimitMicros < 0 {
 		return Plan{}, errors.New("plan limits must be greater than or equal to 0")
 	}
-	if req.MonthlyFeeCents != 0 {
+	if req.MonthlyFeeMicros != 0 {
 		return Plan{}, errors.New("recurring fees are not supported; use enterprise budget limits instead")
-	}
-	mult := req.RateMultiplier
-	if mult == 0 {
-		mult = 1
-	}
-	if mult < 0 {
-		return Plan{}, errors.New("rate_multiplier must be greater than or equal to 0")
 	}
 	status, err := normalizeStatus(req.Status)
 	if err != nil {
 		return Plan{}, err
 	}
 	now := time.Now().UTC()
-	v := Plan{ID: id, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), MonthlyFeeCents: req.MonthlyFeeCents, IncludedTokens: req.IncludedTokens, MonthlyLimitCents: req.MonthlyLimitCents, RateMultiplier: mult, Status: status, CreatedAt: now, UpdatedAt: now}
+	v := Plan{ID: id, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), MonthlyFeeMicros: req.MonthlyFeeMicros, IncludedTokens: req.IncludedTokens, MonthlyLimitMicros: req.MonthlyLimitMicros, Status: status, CreatedAt: now, UpdatedAt: now}
 	if id == "" {
 		v.ID = "plan_" + randomID()
 	} else {
@@ -477,67 +381,55 @@ func (s *Service) DeletePlan(ctx context.Context, id string) error {
 			return errors.New("plan is still assigned to customers")
 		}
 	}
-	pricing, err := s.repo.ListPricingRules(ctx)
+	rules, err := s.control.ListPricingRules(ctx, controlplane.PricingRuleQuery{Purpose: controlplane.PricingPurposeCustomerCharge, ScopeType: controlplane.PricingScopeOperatorPlan, ScopeID: id})
 	if err != nil {
 		return err
 	}
-	for _, v := range pricing {
-		if v.PlanID == id {
-			return errors.New("plan still has pricing rules")
+	for _, rule := range rules {
+		versions, detailErr := s.control.PricingRuleDetail(ctx, rule.ID)
+		if detailErr != nil {
+			return detailErr
+		}
+		for _, version := range versions.Versions {
+			if version.State == controlplane.PricingVersionStatePublished {
+				return errors.New("plan is referenced by a published pricing rule")
+			}
 		}
 	}
 	return s.repo.DeletePlan(ctx, id)
 }
 
-func (s *Service) ListPricingRules(ctx context.Context) ([]PricingRule, error) {
-	return s.repo.ListPricingRules(ctx)
-}
-func (s *Service) SavePricingRule(ctx context.Context, id string, req PricingRuleRequest) (PricingRule, error) {
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Model) == "" {
-		return PricingRule{}, errors.New("name and model are required")
-	}
-	if req.PlanID != "" {
-		items, err := s.repo.ListPlans(ctx)
-		if err != nil {
-			return PricingRule{}, err
-		}
-		if _, err := findByID(items, req.PlanID); err != nil {
-			return PricingRule{}, err
-		}
-	}
-	if req.InputPrice < 0 || req.OutputPrice < 0 {
-		return PricingRule{}, errors.New("prices must be greater than or equal to 0")
-	}
-	mult := req.RateMultiplier
-	if mult == 0 {
-		mult = 1
-	}
-	status, err := normalizeStatus(req.Status)
+func (s *Service) ResolveCustomerPricingContext(ctx context.Context, customerID string) (controlplane.CustomerPricingContext, error) {
+	customers, err := s.repo.ListCustomers(ctx)
 	if err != nil {
-		return PricingRule{}, err
+		return controlplane.CustomerPricingContext{}, err
 	}
-	now := time.Now().UTC()
-	v := PricingRule{ID: id, Name: strings.TrimSpace(req.Name), PlanID: strings.TrimSpace(req.PlanID), Model: strings.TrimSpace(req.Model), InputPrice: req.InputPrice, OutputPrice: req.OutputPrice, RateMultiplier: mult, Status: status, CreatedAt: now, UpdatedAt: now}
-	if id == "" {
-		v.ID = "price_" + randomID()
-	} else {
-		items, err := s.repo.ListPricingRules(ctx)
-		if err != nil {
-			return PricingRule{}, err
-		}
-		old, err := findByID(items, id)
-		if err != nil {
-			return PricingRule{}, err
-		}
-		v.CreatedAt = old.CreatedAt
+	customer, err := findByID(customers, strings.TrimSpace(customerID))
+	if err != nil {
+		return controlplane.CustomerPricingContext{}, err
 	}
-	if err := s.repo.SavePricingRule(ctx, v); err != nil {
-		return PricingRule{}, err
+	if customer.Status != StatusActive || customer.PlanID == "" {
+		return controlplane.CustomerPricingContext{}, errors.New("customer pricing context is inactive")
 	}
-	return v, nil
+	if err := s.ValidatePricingPlan(ctx, customer.PlanID); err != nil {
+		return controlplane.CustomerPricingContext{}, err
+	}
+	return controlplane.CustomerPricingContext{CustomerID: customer.ID, PlanID: customer.PlanID, Status: customer.Status, Currency: "USD"}, nil
 }
-func (s *Service) DeletePricingRule(ctx context.Context, id string) error {
-	return s.repo.DeletePricingRule(ctx, id)
+
+func (s *Service) ValidatePricingPlan(ctx context.Context, planID string) error {
+	plans, err := s.repo.ListPlans(ctx)
+	if err != nil {
+		return err
+	}
+	plan, err := findByID(plans, strings.TrimSpace(planID))
+	if err != nil {
+		return err
+	}
+	if plan.Status != StatusActive {
+		return errors.New("pricing plan is inactive")
+	}
+	return nil
 }
 
 func (s *Service) ListBalanceEntries(ctx context.Context) ([]BalanceEntry, error) {
@@ -551,8 +443,8 @@ func (s *Service) ApplyBalanceEntry(ctx context.Context, actor string, req Balan
 	if _, err := findByID(customers, req.CustomerID); err != nil {
 		return BalanceEntry{}, err
 	}
-	if req.AmountCents == 0 {
-		return BalanceEntry{}, errors.New("amount_cents must not be zero")
+	if req.AmountMicros == 0 {
+		return BalanceEntry{}, errors.New("amount_micros must not be zero")
 	}
 	kind := strings.TrimSpace(req.Kind)
 	if kind == "" {
@@ -560,24 +452,52 @@ func (s *Service) ApplyBalanceEntry(ctx context.Context, actor string, req Balan
 	}
 	switch kind {
 	case "allocation_increase":
-		if req.AmountCents < 0 {
+		if req.AmountMicros < 0 {
 			return BalanceEntry{}, errors.New("allocation_increase amount must be positive")
 		}
 	case "allocation_decrease":
-		if req.AmountCents > 0 {
+		if req.AmountMicros > 0 {
 			return BalanceEntry{}, errors.New("allocation_decrease amount must be negative")
 		}
 	case "cost_correction":
 	default:
 		return BalanceEntry{}, errors.New("kind must be allocation_increase, allocation_decrease, or cost_correction")
 	}
-	v := BalanceEntry{ID: "bal_" + randomID(), CustomerID: req.CustomerID, Kind: kind, AmountCents: req.AmountCents, Reference: strings.TrimSpace(req.Reference), Note: strings.TrimSpace(req.Note), Actor: actor, CreatedAt: time.Now().UTC()}
+	v := BalanceEntry{ID: "bal_" + randomID(), CustomerID: req.CustomerID, Kind: kind, AmountMicros: req.AmountMicros, Currency: "USD", Reference: strings.TrimSpace(req.Reference), Note: strings.TrimSpace(req.Note), Actor: actor, CreatedAt: time.Now().UTC()}
 	result, err := s.repo.ApplyBalanceEntry(ctx, v)
 	if err != nil {
 		return BalanceEntry{}, err
 	}
-	s.audit(ctx, "operator_balance", result.ID, fmt.Sprintf("Applied balance entry %d to customer %s", result.AmountCents, result.CustomerID))
+	s.audit(ctx, "operator_balance", result.ID, fmt.Sprintf("Applied balance entry %d to customer %s", result.AmountMicros, result.CustomerID))
 	return result, nil
+}
+
+func (s *Service) PublishTransactionalOutbox(ctx context.Context, event controlplane.TransactionalOutboxEvent) error {
+	switch event.EventType {
+	case controlplane.OutboxEventUsageRecorded:
+		var payload controlplane.UsageRecordedEvent
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+			return err
+		}
+		return s.EvaluateUsageRisk(ctx, controlplane.UsageRecord{ID: payload.UsageRecordID, OperationID: payload.OperationID, AttemptID: payload.AttemptID, UsageVersion: payload.UsageVersion, APIKeyID: payload.APIKeyID, CustomerID: payload.CustomerID, InputTokens: payload.InputTokens, OutputTokens: payload.OutputTokens, UsageDimensions: payload.UsageDimensions, UsageCostMicros: payload.UsageCostMicros, PricingStatus: payload.PricingStatus, Status: payload.Status})
+	case controlplane.OutboxEventCustomerChargePosted:
+		var payload controlplane.CustomerChargePostedEvent
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+			return err
+		}
+		if payload.BillingLedgerID == "" || payload.CustomerID == "" || payload.AmountMicros < 0 || payload.Currency != "USD" || payload.IdempotencyKey != "customer_charge:"+payload.BillingLedgerID {
+			return errors.New("invalid customer charge event")
+		}
+		entry := BalanceEntry{
+			ID: "bal_" + randomID(), CustomerID: payload.CustomerID, Kind: "usage_charge", AmountMicros: -payload.AmountMicros,
+			Currency: payload.Currency, BillingLedgerID: payload.BillingLedgerID, Reference: payload.IdempotencyKey,
+			Note: "Usage charge", Actor: "customer_charge_consumer", CreatedAt: time.Now().UTC(),
+		}
+		_, err := s.repo.ApplyBalanceEntry(ctx, entry)
+		return err
+	default:
+		return nil
+	}
 }
 
 func (s *Service) ListRiskRules(ctx context.Context) ([]RiskRule, error) {
@@ -711,7 +631,7 @@ func allowedValue(value string, allowed ...string) bool {
 	return false
 }
 func findByID[T interface {
-	CustomerGroup | Customer | Plan | PricingRule | RiskRule | Notice
+	CustomerGroup | Customer | Plan | RiskRule | Notice
 }](items []T, id string) (T, error) {
 	var zero T
 	for _, item := range items {
@@ -725,10 +645,6 @@ func findByID[T interface {
 				return item, nil
 			}
 		case Plan:
-			if v.ID == id {
-				return item, nil
-			}
-		case PricingRule:
 			if v.ID == id {
 				return item, nil
 			}

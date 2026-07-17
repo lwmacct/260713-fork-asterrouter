@@ -198,7 +198,7 @@ func (s *Service) canonicalAuthContext(auth GatewayAuthContext) gatewaycore.Cano
 			TPMLimit:                 auth.APIKey.TPMLimit,
 			ConcurrencyLimit:         auth.APIKey.ConcurrencyLimit,
 			MonthlyTokenLimit:        auth.effectiveMonthlyTokenLimit(),
-			MonthlyBudgetCents:       auth.effectiveMonthlyBudgetCents(),
+			MonthlyBudgetMicros:      auth.effectiveMonthlyBudgetMicros(),
 			MonthlyImageLimit:        auth.APIKey.MonthlyImageLimit,
 			MonthlyVideoSecondsLimit: auth.APIKey.MonthlyVideoSecondsLimit,
 			MonthlyAudioSecondsLimit: auth.APIKey.MonthlyAudioSecondsLimit,

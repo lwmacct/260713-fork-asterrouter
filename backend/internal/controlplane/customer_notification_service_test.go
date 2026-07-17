@@ -149,7 +149,7 @@ func TestCustomerBillingAndUsageCreateDeduplicatedNotifications(t *testing.T) {
 	code := "ASTER-NOTIFY-500"
 	if err := repo.SaveCustomerRedemptionCode(ctx, CustomerRedemptionCode{
 		ID: "crc_notify", CodeHash: hashCustomerRedemptionCode(code), Title: "通知测试",
-		AmountCents: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 1, CreatedAt: time.Now().UTC(),
+		AmountMicros: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 1, CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestCustomerMonthlyBillAndBroadcastNotifications(t *testing.T) {
 	}
 	if err := repo.SaveUsageRecord(ctx, UsageRecord{
 		ID: "usage_digest", APIKeyID: created.Record.ID, Model: "model", Status: "forwarded",
-		InputTokens: 80, OutputTokens: 20, CostCents: 45, CreatedAt: time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC),
+		InputTokens: 80, OutputTokens: 20, UsageCostMicros: testMicros(45), UsageCostCurrency: "USD", PricingStatus: "priced", CreatedAt: time.Date(2026, 7, 12, 8, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -14,21 +14,21 @@ const (
 )
 
 type CustomerWallet struct {
-	UserID             string    `json:"user_id"`
-	GiftBalanceCents   int       `json:"gift_balance_cents"`
-	ProfitBalanceCents int       `json:"profit_balance_cents"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	UserID              string    `json:"user_id"`
+	GiftBalanceMicros   int64     `json:"gift_balance_micros"`
+	ProfitBalanceMicros int64     `json:"profit_balance_micros"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type CustomerBillingEntry struct {
-	ID                string    `json:"id"`
-	UserID            string    `json:"-"`
-	Kind              string    `json:"kind"`
-	AmountCents       int       `json:"amount_cents"`
-	BalanceAfterCents int       `json:"balance_after_cents"`
-	Reference         string    `json:"reference"`
-	Description       string    `json:"description"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	UserID             string    `json:"-"`
+	Kind               string    `json:"kind"`
+	AmountMicros       int64     `json:"amount_micros"`
+	BalanceAfterMicros int64     `json:"balance_after_micros"`
+	Reference          string    `json:"reference"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type CustomerBillingQuery struct {
@@ -41,21 +41,21 @@ type CustomerBillingQuery struct {
 }
 
 type CustomerVoucher struct {
-	ID                   string     `json:"id"`
-	UserID               string     `json:"-"`
-	Title                string     `json:"title"`
-	AmountCents          int        `json:"amount_cents"`
-	MinimumRechargeCents int        `json:"minimum_recharge_cents"`
-	Status               string     `json:"status"`
-	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
+	ID                    string     `json:"id"`
+	UserID                string     `json:"-"`
+	Title                 string     `json:"title"`
+	AmountMicros          int64      `json:"amount_micros"`
+	MinimumRechargeMicros int64      `json:"minimum_recharge_micros"`
+	Status                string     `json:"status"`
+	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 
 type CustomerRedemptionCode struct {
 	ID             string     `json:"id"`
 	CodeHash       string     `json:"-"`
 	Title          string     `json:"title"`
-	AmountCents    int        `json:"amount_cents"`
+	AmountMicros   int64      `json:"amount_micros"`
 	Status         string     `json:"status"`
 	MaxRedemptions int        `json:"max_redemptions"`
 	RedeemedCount  int        `json:"redeemed_count"`
@@ -84,13 +84,13 @@ type CustomerPaymentChannel struct {
 }
 
 type CustomerBillingOverview struct {
-	BalanceCents       int                      `json:"balance_cents"`
-	GiftBalanceCents   int                      `json:"gift_balance_cents"`
-	ProfitBalanceCents int                      `json:"profit_balance_cents"`
-	TotalCents         int                      `json:"total_cents"`
-	RechargeOptions    []int                    `json:"recharge_options"`
-	PaymentChannels    []CustomerPaymentChannel `json:"payment_channels"`
-	Vouchers           []CustomerVoucher        `json:"vouchers"`
+	BalanceMicros       int64                    `json:"balance_micros"`
+	GiftBalanceMicros   int64                    `json:"gift_balance_micros"`
+	ProfitBalanceMicros int64                    `json:"profit_balance_micros"`
+	TotalMicros         int64                    `json:"total_micros"`
+	RechargeOptions     []int64                  `json:"recharge_options"`
+	PaymentChannels     []CustomerPaymentChannel `json:"payment_channels"`
+	Vouchers            []CustomerVoucher        `json:"vouchers"`
 }
 
 type CustomerBillingEntries struct {
@@ -110,14 +110,14 @@ type CustomerRedeemResult struct {
 }
 
 type CustomerRechargeRequest struct {
-	AmountCents   int    `json:"amount_cents"`
+	AmountMicros  int64  `json:"amount_micros"`
 	PaymentMethod string `json:"payment_method"`
 	VoucherID     string `json:"voucher_id"`
 }
 
 type CustomerRechargeOrder struct {
 	ID            string    `json:"id"`
-	AmountCents   int       `json:"amount_cents"`
+	AmountMicros  int64     `json:"amount_micros"`
 	PaymentMethod string    `json:"payment_method"`
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`

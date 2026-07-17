@@ -10,18 +10,18 @@ export interface CustomerPaymentChannel {
 export interface CustomerVoucher {
   id: string
   title: string
-  amount_cents: number
-  minimum_recharge_cents: number
+  amount_micros: number
+  minimum_recharge_micros: number
   status: string
   expires_at?: string
   created_at: string
 }
 
 export interface CustomerBillingOverview {
-  balance_cents: number
-  gift_balance_cents: number
-  profit_balance_cents: number
-  total_cents: number
+  balance_micros: number
+  gift_balance_micros: number
+  profit_balance_micros: number
+  total_micros: number
   recharge_options: number[]
   payment_channels: CustomerPaymentChannel[]
   vouchers: CustomerVoucher[]
@@ -30,8 +30,8 @@ export interface CustomerBillingOverview {
 export interface CustomerBillingEntry {
   id: string
   kind: string
-  amount_cents: number
-  balance_after_cents: number
+  amount_micros: number
+  balance_after_micros: number
   reference: string
   description: string
   created_at: string
@@ -128,7 +128,7 @@ export async function redeemCustomerCode(code: string): Promise<CustomerRedeemRe
 }
 
 export async function createCustomerRechargeOrder(payload: {
-  amount_cents: number
+  amount_micros: number
   payment_method: 'wechat' | 'alipay'
   voucher_id?: string
 }): Promise<void> {

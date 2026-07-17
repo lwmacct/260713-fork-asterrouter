@@ -16,7 +16,6 @@ func registerSharedCoreRoutes(group *gin.RouterGroup, control *controlplane.Serv
 	registerRoutingAdminRoutes(group, control)
 	registerGatewayModelAdminRoutes(group, control)
 	registerAPIKeyAdminRoutes(group, control)
-	registerModelPricingAdminRoutes(group, control)
 	if includeUsage {
 		group.GET("/usage", func(c *gin.Context) {
 			data, err := control.UsageReportQuery(c.Request.Context(), usageQuery(c))

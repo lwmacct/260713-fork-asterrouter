@@ -38,11 +38,24 @@ func TestAdminDashboardEndpoint(t *testing.T) {
 	}
 }
 
-func TestAdminModelPricingEndpoints(t *testing.T) {
+func TestAdminPricingRuleEndpoints(t *testing.T) {
 	handler := newTestHandler(t, RuntimeConfig{})
+	legacyReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-pricings", nil)
+	legacyRec := httptest.NewRecorder()
+	handler.ServeHTTP(legacyRec, legacyReq)
+	if legacyRec.Code != http.StatusNotFound {
+		t.Fatalf("legacy pricing status = %d body=%s", legacyRec.Code, legacyRec.Body.String())
+	}
+	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/pricing-rules", bytes.NewBufferString(`{"name":"invalid","amount_cents":1}`))
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidRec := httptest.NewRecorder()
+	handler.ServeHTTP(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown cents field status = %d body=%s", invalidRec.Code, invalidRec.Body.String())
+	}
 
-	createBody := bytes.NewBufferString(`{"model":"priced-model","currency":"USD","input_price_cents_per_1m_tokens":120,"output_price_cents_per_1m_tokens":480,"status":"active"}`)
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-pricings", createBody)
+	createBody := bytes.NewBufferString(`{"name":"Global usage","purpose":"usage_cost","scope_type":"global","scope_id":"","model":"*","currency":"USD","authoring_mode":"raw","expression":"v1: fixed_line(\"base\", \"request\", 120)","test_cases":[]}`)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/pricing-rules", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRec := httptest.NewRecorder()
 	handler.ServeHTTP(createRec, createReq)
@@ -50,46 +63,43 @@ func TestAdminModelPricingEndpoints(t *testing.T) {
 		t.Fatalf("create pricing status = %d body=%s", createRec.Code, createRec.Body.String())
 	}
 	var createResp struct {
-		Data controlplane.ModelPricing `json:"data"`
+		Data controlplane.PricingRuleDetail `json:"data"`
 	}
 	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
 		t.Fatalf("decode create pricing: %v", err)
 	}
-	if createResp.Data.ID == "" || createResp.Data.Model != "priced-model" || createResp.Data.InputPriceCentsPer1MTokens != 120 {
+	if createResp.Data.Rule.ID == "" || createResp.Data.Draft == nil || createResp.Data.Rule.Model != "*" {
 		t.Fatalf("created pricing mismatch: %+v", createResp.Data)
 	}
-
-	updateBody := bytes.NewBufferString(`{"model":"priced-model","currency":"USD","input_price_cents_per_1m_tokens":150,"output_price_cents_per_1m_tokens":500,"status":"disabled"}`)
-	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/model-pricings/"+createResp.Data.ID, updateBody)
-	updateReq.Header.Set("Content-Type", "application/json")
-	updateRec := httptest.NewRecorder()
-	handler.ServeHTTP(updateRec, updateReq)
-	if updateRec.Code != http.StatusOK {
-		t.Fatalf("update pricing status = %d body=%s", updateRec.Code, updateRec.Body.String())
+	publishBody := fmt.Sprintf(`{"draft_version_id":%q,"expected_lock_version":%d,"expected_active_version_id":"","expression_hash":%q,"acknowledge_customer_impact":true}`, createResp.Data.Draft.ID, createResp.Data.Rule.LockVersion, createResp.Data.Draft.ExpressionHash)
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/pricing-rules/"+createResp.Data.Rule.ID+"/publish", strings.NewReader(publishBody))
+	publishReq.Header.Set("Content-Type", "application/json")
+	publishRec := httptest.NewRecorder()
+	handler.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusOK {
+		t.Fatalf("publish pricing status = %d body=%s", publishRec.Code, publishRec.Body.String())
 	}
-	var updateResp struct {
-		Data controlplane.ModelPricing `json:"data"`
-	}
-	if err := json.Unmarshal(updateRec.Body.Bytes(), &updateResp); err != nil {
-		t.Fatalf("decode update pricing: %v", err)
-	}
-	if updateResp.Data.Status != controlplane.ModelPricingStatusDisabled || updateResp.Data.OutputPriceCentsPer1MTokens != 500 {
-		t.Fatalf("updated pricing mismatch: %+v", updateResp.Data)
+	staleReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/pricing-rules/"+createResp.Data.Rule.ID+"/publish", strings.NewReader(publishBody))
+	staleReq.Header.Set("Content-Type", "application/json")
+	staleRec := httptest.NewRecorder()
+	handler.ServeHTTP(staleRec, staleReq)
+	if staleRec.Code != http.StatusConflict {
+		t.Fatalf("stale publish status = %d body=%s", staleRec.Code, staleRec.Body.String())
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-pricings", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/pricing-rules", nil)
 	listRec := httptest.NewRecorder()
 	handler.ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list pricing status = %d body=%s", listRec.Code, listRec.Body.String())
 	}
 	var listResp struct {
-		Data []controlplane.ModelPricing `json:"data"`
+		Data []controlplane.PricingRule `json:"data"`
 	}
 	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode list pricing: %v", err)
 	}
-	if len(listResp.Data) != 1 || listResp.Data[0].ID != createResp.Data.ID {
+	if len(listResp.Data) != 1 || listResp.Data[0].ID != createResp.Data.Rule.ID {
 		t.Fatalf("list pricing mismatch: %+v", listResp.Data)
 	}
 }
@@ -216,7 +226,7 @@ func TestAdminProviderAccountModelEndpoints(t *testing.T) {
 func TestAdminGovernancePolicyEndpoints(t *testing.T) {
 	handler := newTestHandler(t, RuntimeConfig{})
 
-	createBody := bytes.NewBufferString(`{"name":"Platform policy","scope_type":"global","model_allowlist":["gpt-4o-mini"],"model_denylist":[],"qps_limit":10,"monthly_token_limit":1000000,"monthly_budget_cents":50000,"overage_action":"block","prompt_logging_mode":"metadata_only","retention_days":30,"tool_call_allowed":true,"image_input_allowed":true,"web_access_allowed":false,"status":"active"}`)
+	createBody := bytes.NewBufferString(`{"name":"Platform policy","scope_type":"global","model_allowlist":["gpt-4o-mini"],"model_denylist":[],"qps_limit":10,"monthly_token_limit":1000000,"monthly_budget_micros":50000,"overage_action":"block","prompt_logging_mode":"metadata_only","retention_days":30,"tool_call_allowed":true,"image_input_allowed":true,"web_access_allowed":false,"status":"active"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/policies", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
 	createRec := httptest.NewRecorder()
@@ -234,7 +244,7 @@ func TestAdminGovernancePolicyEndpoints(t *testing.T) {
 		t.Fatalf("created policy mismatch: %+v", createResp.Data)
 	}
 
-	updateBody := bytes.NewBufferString(`{"name":"Platform policy updated","scope_type":"global","model_allowlist":[],"model_denylist":["legacy-model"],"qps_limit":0,"monthly_token_limit":0,"monthly_budget_cents":0,"overage_action":"warn","prompt_logging_mode":"disabled","retention_days":0,"tool_call_allowed":false,"image_input_allowed":true,"web_access_allowed":false,"status":"disabled"}`)
+	updateBody := bytes.NewBufferString(`{"name":"Platform policy updated","scope_type":"global","model_allowlist":[],"model_denylist":["legacy-model"],"qps_limit":0,"monthly_token_limit":0,"monthly_budget_micros":0,"overage_action":"warn","prompt_logging_mode":"disabled","retention_days":0,"tool_call_allowed":false,"image_input_allowed":true,"web_access_allowed":false,"status":"disabled"}`)
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/policies/"+createResp.Data.ID, updateBody)
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
@@ -284,10 +294,10 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthorizeGatewayModel(): %v", err)
 	}
-	if err := control.RecordGatewayUsage(context.Background(), auth, controlplane.GatewayUsageInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-a", InputTokens: 1, CostCents: 100}); err != nil {
+	if err := control.RecordGatewayUsage(context.Background(), auth, controlplane.GatewayUsageInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-a", InputTokens: 1}); err != nil {
 		t.Fatalf("RecordGatewayUsage a: %v", err)
 	}
-	if err := control.RecordGatewayUsage(context.Background(), auth, controlplane.GatewayUsageInput{Model: "model-b", Status: "error", ProviderID: "provider-b", ErrorType: "policy_error", InputTokens: 2, CostCents: 200}); err != nil {
+	if err := control.RecordGatewayUsage(context.Background(), auth, controlplane.GatewayUsageInput{Model: "model-b", Status: "error", ProviderID: "provider-b", ErrorType: "policy_error", InputTokens: 2}); err != nil {
 		t.Fatalf("RecordGatewayUsage b: %v", err)
 	}
 	if err := control.RecordGatewayTrace(context.Background(), auth, controlplane.GatewayTraceInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-a", ResponseSummary: "ok"}); err != nil {
@@ -309,7 +319,7 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthorizeGatewayModel other(): %v", err)
 	}
-	if err := control.RecordGatewayUsage(context.Background(), otherAuth, controlplane.GatewayUsageInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-other", InputTokens: 3, CostCents: 300}); err != nil {
+	if err := control.RecordGatewayUsage(context.Background(), otherAuth, controlplane.GatewayUsageInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-other", InputTokens: 3}); err != nil {
 		t.Fatalf("RecordGatewayUsage other: %v", err)
 	}
 	if err := control.RecordGatewayTrace(context.Background(), otherAuth, controlplane.GatewayTraceInput{Model: "model-a", Status: "forwarded", ProviderID: "provider-other", ResponseSummary: "other"}); err != nil {
@@ -368,7 +378,7 @@ func TestAdminRecordEndpointsSupportQueryParameters(t *testing.T) {
 	if err := json.Unmarshal(costRec.Body.Bytes(), &costResp); err != nil {
 		t.Fatalf("decode cost allocation: %v", err)
 	}
-	if costResp.Data.Dimension != controlplane.CostAllocationByAPIKey || costResp.Data.TotalRequests != 2 || costResp.Data.TotalCostCents != 300 || len(costResp.Data.Rows) != 1 {
+	if costResp.Data.Dimension != controlplane.CostAllocationByAPIKey || costResp.Data.TotalRequests != 2 || costResp.Data.TotalUsageCostMicros != 0 || len(costResp.Data.Rows) != 1 {
 		t.Fatalf("cost allocation mismatch: %+v", costResp.Data)
 	}
 	if costResp.Data.Rows[0].APIKeyID != created.Record.ID || costResp.Data.Rows[0].APIKeyName != "query key" {

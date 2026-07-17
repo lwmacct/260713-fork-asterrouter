@@ -34,14 +34,14 @@ const (
 	AIAttemptDispatchUnknown          = "unknown"
 	AIAttemptDispatchProvenNotCreated = "proven_not_created"
 
-	BillingLedgerEntryTypeUsage = "usage"
-	BillingLedgerStatusApplied  = "applied"
+	BillingLedgerStatusApplied = "applied"
 
-	OutboxStatusPending    = "pending"
-	OutboxStatusPublishing = "publishing"
-	OutboxStatusPublished  = "published"
-	OutboxStatusDeadLetter = "dead_letter"
-	OutboxEventUsage       = "usage.applied"
+	OutboxStatusPending             = "pending"
+	OutboxStatusPublishing          = "publishing"
+	OutboxStatusPublished           = "published"
+	OutboxStatusDeadLetter          = "dead_letter"
+	OutboxEventUsageRecorded        = "usage.recorded.v1"
+	OutboxEventCustomerChargePosted = "customer_charge.posted.v1"
 
 	OutboxDefaultMaxAttempts = 20
 )
@@ -123,17 +123,50 @@ type ProviderTaskReference struct {
 }
 
 type BillingLedgerEntry struct {
-	ID                 string    `json:"id"`
-	OperationID        string    `json:"operation_id"`
-	AttemptID          string    `json:"attempt_id"`
-	UsageVersion       int       `json:"usage_version"`
-	UsageRecordID      string    `json:"usage_record_id"`
-	RequestFingerprint string    `json:"request_fingerprint"`
-	EntryType          string    `json:"entry_type"`
-	AmountCents        int       `json:"amount_cents"`
-	Currency           string    `json:"currency"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	OperationID          string    `json:"operation_id"`
+	AttemptID            string    `json:"attempt_id"`
+	UsageVersion         int       `json:"usage_version"`
+	UsageRecordID        string    `json:"usage_record_id"`
+	RequestFingerprint   string    `json:"request_fingerprint"`
+	Purpose              string    `json:"purpose"`
+	AmountMicros         int64     `json:"amount_micros"`
+	Currency             string    `json:"currency"`
+	PricingEvaluationID  string    `json:"pricing_evaluation_id"`
+	PricingRuleVersionID string    `json:"pricing_rule_version_id"`
+	Status               string    `json:"status"`
+	CreatedAt            time.Time `json:"created_at"`
+}
+
+type UsageSettlement struct {
+	Record         UsageRecord
+	Evaluations    []PricingEvaluation
+	Ledgers        []BillingLedgerEntry
+	OutboxEvents   []TransactionalOutboxEvent
+	PlatformEvents []PlatformUsageDeliveryEvent
+}
+
+type UsageRecordedEvent struct {
+	UsageRecordID   string          `json:"usage_record_id"`
+	OperationID     string          `json:"operation_id"`
+	AttemptID       string          `json:"attempt_id"`
+	UsageVersion    int             `json:"usage_version"`
+	APIKeyID        string          `json:"api_key_id"`
+	CustomerID      string          `json:"customer_id"`
+	InputTokens     int             `json:"input_tokens"`
+	OutputTokens    int             `json:"output_tokens"`
+	UsageDimensions UsageDimensions `json:"usage_dimensions"`
+	UsageCostMicros *int64          `json:"usage_cost_micros,omitempty"`
+	PricingStatus   string          `json:"pricing_status"`
+	Status          string          `json:"status"`
+}
+
+type CustomerChargePostedEvent struct {
+	BillingLedgerID string `json:"billing_ledger_id"`
+	CustomerID      string `json:"customer_id"`
+	AmountMicros    int64  `json:"amount_micros"`
+	Currency        string `json:"currency"`
+	IdempotencyKey  string `json:"idempotency_key"`
 }
 
 type TransactionalOutboxEvent struct {

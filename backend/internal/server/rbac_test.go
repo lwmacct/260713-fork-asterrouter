@@ -364,7 +364,7 @@ func TestAdminRoutesResolveResourceDomains(t *testing.T) {
 		"/api/v1/admin/model-routes":        controlplane.RBACResourceRouting,
 		"/api/v1/admin/provider-accounts":   controlplane.RBACResourceProviders,
 		"/api/v1/admin/api-keys":            controlplane.RBACResourceAPIKeys,
-		"/api/v1/admin/model-pricings":      controlplane.RBACResourceUsage,
+		"/api/v1/admin/pricing-rules":       controlplane.RBACResourceUsage,
 		"/api/v1/admin/gateway-traces":      controlplane.RBACResourceTraces,
 		"/api/v1/admin/alerts":              controlplane.RBACResourceAlerts,
 		"/api/v1/admin/role-bindings":       controlplane.RBACResourceIdentity,

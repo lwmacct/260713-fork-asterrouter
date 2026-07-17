@@ -96,9 +96,6 @@ const (
 	RoutingGroupTypeExclusive       = "exclusive"
 	RoutingGroupTypeImageGeneration = "image_generation"
 	RoutingGroupTypeVideoGeneration = "video_generation"
-
-	ModelPricingStatusActive   = "active"
-	ModelPricingStatusDisabled = "disabled"
 )
 
 type ProviderConnection struct {
@@ -147,9 +144,9 @@ type RoutingGroup struct {
 	RateMultiplier               float64   `json:"rate_multiplier"`
 	RPMLimit                     int       `json:"rpm_limit"`
 	IsExclusive                  bool      `json:"is_exclusive"`
-	DailyBudgetCents             int       `json:"daily_budget_cents"`
-	WeeklyBudgetCents            int       `json:"weekly_budget_cents"`
-	MonthlyBudgetCents           int       `json:"monthly_budget_cents"`
+	DailyBudgetMicros            int64     `json:"daily_budget_micros"`
+	WeeklyBudgetMicros           int64     `json:"weekly_budget_micros"`
+	MonthlyBudgetMicros          int64     `json:"monthly_budget_micros"`
 	ImageEnabled                 bool      `json:"image_enabled"`
 	BatchImageEnabled            bool      `json:"batch_image_enabled"`
 	ImageRateMultiplier          float64   `json:"image_rate_multiplier"`
@@ -182,9 +179,9 @@ type RoutingGroupRequest struct {
 	RateMultiplier               float64 `json:"rate_multiplier"`
 	RPMLimit                     int     `json:"rpm_limit"`
 	IsExclusive                  bool    `json:"is_exclusive"`
-	DailyBudgetCents             int     `json:"daily_budget_cents"`
-	WeeklyBudgetCents            int     `json:"weekly_budget_cents"`
-	MonthlyBudgetCents           int     `json:"monthly_budget_cents"`
+	DailyBudgetMicros            int64   `json:"daily_budget_micros"`
+	WeeklyBudgetMicros           int64   `json:"weekly_budget_micros"`
+	MonthlyBudgetMicros          int64   `json:"monthly_budget_micros"`
 	ImageEnabled                 bool    `json:"image_enabled"`
 	BatchImageEnabled            bool    `json:"batch_image_enabled"`
 	ImageRateMultiplier          float64 `json:"image_rate_multiplier"`
@@ -302,25 +299,6 @@ type ProviderAccountHealthCheck struct {
 	CheckedAt  time.Time `json:"checked_at"`
 }
 
-type ModelPricing struct {
-	ID                          string    `json:"id"`
-	Model                       string    `json:"model"`
-	Currency                    string    `json:"currency"`
-	InputPriceCentsPer1MTokens  int       `json:"input_price_cents_per_1m_tokens"`
-	OutputPriceCentsPer1MTokens int       `json:"output_price_cents_per_1m_tokens"`
-	Status                      string    `json:"status"`
-	CreatedAt                   time.Time `json:"created_at"`
-	UpdatedAt                   time.Time `json:"updated_at"`
-}
-
-type ModelPricingRequest struct {
-	Model                       string `json:"model"`
-	Currency                    string `json:"currency"`
-	InputPriceCentsPer1MTokens  int    `json:"input_price_cents_per_1m_tokens"`
-	OutputPriceCentsPer1MTokens int    `json:"output_price_cents_per_1m_tokens"`
-	Status                      string `json:"status"`
-}
-
 type APIKeyRecord struct {
 	ID                       string     `json:"id"`
 	Name                     string     `json:"name"`
@@ -347,7 +325,7 @@ type APIKeyRecord struct {
 	TPMLimit                 int        `json:"tpm_limit"`
 	ConcurrencyLimit         int        `json:"concurrency_limit"`
 	MonthlyTokenLimit        int        `json:"monthly_token_limit"`
-	MonthlyBudgetCents       int        `json:"monthly_budget_cents"`
+	MonthlyBudgetMicros      int64      `json:"monthly_budget_micros"`
 	MonthlyImageLimit        int        `json:"monthly_image_limit"`
 	MonthlyVideoSecondsLimit int        `json:"monthly_video_seconds_limit"`
 	MonthlyAudioSecondsLimit int        `json:"monthly_audio_seconds_limit"`
@@ -378,7 +356,7 @@ type APIKeyCreateRequest struct {
 	TPMLimit                 int      `json:"tpm_limit"`
 	ConcurrencyLimit         int      `json:"concurrency_limit"`
 	MonthlyTokenLimit        int      `json:"monthly_token_limit"`
-	MonthlyBudgetCents       int      `json:"monthly_budget_cents"`
+	MonthlyBudgetMicros      int64    `json:"monthly_budget_micros"`
 	MonthlyImageLimit        int      `json:"monthly_image_limit"`
 	MonthlyVideoSecondsLimit int      `json:"monthly_video_seconds_limit"`
 	MonthlyAudioSecondsLimit int      `json:"monthly_audio_seconds_limit"`
@@ -406,7 +384,7 @@ type APIKeyUpdateRequest struct {
 	TPMLimit                 int      `json:"tpm_limit"`
 	ConcurrencyLimit         int      `json:"concurrency_limit"`
 	MonthlyTokenLimit        int      `json:"monthly_token_limit"`
-	MonthlyBudgetCents       int      `json:"monthly_budget_cents"`
+	MonthlyBudgetMicros      int64    `json:"monthly_budget_micros"`
 	MonthlyImageLimit        int      `json:"monthly_image_limit"`
 	MonthlyVideoSecondsLimit int      `json:"monthly_video_seconds_limit"`
 	MonthlyAudioSecondsLimit int      `json:"monthly_audio_seconds_limit"`
@@ -668,7 +646,10 @@ type UsageRecord struct {
 	ProcurementCostConfidence string          `json:"procurement_cost_confidence"`
 	ProcurementPriceID        string          `json:"procurement_price_id"`
 	ProviderBillingLineID     string          `json:"provider_billing_line_id"`
-	CostCents                 int             `json:"cost_cents"`
+	UsageCostMicros           *int64          `json:"usage_cost_micros,omitempty"`
+	UsageCostCurrency         string          `json:"usage_cost_currency"`
+	UsagePricingEvaluationID  string          `json:"usage_pricing_evaluation_id"`
+	PricingStatus             string          `json:"pricing_status"`
 	CreatedAt                 time.Time       `json:"created_at"`
 }
 
@@ -680,74 +661,82 @@ type UsageModelSummary struct {
 	OutputImages      int64  `json:"output_images"`
 	VideoMilliseconds int64  `json:"video_milliseconds"`
 	AudioMilliseconds int64  `json:"audio_milliseconds"`
-	CostCents         int    `json:"cost_cents"`
+	UsageCostMicros   int64  `json:"usage_cost_micros"`
 	AvgLatency        int64  `json:"avg_latency_ms"`
 }
 
 type UsageReport struct {
-	TotalRequests      int                 `json:"total_requests"`
-	ErrorRequests      int                 `json:"error_requests"`
-	TotalTokens        int                 `json:"total_tokens"`
-	TotalOutputImages  int64               `json:"total_output_images"`
-	TotalVideoDuration int64               `json:"total_video_milliseconds"`
-	TotalAudioDuration int64               `json:"total_audio_milliseconds"`
-	TotalCostCents     int                 `json:"total_cost_cents"`
-	AvgLatencyMS       int64               `json:"avg_latency_ms"`
-	ByModel            []UsageModelSummary `json:"by_model"`
-	Recent             []UsageRecord       `json:"recent"`
+	TotalRequests        int                 `json:"total_requests"`
+	ErrorRequests        int                 `json:"error_requests"`
+	TotalTokens          int                 `json:"total_tokens"`
+	TotalOutputImages    int64               `json:"total_output_images"`
+	TotalVideoDuration   int64               `json:"total_video_milliseconds"`
+	TotalAudioDuration   int64               `json:"total_audio_milliseconds"`
+	TotalUsageCostMicros int64               `json:"total_usage_cost_micros"`
+	PricedRequests       int                 `json:"priced_requests"`
+	UnpricedRequests     int                 `json:"unpriced_requests"`
+	DisputedRequests     int                 `json:"disputed_requests"`
+	CostAvailable        bool                `json:"cost_available"`
+	AvgLatencyMS         int64               `json:"avg_latency_ms"`
+	ByModel              []UsageModelSummary `json:"by_model"`
+	Recent               []UsageRecord       `json:"recent"`
 }
 
 type UsageAggregate struct {
-	TotalRequests      int
-	ErrorRequests      int
-	TotalTokens        int
-	TotalOutputImages  int64
-	TotalVideoDuration int64
-	TotalAudioDuration int64
-	TotalCostCents     int
-	AvgLatencyMS       int64
-	ByModel            []UsageModelSummary
+	TotalRequests        int
+	ErrorRequests        int
+	TotalTokens          int
+	TotalOutputImages    int64
+	TotalVideoDuration   int64
+	TotalAudioDuration   int64
+	TotalUsageCostMicros int64
+	PricedRequests       int
+	UnpricedRequests     int
+	DisputedRequests     int
+	CostAvailable        bool
+	AvgLatencyMS         int64
+	ByModel              []UsageModelSummary
 }
 
 type CostAllocationRollup struct {
-	ResourceID     string
-	APIKeyID       string
-	APIFingerprint string
-	Model          string
-	Requests       int
-	ErrorRequests  int
-	TotalTokens    int
-	TotalCostCents int
-	AvgLatencyMS   int64
-	LatencyTotal   int64
+	ResourceID           string
+	APIKeyID             string
+	APIFingerprint       string
+	Model                string
+	Requests             int
+	ErrorRequests        int
+	TotalTokens          int
+	TotalUsageCostMicros int64
+	AvgLatencyMS         int64
+	LatencyTotal         int64
 }
 
 type CostAllocationRow struct {
-	Dimension         string  `json:"dimension"`
-	ResourceID        string  `json:"resource_id"`
-	ResourceName      string  `json:"resource_name"`
-	APIKeyID          string  `json:"api_key_id"`
-	APIKeyName        string  `json:"api_key_name"`
-	APIFingerprint    string  `json:"api_fingerprint"`
-	Model             string  `json:"model"`
-	Requests          int     `json:"requests"`
-	ErrorRequests     int     `json:"error_requests"`
-	TotalTokens       int     `json:"total_tokens"`
-	TotalCostCents    int     `json:"total_cost_cents"`
-	AvgLatencyMS      int64   `json:"avg_latency_ms"`
-	BudgetCents       int     `json:"budget_cents"`
-	BudgetUsedPercent float64 `json:"budget_used_percent"`
-	CostSharePercent  float64 `json:"cost_share_percent"`
+	Dimension            string  `json:"dimension"`
+	ResourceID           string  `json:"resource_id"`
+	ResourceName         string  `json:"resource_name"`
+	APIKeyID             string  `json:"api_key_id"`
+	APIKeyName           string  `json:"api_key_name"`
+	APIFingerprint       string  `json:"api_fingerprint"`
+	Model                string  `json:"model"`
+	Requests             int     `json:"requests"`
+	ErrorRequests        int     `json:"error_requests"`
+	TotalTokens          int     `json:"total_tokens"`
+	TotalUsageCostMicros int64   `json:"total_usage_cost_micros"`
+	AvgLatencyMS         int64   `json:"avg_latency_ms"`
+	BudgetMicros         int64   `json:"budget_micros"`
+	BudgetUsedPercent    float64 `json:"budget_used_percent"`
+	CostSharePercent     float64 `json:"cost_share_percent"`
 }
 
 type CostAllocationReport struct {
-	Dimension      string              `json:"dimension"`
-	TotalRequests  int                 `json:"total_requests"`
-	ErrorRequests  int                 `json:"error_requests"`
-	TotalTokens    int                 `json:"total_tokens"`
-	TotalCostCents int                 `json:"total_cost_cents"`
-	AvgLatencyMS   int64               `json:"avg_latency_ms"`
-	Rows           []CostAllocationRow `json:"rows"`
+	Dimension            string              `json:"dimension"`
+	TotalRequests        int                 `json:"total_requests"`
+	ErrorRequests        int                 `json:"error_requests"`
+	TotalTokens          int                 `json:"total_tokens"`
+	TotalUsageCostMicros int64               `json:"total_usage_cost_micros"`
+	AvgLatencyMS         int64               `json:"avg_latency_ms"`
+	Rows                 []CostAllocationRow `json:"rows"`
 }
 
 type UsageQuery struct {

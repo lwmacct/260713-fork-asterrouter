@@ -14,10 +14,10 @@ import (
 func TestOperatorBusinessLifecycle(t *testing.T) {
 	handler := newTestHandler(t, RuntimeConfig{})
 	group := operatorPost[operatorcore.CustomerGroup](t, handler, "/api/v1/operator/customer-groups", `{"name":"Standard","status":"active"}`)
-	plan := operatorPost[operatorcore.Plan](t, handler, "/api/v1/operator/plans", `{"name":"Starter","included_tokens":1000000,"monthly_limit_cents":1000,"rate_multiplier":1,"status":"active"}`)
-	customerBody := `{"name":"Customer A","email":"a@example.com","group_id":"` + group.ID + `","plan_id":"` + plan.ID + `","credit_cents":500,"status":"active"}`
+	plan := operatorPost[operatorcore.Plan](t, handler, "/api/v1/operator/plans", `{"name":"Starter","included_tokens":1000000,"monthly_limit_micros":1000,"status":"active"}`)
+	customerBody := `{"name":"Customer A","email":"a@example.com","group_id":"` + group.ID + `","plan_id":"` + plan.ID + `","credit_micros":500,"status":"active"}`
 	customer := operatorPost[operatorcore.Customer](t, handler, "/api/v1/operator/customers", customerBody)
-	entry := operatorPost[operatorcore.BalanceEntry](t, handler, "/api/v1/operator/balance-entries", `{"customer_id":"`+customer.ID+`","kind":"allocation_increase","amount_cents":2500,"note":"initial allocation"}`)
+	entry := operatorPost[operatorcore.BalanceEntry](t, handler, "/api/v1/operator/balance-entries", `{"customer_id":"`+customer.ID+`","kind":"allocation_increase","amount_micros":2500,"note":"initial allocation"}`)
 	if entry.BalanceAfter != 2500 {
 		t.Fatalf("balance = %+v", entry)
 	}
@@ -25,7 +25,7 @@ func TestOperatorBusinessLifecycle(t *testing.T) {
 	if key.Record.CustomerID != customer.ID || key.Record.KeyType != controlplane.APIKeyTypeCustomer || key.Key == "" {
 		t.Fatalf("customer key = %+v", key)
 	}
-	operatorPost[operatorcore.PricingRule](t, handler, "/api/v1/operator/pricing-rules", `{"name":"GPT price","plan_id":"`+plan.ID+`","model":"gpt-5","input_price_cents_per_1m_tokens":100,"output_price_cents_per_1m_tokens":500,"rate_multiplier":1,"status":"active"}`)
+	operatorPost[controlplane.PricingRuleDetail](t, handler, "/api/v1/operator/pricing-rules", `{"name":"GPT price","purpose":"customer_charge","scope_type":"operator_plan","scope_id":"`+plan.ID+`","model":"*","currency":"USD","authoring_mode":"raw","expression":"v1: fixed_line(\"charge\", \"request\", 0)","test_cases":[]}`)
 	operatorPost[operatorcore.RiskRule](t, handler, "/api/v1/operator/risk-rules", `{"name":"Burst traffic","rule_type":"rpm","threshold":100,"window_minutes":5,"action":"review","status":"active"}`)
 	operatorPost[operatorcore.Notice](t, handler, "/api/v1/operator/notices", `{"title":"Maintenance","content":"Scheduled maintenance","audience":"all","status":"published"}`)
 
@@ -39,7 +39,7 @@ func TestOperatorBusinessLifecycle(t *testing.T) {
 		Data operatorcore.Dashboard `json:"data"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &dashboard)
-	if dashboard.Data.Customers != 1 || dashboard.Data.Plans != 1 || dashboard.Data.BalanceCents != 2500 || dashboard.Data.RiskRules != 1 || dashboard.Data.PublishedNotice != 1 {
+	if dashboard.Data.Customers != 1 || dashboard.Data.Plans != 1 || dashboard.Data.BalanceMicros != 2500 || dashboard.Data.RiskRules != 1 || dashboard.Data.PublishedNotice != 1 {
 		t.Fatalf("dashboard=%+v", dashboard.Data)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/cryptoutil"
+	"github.com/astercloud/asterrouter/backend/internal/pricing"
 )
 
 const systemActor = "system"
@@ -47,7 +48,8 @@ type Service struct {
 	now                            func() time.Time
 	alertDispatcher                AlertDispatcher
 	customerNotificationDispatcher CustomerNotificationDispatcher
-	usageObserver                  UsageObserver
+	pricingEngine                  *pricing.Engine
+	customerPricingResolver        CustomerPricingContextResolver
 	credentialCapacityStore        CredentialCapacityStore
 	providerCapacityMu             sync.RWMutex
 	providerCapacityStore          ProviderCapacityStore
@@ -79,19 +81,16 @@ type Service struct {
 	scheduler                      *gatewayScheduler
 }
 
+func (s *Service) SetCustomerPricingContextResolver(resolver CustomerPricingContextResolver) {
+	s.customerPricingResolver = resolver
+}
+
 type AlertDispatcher interface {
 	DispatchAlert(ctx context.Context, event AlertEvent) error
 }
 
 type CustomerNotificationDispatcher interface {
 	DispatchCustomerNotification(ctx context.Context, user WorkspaceUser, notification CustomerNotification) error
-}
-
-// UsageObserver receives a usage record after it has been durably saved by the
-// control plane. Implementations must be idempotent because delivery can be
-// retried after a process restart.
-type UsageObserver interface {
-	OnGatewayUsage(ctx context.Context, record UsageRecord) error
 }
 
 func NewService(repo Repository, gatewayPath string, secretKey ...string) *Service {
@@ -103,7 +102,7 @@ func NewService(repo Repository, gatewayPath string, secretKey ...string) *Servi
 		key = strings.TrimSpace(secretKey[0])
 	}
 	capacityStore, _ := repo.(CredentialCapacityStore)
-	return &Service{repo: repo, gatewayPath: gatewayPath, secretKey: key, now: time.Now, rateWindows: map[string][]time.Time{}, credentialCapacityStore: capacityStore, externalAuthJWKSFetcher: fetchExternalAuthJWKS, externalAuthJWKSCache: map[string]externalAuthJWKSCacheEntry{}, platformUsageHTTPClient: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+	return &Service{repo: repo, gatewayPath: gatewayPath, secretKey: key, now: time.Now, pricingEngine: pricing.NewEngine(), rateWindows: map[string][]time.Time{}, credentialCapacityStore: capacityStore, externalAuthJWKSFetcher: fetchExternalAuthJWKS, externalAuthJWKSCache: map[string]externalAuthJWKSCacheEntry{}, platformUsageHTTPClient: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("platform usage sink redirects are not allowed")
 	}}, providerCacheProbeHTTPClient: &http.Client{Timeout: providerProbeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("provider cache probe redirects are not allowed")
@@ -169,10 +168,6 @@ func (s *Service) SetAlertDispatcher(dispatcher AlertDispatcher) {
 
 func (s *Service) SetCustomerNotificationDispatcher(dispatcher CustomerNotificationDispatcher) {
 	s.customerNotificationDispatcher = dispatcher
-}
-
-func (s *Service) SetUsageObserver(observer UsageObserver) {
-	s.usageObserver = observer
 }
 
 func (s *Service) SetRoutingAffinityCoordinator(coordinator RoutingAffinityCoordinator) {
@@ -1197,7 +1192,7 @@ func (s *Service) AuthorizeGatewayCredential(ctx context.Context, rawKey, signed
 
 func (s *Service) EnforceGatewayPolicy(ctx context.Context, auth GatewayAuthContext) error {
 	now := s.nowUTC()
-	if err := s.enforceGatewayOngoingPolicy(ctx, auth, now); err != nil {
+	if err := s.enforceGatewayOngoingPolicy(ctx, auth, now, false); err != nil {
 		return err
 	}
 	qpsLimit := auth.effectiveQPSLimit()
@@ -1212,10 +1207,10 @@ func (s *Service) EnforceGatewayPolicy(ctx context.Context, auth GatewayAuthCont
 // EnforceGatewayOngoingPolicy rechecks usage-based limits for a long-lived
 // admitted request without consuming another QPS admission slot.
 func (s *Service) EnforceGatewayOngoingPolicy(ctx context.Context, auth GatewayAuthContext) error {
-	return s.enforceGatewayOngoingPolicy(ctx, auth, s.nowUTC())
+	return s.enforceGatewayOngoingPolicy(ctx, auth, s.nowUTC(), true)
 }
 
-func (s *Service) enforceGatewayOngoingPolicy(ctx context.Context, auth GatewayAuthContext, now time.Time) error {
+func (s *Service) enforceGatewayOngoingPolicy(ctx context.Context, auth GatewayAuthContext, now time.Time, checkBudget bool) error {
 	if _, blocked, err := s.repo.FindActiveGatewayRiskBlock(ctx, auth.APIKey.ID, now); err != nil {
 		return err
 	} else if blocked {
@@ -1235,13 +1230,13 @@ func (s *Service) enforceGatewayOngoingPolicy(ctx context.Context, auth GatewayA
 			}
 		}
 	}
-	monthlyBudgetCents := auth.effectiveMonthlyBudgetCents()
-	if monthlyBudgetCents > 0 {
-		used, err := s.repo.SumUsageCostCentsByAPIKeySince(ctx, auth.APIKey.ID, currentMonth)
+	monthlyBudgetMicros := auth.effectiveMonthlyBudgetMicros()
+	if checkBudget && monthlyBudgetMicros > 0 {
+		used, err := s.repo.SumUsageCostMicrosByAPIKeySince(ctx, auth.APIKey.ID, currentMonth)
 		if err != nil {
 			return err
 		}
-		if used >= monthlyBudgetCents {
+		if used >= int64(monthlyBudgetMicros) {
 			_ = s.syncAPIKeyBudgetAlert(ctx, auth, used, now)
 			if auth.shouldBlockOverage() {
 				return ErrGatewayBudgetExceeded
@@ -1354,7 +1349,6 @@ type GatewayUsageInput struct {
 	ProcurementPriceID          string
 	ProviderBillingLineID       string
 	SkipProcurementCostEstimate bool
-	CostCents                   int
 }
 
 type GatewayTraceInput struct {
@@ -1388,12 +1382,6 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 	status := strings.TrimSpace(in.Status)
 	if status == "" {
 		status = "accepted"
-	}
-	costCents := nonNegative(in.CostCents)
-	if costCents == 0 && (in.InputTokens > 0 || in.OutputTokens > 0) {
-		if estimated, ok, err := s.EstimateModelUsageCostCents(ctx, in.Model, in.InputTokens, in.OutputTokens); err == nil && ok {
-			costCents = estimated
-		}
 	}
 	procurementCostMicros := nonNegativeInt64Pointer(in.ProcurementCostMicros)
 	procurementCostCurrency := strings.ToUpper(strings.TrimSpace(in.ProcurementCostCurrency))
@@ -1461,25 +1449,32 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 		ProcurementCostConfidence: procurementCostConfidence,
 		ProcurementPriceID:        procurementPriceID,
 		ProviderBillingLineID:     strings.TrimSpace(in.ProviderBillingLineID),
-		CostCents:                 costCents,
+		UsageCostCurrency:         pricing.CurrencyUSD,
+		PricingStatus:             "unpriced",
 		CreatedAt:                 s.nowUTC(),
 	}
 	applyGatewayPlatformSnapshotToUsage(&record, auth)
 	if record.OperationID != "" {
 		record.ID = "usage_" + usageLedgerDigest(record)
 	}
+	applied := true
+	var settlement UsageSettlement
+	if record.OperationID == "" {
+	} else {
+		var settlementErr error
+		settlement, settlementErr = s.buildUsageSettlement(ctx, record)
+		if settlementErr != nil {
+			return settlementErr
+		}
+		record = settlement.Record
+	}
 	events, err := s.platformUsageDeliveryEventsForRecord(ctx, record)
 	if err != nil {
 		return err
 	}
-	applied := true
 	if record.OperationID != "" {
-		billing, outbox, ledgerErr := usageLedgerRecords(record)
-		if ledgerErr != nil {
-			return ledgerErr
-		}
-		record.ID = billing.UsageRecordID
-		applied, err = s.repo.ApplyUsageLedger(ctx, record, billing, outbox, events)
+		settlement.PlatformEvents = events
+		applied, err = s.repo.ApplyUsageSettlement(ctx, settlement)
 	} else if len(events) > 0 {
 		err = s.repo.SaveUsageRecordAndEnqueuePlatformUsage(ctx, record, events)
 	} else {
@@ -1491,16 +1486,11 @@ func (s *Service) RecordGatewayUsage(ctx context.Context, auth GatewayAuthContex
 	if !applied {
 		return nil
 	}
-	if s.usageObserver != nil {
-		if err := s.usageObserver.OnGatewayUsage(ctx, record); err != nil {
-			_ = s.audit(ctx, systemActor, "usage_observer_error", "usage_record", record.ID, err.Error())
-		}
-	}
 	_ = s.syncCustomerUsageNotifications(ctx, auth, record)
 	if auth.effectiveMonthlyTokenLimit() > 0 && (in.InputTokens > 0 || in.OutputTokens > 0) {
 		_ = s.syncAPIKeyQuotaAlertForAuth(ctx, auth, record.CreatedAt)
 	}
-	if auth.effectiveMonthlyBudgetCents() > 0 && costCents > 0 {
+	if auth.effectiveMonthlyBudgetMicros() > 0 && record.UsageCostMicros != nil && *record.UsageCostMicros > 0 {
 		_ = s.syncAPIKeyBudgetAlertForAuth(ctx, auth, record.CreatedAt)
 	}
 	_ = s.syncGatewayErrorRateAlert(ctx, auth)
@@ -1600,7 +1590,7 @@ type gatewayTracePolicySnapshot struct {
 	Version             int    `json:"version"`
 	QPSLimit            int    `json:"qps_limit"`
 	MonthlyTokenLimit   int    `json:"monthly_token_limit"`
-	MonthlyBudgetCents  int    `json:"monthly_budget_cents"`
+	MonthlyBudgetMicros int64  `json:"monthly_budget_micros"`
 	OverageAction       string `json:"overage_action"`
 	PromptLoggingMode   string `json:"prompt_logging_mode"`
 	RetentionDays       int    `json:"retention_days"`
@@ -1620,7 +1610,7 @@ func gatewayTracePolicyEvidence(auth GatewayAuthContext) (string, string, string
 		Version:             version,
 		QPSLimit:            auth.effectiveQPSLimit(),
 		MonthlyTokenLimit:   auth.effectiveMonthlyTokenLimit(),
-		MonthlyBudgetCents:  auth.effectiveMonthlyBudgetCents(),
+		MonthlyBudgetMicros: auth.effectiveMonthlyBudgetMicros(),
 		OverageAction:       strings.TrimSpace(auth.Policy.OverageAction),
 		PromptLoggingMode:   strings.TrimSpace(auth.Policy.PromptLoggingMode),
 		RetentionDays:       nonNegative(auth.Policy.RetentionDays),
@@ -1665,13 +1655,14 @@ func (s *Service) UsageReportQuery(ctx context.Context, query UsageQuery) (Usage
 	return UsageReport{
 		TotalRequests: aggregate.TotalRequests, ErrorRequests: aggregate.ErrorRequests, TotalTokens: aggregate.TotalTokens,
 		TotalOutputImages: aggregate.TotalOutputImages, TotalVideoDuration: aggregate.TotalVideoDuration,
-		TotalAudioDuration: aggregate.TotalAudioDuration, TotalCostCents: aggregate.TotalCostCents,
-		AvgLatencyMS: aggregate.AvgLatencyMS, ByModel: aggregate.ByModel, Recent: records,
+		TotalAudioDuration: aggregate.TotalAudioDuration, TotalUsageCostMicros: aggregate.TotalUsageCostMicros,
+		PricedRequests: aggregate.PricedRequests, UnpricedRequests: aggregate.UnpricedRequests, DisputedRequests: aggregate.DisputedRequests,
+		CostAvailable: aggregate.CostAvailable, AvgLatencyMS: aggregate.AvgLatencyMS, ByModel: aggregate.ByModel, Recent: records,
 	}, nil
 }
 
 func usageAggregateFromRecords(records []UsageRecord) UsageAggregate {
-	aggregate := UsageAggregate{}
+	aggregate := UsageAggregate{CostAvailable: len(records) > 0}
 	byModel := map[string]*usageAccumulator{}
 	var latencyTotal int64
 	for _, record := range records {
@@ -1685,7 +1676,19 @@ func usageAggregateFromRecords(records []UsageRecord) UsageAggregate {
 		aggregate.TotalOutputImages = saturatingUsageAdd(aggregate.TotalOutputImages, dimensions.OutputImages)
 		aggregate.TotalVideoDuration = saturatingUsageAdd(aggregate.TotalVideoDuration, dimensions.VideoMilliseconds)
 		aggregate.TotalAudioDuration = saturatingUsageAdd(aggregate.TotalAudioDuration, dimensions.AudioMilliseconds)
-		aggregate.TotalCostCents += record.CostCents
+		switch record.PricingStatus {
+		case "priced", "free":
+			aggregate.PricedRequests++
+			if record.UsageCostMicros != nil {
+				aggregate.TotalUsageCostMicros += *record.UsageCostMicros
+			}
+		case "disputed":
+			aggregate.DisputedRequests++
+			aggregate.CostAvailable = false
+		default:
+			aggregate.UnpricedRequests++
+			aggregate.CostAvailable = false
+		}
 		latencyTotal += record.LatencyMS
 		acc := byModel[record.Model]
 		if acc == nil {
@@ -1700,7 +1703,9 @@ func usageAggregateFromRecords(records []UsageRecord) UsageAggregate {
 		acc.outputImages = saturatingUsageAdd(acc.outputImages, dimensions.OutputImages)
 		acc.videoMilliseconds = saturatingUsageAdd(acc.videoMilliseconds, dimensions.VideoMilliseconds)
 		acc.audioMilliseconds = saturatingUsageAdd(acc.audioMilliseconds, dimensions.AudioMilliseconds)
-		acc.costCents += record.CostCents
+		if record.UsageCostMicros != nil {
+			acc.usageCostMicros += *record.UsageCostMicros
+		}
 		acc.latencyTotal += record.LatencyMS
 	}
 	if aggregate.TotalRequests > 0 {
@@ -1718,7 +1723,7 @@ type usageAccumulator struct {
 	outputImages      int64
 	videoMilliseconds int64
 	audioMilliseconds int64
-	costCents         int
+	usageCostMicros   int64
 	latencyTotal      int64
 }
 
@@ -2257,10 +2262,14 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 	if req.RPMLimit < 0 {
 		return RoutingGroup{}, errors.New("rpm_limit must be greater than or equal to 0")
 	}
+	if err := validateNonNegativeInt64Fields(map[string]int64{
+		"daily_budget_micros":   req.DailyBudgetMicros,
+		"weekly_budget_micros":  req.WeeklyBudgetMicros,
+		"monthly_budget_micros": req.MonthlyBudgetMicros,
+	}); err != nil {
+		return RoutingGroup{}, err
+	}
 	if err := validateNonNegativeIntFields(map[string]int{
-		"daily_budget_cents":      req.DailyBudgetCents,
-		"weekly_budget_cents":     req.WeeklyBudgetCents,
-		"monthly_budget_cents":    req.MonthlyBudgetCents,
 		"image_price_1k_cents":    req.ImagePrice1KCents,
 		"image_price_2k_cents":    req.ImagePrice2KCents,
 		"image_price_4k_cents":    req.ImagePrice4KCents,
@@ -2295,9 +2304,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		return RoutingGroup{}, err
 	}
 	isExclusive := req.IsExclusive
-	dailyBudgetCents := req.DailyBudgetCents
-	weeklyBudgetCents := req.WeeklyBudgetCents
-	monthlyBudgetCents := req.MonthlyBudgetCents
+	dailyBudgetMicros := req.DailyBudgetMicros
+	weeklyBudgetMicros := req.WeeklyBudgetMicros
+	monthlyBudgetMicros := req.MonthlyBudgetMicros
 	imageEnabled := req.ImageEnabled
 	batchImageEnabled := req.BatchImageEnabled
 	imagePrice1KCents := req.ImagePrice1KCents
@@ -2310,9 +2319,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 	peakRateEnabled := req.PeakRateEnabled
 	switch groupType {
 	case RoutingGroupTypeStandard:
-		dailyBudgetCents = 0
-		weeklyBudgetCents = 0
-		monthlyBudgetCents = 0
+		dailyBudgetMicros = 0
+		weeklyBudgetMicros = 0
+		monthlyBudgetMicros = 0
 		imageEnabled = false
 		batchImageEnabled = false
 		imagePrice1KCents = 0
@@ -2324,7 +2333,7 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		videoPrice1080PCents = 0
 		peakRateEnabled = false
 	case RoutingGroupTypeSubscription:
-		if req.DailyBudgetCents == 0 && req.WeeklyBudgetCents == 0 && req.MonthlyBudgetCents == 0 {
+		if req.DailyBudgetMicros == 0 && req.WeeklyBudgetMicros == 0 && req.MonthlyBudgetMicros == 0 {
 			return RoutingGroup{}, errors.New("subscription groups require at least one budget limit")
 		}
 		imageEnabled = false
@@ -2338,9 +2347,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		videoPrice1080PCents = 0
 	case RoutingGroupTypeExclusive:
 		isExclusive = true
-		dailyBudgetCents = 0
-		weeklyBudgetCents = 0
-		monthlyBudgetCents = 0
+		dailyBudgetMicros = 0
+		weeklyBudgetMicros = 0
+		monthlyBudgetMicros = 0
 		imageEnabled = false
 		batchImageEnabled = false
 		imagePrice1KCents = 0
@@ -2352,9 +2361,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		videoPrice1080PCents = 0
 		peakRateEnabled = false
 	case RoutingGroupTypeImageGeneration:
-		dailyBudgetCents = 0
-		weeklyBudgetCents = 0
-		monthlyBudgetCents = 0
+		dailyBudgetMicros = 0
+		weeklyBudgetMicros = 0
+		monthlyBudgetMicros = 0
 		imageEnabled = true
 		videoEnabled = false
 		videoPrice480PCents = 0
@@ -2362,9 +2371,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		videoPrice1080PCents = 0
 		peakRateEnabled = false
 	case RoutingGroupTypeVideoGeneration:
-		dailyBudgetCents = 0
-		weeklyBudgetCents = 0
-		monthlyBudgetCents = 0
+		dailyBudgetMicros = 0
+		weeklyBudgetMicros = 0
+		monthlyBudgetMicros = 0
 		videoEnabled = true
 		imageEnabled = false
 		batchImageEnabled = false
@@ -2391,9 +2400,9 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 		RateMultiplier:               rateMultiplier,
 		RPMLimit:                     req.RPMLimit,
 		IsExclusive:                  isExclusive,
-		DailyBudgetCents:             dailyBudgetCents,
-		WeeklyBudgetCents:            weeklyBudgetCents,
-		MonthlyBudgetCents:           monthlyBudgetCents,
+		DailyBudgetMicros:            dailyBudgetMicros,
+		WeeklyBudgetMicros:           weeklyBudgetMicros,
+		MonthlyBudgetMicros:          monthlyBudgetMicros,
 		ImageEnabled:                 imageEnabled,
 		BatchImageEnabled:            batchImageEnabled,
 		ImageRateMultiplier:          imageRateMultiplier,
@@ -2418,6 +2427,15 @@ func routingGroupFromRequest(req RoutingGroupRequest, now time.Time) (RoutingGro
 }
 
 func validateNonNegativeIntFields(values map[string]int) error {
+	for name, value := range values {
+		if value < 0 {
+			return fmt.Errorf("%s must be greater than or equal to 0", name)
+		}
+	}
+	return nil
+}
+
+func validateNonNegativeInt64Fields(values map[string]int64) error {
 	for name, value := range values {
 		if value < 0 {
 			return fmt.Errorf("%s must be greater than or equal to 0", name)
@@ -2644,7 +2662,7 @@ func usageSummaries(values map[string]*usageAccumulator) []UsageModelSummary {
 			OutputImages:      value.outputImages,
 			VideoMilliseconds: value.videoMilliseconds,
 			AudioMilliseconds: value.audioMilliseconds,
-			CostCents:         value.costCents,
+			UsageCostMicros:   value.usageCostMicros,
 			AvgLatency:        avgLatency,
 		})
 	}
@@ -2658,6 +2676,13 @@ func usageSummaries(values map[string]*usageAccumulator) []UsageModelSummary {
 }
 
 func nonNegative(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func nonNegativeInt64(value int64) int64 {
 	if value < 0 {
 		return 0
 	}

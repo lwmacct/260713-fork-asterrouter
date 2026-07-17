@@ -48,7 +48,7 @@ func TestPlatformUsageSinkEnqueuesAndDeliversSignedUsageWithoutSensitiveContent(
 		t.Fatalf("CreatePlatformUsageSink() response=%+v", created)
 	}
 	auth := GatewayAuthContext{APIKey: APIKeyRecord{ID: "synthetic-subject", Fingerprint: "subject-fp", ProfileScope: ProfileScopePlatform, PlatformTenantID: identity.tenant.ID, GatewayPrincipalID: identity.principal.ID}, PlatformTenant: &identity.tenant, GatewayPrincipal: &identity.principal, ExternalAuthIntegration: &integration.Record, ExternalSubjectReference: "opaque-subject"}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 12, OutputTokens: 8, CostCents: 3, UsageDimensions: UsageDimensions{UsageDimensionOutputImages: {Quantity: 2, Unit: UsageUnitCount, Source: "core_artifact", Confidence: UsageConfidenceObserved}}}); err != nil {
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 12, OutputTokens: 8, UsageDimensions: UsageDimensions{UsageDimensionOutputImages: {Quantity: 2, Unit: UsageUnitCount, Source: "core_artifact", Confidence: UsageConfidenceObserved}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeliverDuePlatformUsage(ctx, 10); err != nil {
@@ -144,7 +144,7 @@ func TestPlatformUsageSinkLifecycleAndDurableEvents(t *testing.T) {
 		APIKey:         APIKeyRecord{ID: "synthetic-subject", Fingerprint: "subject-fp", ProfileScope: ProfileScopePlatform, PlatformTenantID: identity.tenant.ID, GatewayPrincipalID: identity.principal.ID, QPSLimit: 1, MonthlyTokenLimit: 1},
 		PlatformTenant: &identity.tenant, GatewayPrincipal: &identity.principal, ExternalAuthIntegration: &integration.Record, ExternalSubjectReference: "opaque-subject",
 	}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 12, OutputTokens: 8, CostCents: 3, UsageDimensions: UsageDimensions{UsageDimensionOutputAudioMilliseconds: {Quantity: 1500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}}); err != nil {
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 12, OutputTokens: 8, UsageDimensions: UsageDimensions{UsageDimensionOutputAudioMilliseconds: {Quantity: 1500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}}); err != nil {
 		t.Fatal(err)
 	}
 	events, err := svc.ListPlatformUsageDeliveryEvents(ctx, PlatformUsageDeliveryQuery{SinkID: sink.Record.ID})

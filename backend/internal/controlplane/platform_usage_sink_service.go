@@ -34,7 +34,9 @@ type platformUsageEventPayload struct {
 	InputTokens        int             `json:"input_tokens"`
 	OutputTokens       int             `json:"output_tokens"`
 	UsageDimensions    UsageDimensions `json:"usage_dimensions"`
-	CostCents          int             `json:"cost_cents"`
+	UsageCostMicros    *int64          `json:"usage_cost_micros,omitempty"`
+	UsageCostCurrency  string          `json:"usage_cost_currency"`
+	PricingStatus      string          `json:"pricing_status"`
 	Status             string          `json:"status"`
 	OccurredAt         time.Time       `json:"occurred_at"`
 }
@@ -316,7 +318,7 @@ func (s *Service) platformUsageDeliveryEventsForRecord(ctx context.Context, reco
 			continue
 		}
 		eventID := "usage_evt_" + hashAPIKey(sink.ID + "\x00" + record.ID)[:24]
-		payload, err := json.Marshal(platformUsageEventPayload{EventID: eventID, IntegrationID: record.ExternalAuthIntegrationID, TenantID: record.PlatformTenantID, ExternalSubjectRef: record.ExternalSubjectReference, UsageRecordID: record.ID, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, UsageDimensions: record.UsageDimensions, CostCents: record.CostCents, Status: record.Status, OccurredAt: record.CreatedAt})
+		payload, err := json.Marshal(platformUsageEventPayload{EventID: eventID, IntegrationID: record.ExternalAuthIntegrationID, TenantID: record.PlatformTenantID, ExternalSubjectRef: record.ExternalSubjectReference, UsageRecordID: record.ID, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, UsageDimensions: record.UsageDimensions, UsageCostMicros: record.UsageCostMicros, UsageCostCurrency: record.UsageCostCurrency, PricingStatus: record.PricingStatus, Status: record.Status, OccurredAt: record.CreatedAt})
 		if err != nil {
 			return nil, err
 		}

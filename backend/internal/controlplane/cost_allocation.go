@@ -66,16 +66,16 @@ func (s *Service) CostAllocationReportQuery(ctx context.Context, dimension strin
 
 	rows := make([]CostAllocationRow, 0, len(rollups))
 	for _, rollup := range rollups {
-		rows = append(rows, costAllocationRow(dimension, rollup, aggregate.TotalCostCents, keyByID, userNames, departmentNames, groupNames))
+		rows = append(rows, costAllocationRow(dimension, rollup, aggregate.TotalUsageCostMicros, keyByID, userNames, departmentNames, groupNames))
 	}
 	return CostAllocationReport{
-		Dimension:      dimension,
-		TotalRequests:  aggregate.TotalRequests,
-		ErrorRequests:  aggregate.ErrorRequests,
-		TotalTokens:    aggregate.TotalTokens,
-		TotalCostCents: aggregate.TotalCostCents,
-		AvgLatencyMS:   aggregate.AvgLatencyMS,
-		Rows:           rows,
+		Dimension:            dimension,
+		TotalRequests:        aggregate.TotalRequests,
+		ErrorRequests:        aggregate.ErrorRequests,
+		TotalTokens:          aggregate.TotalTokens,
+		TotalUsageCostMicros: aggregate.TotalUsageCostMicros,
+		AvgLatencyMS:         aggregate.AvgLatencyMS,
+		Rows:                 rows,
 	}, nil
 }
 
@@ -90,17 +90,17 @@ func normalizeCostAllocationDimension(value string) (string, error) {
 	return value, nil
 }
 
-func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostCents int, apiKeys map[string]APIKeyRecord, userNames, departmentNames, groupNames map[string]string) CostAllocationRow {
+func costAllocationRow(dimension string, rollup CostAllocationRollup, totalUsageCostMicros int64, apiKeys map[string]APIKeyRecord, userNames, departmentNames, groupNames map[string]string) CostAllocationRow {
 	row := CostAllocationRow{
-		Dimension:      dimension,
-		APIKeyID:       rollup.APIKeyID,
-		APIFingerprint: rollup.APIFingerprint,
-		Model:          rollup.Model,
-		Requests:       rollup.Requests,
-		ErrorRequests:  rollup.ErrorRequests,
-		TotalTokens:    rollup.TotalTokens,
-		TotalCostCents: rollup.TotalCostCents,
-		AvgLatencyMS:   rollup.AvgLatencyMS,
+		Dimension:            dimension,
+		APIKeyID:             rollup.APIKeyID,
+		APIFingerprint:       rollup.APIFingerprint,
+		Model:                rollup.Model,
+		Requests:             rollup.Requests,
+		ErrorRequests:        rollup.ErrorRequests,
+		TotalTokens:          rollup.TotalTokens,
+		TotalUsageCostMicros: rollup.TotalUsageCostMicros,
+		AvgLatencyMS:         rollup.AvgLatencyMS,
 	}
 	row.ResourceID = firstNonEmpty(rollup.ResourceID, "unassigned")
 	if dimension == CostAllocationByUser {
@@ -116,8 +116,8 @@ func costAllocationRow(dimension string, rollup CostAllocationRollup, totalCostC
 			row.APIFingerprint = key.Fingerprint
 		}
 	}
-	if totalCostCents > 0 {
-		row.CostSharePercent = percent(row.TotalCostCents, totalCostCents)
+	if totalUsageCostMicros > 0 {
+		row.CostSharePercent = percent(row.TotalUsageCostMicros, totalUsageCostMicros)
 	}
 	if row.ResourceName == "" {
 		row.ResourceID, row.ResourceName = costAllocationResource(dimension, row)
@@ -132,7 +132,7 @@ func costAllocationResource(dimension string, row CostAllocationRow) (string, st
 	return firstNonEmpty(row.Model, "unknown_model"), firstNonEmpty(row.Model, "Unknown model")
 }
 
-func percent(part int, total int) float64 {
+func percent(part int64, total int64) float64 {
 	return float64(part) * 100 / float64(total)
 }
 
@@ -199,7 +199,9 @@ func (r *MemoryRepository) SummarizeCostAllocation(_ context.Context, dimension 
 			rollup.ErrorRequests++
 		}
 		rollup.TotalTokens += record.InputTokens + record.OutputTokens
-		rollup.TotalCostCents += record.CostCents
+		if record.UsageCostMicros != nil {
+			rollup.TotalUsageCostMicros += *record.UsageCostMicros
+		}
 		rollup.LatencyTotal += record.LatencyMS
 	}
 	out := make([]CostAllocationRollup, 0, len(values))
@@ -210,10 +212,10 @@ func (r *MemoryRepository) SummarizeCostAllocation(_ context.Context, dimension 
 		out = append(out, *rollup)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].TotalCostCents == out[j].TotalCostCents {
+		if out[i].TotalUsageCostMicros == out[j].TotalUsageCostMicros {
 			return out[i].Requests > out[j].Requests
 		}
-		return out[i].TotalCostCents > out[j].TotalCostCents
+		return out[i].TotalUsageCostMicros > out[j].TotalUsageCostMicros
 	})
 	limit, offset := normalizeListWindow(query.Limit, query.Offset, 100, 500)
 	if offset >= len(out) {
@@ -240,7 +242,7 @@ SELECT %s,
        COUNT(*),
        COALESCE(SUM(CASE WHEN status IN ('upstream_error', 'error') OR error_type <> '' THEN 1 ELSE 0 END), 0),
        COALESCE(SUM(input_tokens + output_tokens), 0),
-       COALESCE(SUM(cost_cents), 0),
+       COALESCE(SUM(usage_cost_micros), 0),
        COALESCE(SUM(latency_ms), 0)
 FROM usage_records ur %s`, selectFields, joins)
 	if len(clauses) > 0 {
@@ -248,7 +250,7 @@ FROM usage_records ur %s`, selectFields, joins)
 	}
 	sqlText += " GROUP BY " + groupBy
 	args = append(args, limit, offset)
-	sqlText += fmt.Sprintf(" ORDER BY COALESCE(SUM(cost_cents), 0) DESC, COUNT(*) DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	sqlText += fmt.Sprintf(" ORDER BY COALESCE(SUM(usage_cost_micros), 0) DESC, COUNT(*) DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 
 	rows, err := r.db.QueryContext(ctx, sqlText, args...)
 	if err != nil {
@@ -258,14 +260,14 @@ FROM usage_records ur %s`, selectFields, joins)
 	out := []CostAllocationRollup{}
 	for rows.Next() {
 		var rollup CostAllocationRollup
-		var requests, errorsCount, tokens, costCents, latencyTotal int64
-		if err := rows.Scan(&rollup.APIKeyID, &rollup.APIFingerprint, &rollup.Model, &rollup.ResourceID, &requests, &errorsCount, &tokens, &costCents, &latencyTotal); err != nil {
+		var requests, errorsCount, tokens, usageCostMicros, latencyTotal int64
+		if err := rows.Scan(&rollup.APIKeyID, &rollup.APIFingerprint, &rollup.Model, &rollup.ResourceID, &requests, &errorsCount, &tokens, &usageCostMicros, &latencyTotal); err != nil {
 			return nil, err
 		}
 		rollup.Requests = int(requests)
 		rollup.ErrorRequests = int(errorsCount)
 		rollup.TotalTokens = int(tokens)
-		rollup.TotalCostCents = int(costCents)
+		rollup.TotalUsageCostMicros = usageCostMicros
 		rollup.LatencyTotal = latencyTotal
 		if requests > 0 {
 			rollup.AvgLatencyMS = latencyTotal / requests

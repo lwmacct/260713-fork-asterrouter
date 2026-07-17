@@ -100,7 +100,7 @@ func TestCreateAPIKeyNormalizesPrincipalAndExtendedPolicy(t *testing.T) {
 		Name: "service principal", KeyType: APIKeyTypeService, ModelAllowlist: []string{"model-a"},
 		Scopes: []string{GatewayScopeInvoke, GatewayScopeModelsRead}, AllowedModalities: []string{GatewayModalityText},
 		AllowedOperations: []string{GatewayOperationChatCompletion}, QPSLimit: 2, RPMLimit: 30, TPMLimit: 5000,
-		ConcurrencyLimit: 4, MonthlyTokenLimit: 1000, MonthlyBudgetCents: 900,
+		ConcurrencyLimit: 4, MonthlyTokenLimit: 1000, MonthlyBudgetMicros: 900,
 		MonthlyImageLimit: 12, MonthlyVideoSecondsLimit: 60, MonthlyAudioSecondsLimit: 120,
 		AllowedCIDRs: []string{"192.0.2.42", "2001:db8::/64"}, LanePolicy: GatewayLanePolicyDirectAndDurable,
 		ArtifactPolicy: GatewayArtifactPolicyManaged,
@@ -112,7 +112,7 @@ func TestCreateAPIKeyNormalizesPrincipalAndExtendedPolicy(t *testing.T) {
 	if key.TenantID != gatewayDefaultTenantID || key.PrincipalType != APIKeyTypeService || key.PrincipalReference != key.ID || key.RotationFamilyID == "" {
 		t.Fatalf("principal = %+v", key)
 	}
-	if key.RPMLimit != 30 || key.TPMLimit != 5000 || key.ConcurrencyLimit != 4 || key.MonthlyBudgetCents != 900 || key.LanePolicy != GatewayLanePolicyDirectAndDurable || key.ArtifactPolicy != GatewayArtifactPolicyManaged {
+	if key.RPMLimit != 30 || key.TPMLimit != 5000 || key.ConcurrencyLimit != 4 || key.MonthlyBudgetMicros != 900 || key.LanePolicy != GatewayLanePolicyDirectAndDurable || key.ArtifactPolicy != GatewayArtifactPolicyManaged {
 		t.Fatalf("extended policy = %+v", key)
 	}
 	if len(key.AllowedCIDRs) != 2 || key.AllowedCIDRs[0] != "192.0.2.42/32" || key.AllowedCIDRs[1] != "2001:db8::/64" {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
+	"github.com/astercloud/asterrouter/backend/internal/pricing"
 )
 
 var (
@@ -46,11 +47,10 @@ type BillingHold struct {
 	RequestFingerprint       string          `json:"request_fingerprint"`
 	Status                   string          `json:"status"`
 	Version                  int             `json:"version"`
-	ReservedAmountCents      int             `json:"reserved_amount_cents"`
+	ReservedAmountMicros     int64           `json:"reserved_amount_micros"`
 	ReservedUsageDimensions  UsageDimensions `json:"reserved_usage_dimensions"`
-	SettledAmountCents       int             `json:"settled_amount_cents"`
+	SettledAmountMicros      int64           `json:"settled_amount_micros"`
 	Currency                 string          `json:"currency"`
-	PriceSnapshotID          string          `json:"price_snapshot_id,omitempty"`
 	EstimateSource           string          `json:"estimate_source"`
 	Reason                   string          `json:"reason,omitempty"`
 	BudgetPeriodStart        time.Time       `json:"budget_period_start"`
@@ -61,23 +61,33 @@ type BillingHold struct {
 	ReleasedAt               *time.Time      `json:"released_at,omitempty"`
 }
 
+type BillingHoldPricingVersion struct {
+	HoldID                 string `json:"hold_id"`
+	Purpose                string `json:"purpose"`
+	PricingRuleVersionID   string `json:"pricing_rule_version_id"`
+	EstimateEvaluationID   string `json:"estimate_evaluation_id"`
+	SettlementEvaluationID string `json:"settlement_evaluation_id,omitempty"`
+}
+
 type BillingHoldAdmission struct {
 	Hold                     BillingHold
-	MonthlyBudgetCents       int
+	PricingVersions          []BillingHoldPricingVersion
+	PricingEvaluations       []PricingEvaluation
+	MonthlyBudgetMicros      int64
 	MonthlyImageLimit        int
 	MonthlyVideoSecondsLimit int
 	MonthlyAudioSecondsLimit int
 }
 
 func (s *Service) newBillingHoldAdmission(ctx context.Context, operation AIOperation, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (BillingHoldAdmission, error) {
-	reserved, currency, priceID, source, err := s.estimateBillingHold(ctx, request)
+	estimate, err := s.estimateBillingHold(ctx, operation, auth, request)
 	if err != nil {
 		return BillingHoldAdmission{}, err
 	}
-	if auth.Limits.MonthlyBudgetCents > 0 && reserved == 0 && source == "unpriced" {
+	if auth.Limits.MonthlyBudgetMicros > 0 && estimate.ReservedAmountMicros == 0 && estimate.Source == "unpriced" {
 		return BillingHoldAdmission{}, ErrBillingHoldEstimateUnavailable
 	}
-	if auth.Limits.MonthlyBudgetCents > 0 && currency != "USD" {
+	if auth.Limits.MonthlyBudgetMicros > 0 && estimate.Currency != pricing.CurrencyUSD {
 		return BillingHoldAdmission{}, ErrBillingHoldEstimateUnavailable
 	}
 	reservedUsage, err := usageReservationForCanonicalRequest(request)
@@ -103,16 +113,27 @@ func (s *Service) newBillingHoldAdmission(ctx context.Context, operation AIOpera
 		CredentialID: operation.CredentialID, CredentialSource: operation.CredentialSource, IntegrationID: operation.IntegrationID,
 		PrincipalType: operation.PrincipalType, PrincipalID: operation.PrincipalID, ExternalSubjectReference: operation.ExternalSubjectReference,
 		RequestFingerprint: operation.RequestFingerprint, Status: BillingHoldStatusReserved, Version: 1,
-		ReservedAmountCents: reserved, ReservedUsageDimensions: reservedUsage,
-		Currency: currency, PriceSnapshotID: priceID, EstimateSource: source,
+		ReservedAmountMicros: estimate.ReservedAmountMicros, ReservedUsageDimensions: reservedUsage,
+		Currency: estimate.Currency, EstimateSource: estimate.Source,
 		BudgetPeriodStart: periodStart, ExpiresAt: now.Add(BillingHoldDefaultTTL), CreatedAt: now, UpdatedAt: now,
 	}
+	for index := range estimate.PricingVersions {
+		estimate.PricingVersions[index].HoldID = hold.ID
+	}
 	return BillingHoldAdmission{
-		Hold: hold, MonthlyBudgetCents: nonNegative(auth.Limits.MonthlyBudgetCents),
+		Hold: hold, PricingVersions: estimate.PricingVersions, PricingEvaluations: estimate.PricingEvaluations, MonthlyBudgetMicros: nonNegativeInt64(auth.Limits.MonthlyBudgetMicros),
 		MonthlyImageLimit:        nonNegative(auth.Limits.MonthlyImageLimit),
 		MonthlyVideoSecondsLimit: nonNegative(auth.Limits.MonthlyVideoSecondsLimit),
 		MonthlyAudioSecondsLimit: nonNegative(auth.Limits.MonthlyAudioSecondsLimit),
 	}, nil
+}
+
+type billingHoldEstimate struct {
+	ReservedAmountMicros int64
+	Currency             string
+	Source               string
+	PricingVersions      []BillingHoldPricingVersion
+	PricingEvaluations   []PricingEvaluation
 }
 
 func usageReservationForCanonicalRequest(request gatewaycore.CanonicalRequest) (UsageDimensions, error) {
@@ -141,42 +162,95 @@ func usageReservationForCanonicalRequest(request gatewaycore.CanonicalRequest) (
 	return NormalizeUsageDimensions(reserved)
 }
 
-func (s *Service) estimateBillingHold(ctx context.Context, request gatewaycore.CanonicalRequest) (int, string, string, string, error) {
+func (s *Service) estimateBillingHold(ctx context.Context, operation AIOperation, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (billingHoldEstimate, error) {
 	var limits struct {
-		MaxTokens           int `json:"max_tokens"`
-		MaxCompletionTokens int `json:"max_completion_tokens"`
-		MaxCostCents        int `json:"max_cost_cents"`
+		MaxTokens           int   `json:"max_tokens"`
+		MaxCompletionTokens int   `json:"max_completion_tokens"`
+		MaxCostMicros       int64 `json:"max_cost_micros"`
 	}
 	if len(request.Payload) > 0 {
 		if err := json.Unmarshal(request.Payload, &limits); err != nil {
-			return 0, "", "", "", err
+			return billingHoldEstimate{}, err
 		}
 	}
-	if limits.MaxTokens < 0 || limits.MaxCompletionTokens < 0 || limits.MaxCostCents < 0 {
-		return 0, "", "", "", errors.New("billing hold request limits must be non-negative")
+	if limits.MaxTokens < 0 || limits.MaxCompletionTokens < 0 || limits.MaxCostMicros < 0 {
+		return billingHoldEstimate{}, errors.New("billing hold request limits must be non-negative")
 	}
-	reserved := limits.MaxCostCents
-	currency := "USD"
-	priceID := ""
-	source := "unpriced"
-	pricing, found, err := s.modelPricingForModel(ctx, request.Model)
+	estimate := billingHoldEstimate{ReservedAmountMicros: limits.MaxCostMicros, Currency: pricing.CurrencyUSD, Source: "unpriced"}
+	facts := estimatePricingFacts(operation, request, limits.MaxTokens, limits.MaxCompletionTokens)
+	selection, found, err := s.SelectPricingRule(ctx, PricingPurposeUsageCost, "", request.Model)
 	if err != nil {
-		return 0, "", "", "", err
+		return billingHoldEstimate{}, err
 	}
 	if found {
-		outputTokens := max(limits.MaxTokens, limits.MaxCompletionTokens)
-		if outputTokens == 0 && request.Modality == GatewayModalityText {
-			outputTokens = billingHoldDefaultMaxOutputTokens
+		result, evaluateErr := s.pricingEngine.Evaluate(selection.Compiled, facts)
+		if evaluateErr != nil {
+			return billingHoldEstimate{}, evaluateErr
 		}
-		inputTokens := max(1, len(request.Payload)/4)
-		reserved = max(reserved, estimateCostCents(pricing, inputTokens, outputTokens))
-		currency = pricing.Currency
-		priceID = pricing.ID
-		source = "model_pricing"
-	} else if reserved > 0 {
-		source = "request_max_cost"
+		estimate.ReservedAmountMicros = max(estimate.ReservedAmountMicros, result.AmountMicros)
+		estimate.Currency = result.Currency
+		estimate.Source = "pricing_rule"
+		evaluation := successfulPricingEvaluation(operation, PricingPurposeUsageCost, pricing.PhaseEstimate, selection, facts, result)
+		estimate.PricingEvaluations = append(estimate.PricingEvaluations, evaluation)
+		estimate.PricingVersions = append(estimate.PricingVersions, BillingHoldPricingVersion{Purpose: PricingPurposeUsageCost, PricingRuleVersionID: selection.Version.ID, EstimateEvaluationID: evaluation.ID})
+	} else if estimate.ReservedAmountMicros > 0 {
+		estimate.Source = "request_max_cost"
 	}
-	return reserved, strings.ToUpper(strings.TrimSpace(currency)), priceID, source, nil
+	if auth.PrincipalType == APIKeyTypeCustomer {
+		if s.customerPricingResolver == nil {
+			return billingHoldEstimate{}, errors.New("customer pricing context resolver is unavailable")
+		}
+		context, resolveErr := s.customerPricingResolver.ResolveCustomerPricingContext(ctx, auth.PrincipalID)
+		if resolveErr != nil || context.Status != PricingRuleStatusActive || context.Currency != pricing.CurrencyUSD {
+			return billingHoldEstimate{}, errors.New("customer pricing context is unavailable")
+		}
+		chargeSelection, chargeFound, selectErr := s.SelectPricingRule(ctx, PricingPurposeCustomerCharge, context.PlanID, request.Model)
+		if selectErr != nil {
+			return billingHoldEstimate{}, selectErr
+		}
+		if !chargeFound {
+			return billingHoldEstimate{}, &pricing.Error{Code: pricing.ErrorRuleUnavailable, Message: "customer charge pricing rule is unavailable"}
+		}
+		result, evaluateErr := s.pricingEngine.Evaluate(chargeSelection.Compiled, facts)
+		if evaluateErr != nil {
+			return billingHoldEstimate{}, evaluateErr
+		}
+		evaluation := successfulPricingEvaluation(operation, PricingPurposeCustomerCharge, pricing.PhaseEstimate, chargeSelection, facts, result)
+		estimate.PricingEvaluations = append(estimate.PricingEvaluations, evaluation)
+		estimate.PricingVersions = append(estimate.PricingVersions, BillingHoldPricingVersion{Purpose: PricingPurposeCustomerCharge, PricingRuleVersionID: chargeSelection.Version.ID, EstimateEvaluationID: evaluation.ID})
+	}
+	return estimate, nil
+}
+
+func estimatePricingFacts(operation AIOperation, request gatewaycore.CanonicalRequest, maxTokens, maxCompletionTokens int) pricing.Facts {
+	outputTokens := max(maxTokens, maxCompletionTokens)
+	if outputTokens == 0 && request.Modality == GatewayModalityText {
+		outputTokens = billingHoldDefaultMaxOutputTokens
+	}
+	inputTokens := max(1, len(request.Payload)/4)
+	outputCount := request.OutputCount
+	if outputCount <= 0 && request.Operation == GatewayOperationImageGeneration {
+		outputCount = 1
+	}
+	return pricing.Facts{
+		TotalInputTokens: int64(inputTokens), UncachedInputTokens: int64(inputTokens), OutputTokens: int64(outputTokens),
+		OutputImages: int64(max(outputCount, 0)), OutputVideoMilliseconds: max(request.VideoDurationMS, 0),
+		InputAudioMilliseconds: max(request.InputAudioDurationMS, 0), OutputAudioMilliseconds: max(request.AudioDurationMS, 0),
+		InputCharacters: max(request.InputCharacters, 0), Protocol: string(request.Protocol), Operation: request.Operation,
+		Modality: request.Modality, Lane: string(request.Lane), Stream: request.Stream, OutputCount: int64(max(outputCount, 0)),
+		NormalizationStatus: "estimated_request", Phase: pricing.PhaseEstimate, ObservedAt: operation.CreatedAt,
+	}
+}
+
+func successfulPricingEvaluation(operation AIOperation, purpose, phase string, selection PricingSelection, facts pricing.Facts, result pricing.Result) PricingEvaluation {
+	amount := result.AmountMicros
+	return PricingEvaluation{
+		ID: "peval_" + randomID(12), Purpose: purpose, Phase: phase, OperationID: operation.ID,
+		PricingRuleID: selection.Rule.ID, PricingRuleVersionID: selection.Version.ID, EngineVersion: result.EngineVersion,
+		ExpressionHash: result.ExpressionHash, FactsHash: result.FactsHash, Facts: facts, AmountMicros: &amount,
+		Currency: result.Currency, MatchedTier: result.MatchedTier, Lines: result.Lines,
+		NormalizationStatus: facts.NormalizationStatus, Status: PricingEvaluationStatusSuccess, CreatedAt: operation.CreatedAt,
+	}
 }
 
 func validateBillingHoldAdmission(operation AIOperation, admission BillingHoldAdmission) error {
@@ -189,10 +263,31 @@ func validateBillingHoldAdmission(operation AIOperation, admission BillingHoldAd
 		hold.IntegrationID != operation.IntegrationID || hold.PrincipalType != operation.PrincipalType || hold.PrincipalID != operation.PrincipalID ||
 		hold.ExternalSubjectReference != operation.ExternalSubjectReference ||
 		hold.RequestFingerprint == "" || hold.RequestFingerprint != operation.RequestFingerprint || hold.Status != BillingHoldStatusReserved ||
-		hold.Version != 1 || hold.ReservedAmountCents < 0 || hold.SettledAmountCents != 0 || len(strings.TrimSpace(hold.Currency)) != 3 ||
+		hold.Version != 1 || hold.ReservedAmountMicros < 0 || hold.SettledAmountMicros != 0 || len(strings.TrimSpace(hold.Currency)) != 3 ||
 		hold.BudgetPeriodStart.IsZero() || hold.CreatedAt.IsZero() || !hold.ExpiresAt.After(hold.CreatedAt) ||
-		admission.MonthlyBudgetCents < 0 || admission.MonthlyImageLimit < 0 || admission.MonthlyVideoSecondsLimit < 0 || admission.MonthlyAudioSecondsLimit < 0 {
+		admission.MonthlyBudgetMicros < 0 || admission.MonthlyImageLimit < 0 || admission.MonthlyVideoSecondsLimit < 0 || admission.MonthlyAudioSecondsLimit < 0 {
 		return errors.New("invalid billing hold admission")
+	}
+	evaluations := make(map[string]PricingEvaluation, len(admission.PricingEvaluations))
+	for _, evaluation := range admission.PricingEvaluations {
+		if evaluation.ID == "" || evaluation.OperationID != operation.ID || evaluation.Phase != pricing.PhaseEstimate || evaluation.Status != PricingEvaluationStatusSuccess || evaluation.AmountMicros == nil {
+			return errors.New("invalid billing hold pricing evaluation")
+		}
+		evaluations[evaluation.ID] = evaluation
+	}
+	purposes := make(map[string]struct{}, len(admission.PricingVersions))
+	for _, version := range admission.PricingVersions {
+		evaluation, found := evaluations[version.EstimateEvaluationID]
+		if !found || version.HoldID != hold.ID || version.Purpose != evaluation.Purpose || version.PricingRuleVersionID != evaluation.PricingRuleVersionID || version.SettlementEvaluationID != "" {
+			return errors.New("invalid billing hold pricing version")
+		}
+		if _, duplicate := purposes[version.Purpose]; duplicate {
+			return errors.New("duplicate billing hold pricing purpose")
+		}
+		purposes[version.Purpose] = struct{}{}
+	}
+	if len(evaluations) != len(admission.PricingVersions) {
+		return errors.New("orphan billing hold pricing evaluation")
 	}
 	return nil
 }
@@ -214,7 +309,7 @@ func billingHoldTransitionAllowed(fromStatus, toStatus string) bool {
 	}
 }
 
-func prepareBillingHoldTransition(hold BillingHold, toStatus string, settledAmount int, reason string, at time.Time) (BillingHold, error) {
+func prepareBillingHoldTransition(hold BillingHold, toStatus string, settledAmount int64, reason string, at time.Time) (BillingHold, error) {
 	toStatus = strings.TrimSpace(toStatus)
 	if hold.Status == toStatus {
 		return hold, nil
@@ -227,7 +322,7 @@ func prepareBillingHoldTransition(hold BillingHold, toStatus string, settledAmou
 	hold.Reason = strings.TrimSpace(reason)
 	hold.UpdatedAt = at.UTC()
 	if toStatus == BillingHoldStatusSettled {
-		hold.SettledAmountCents = settledAmount
+		hold.SettledAmountMicros = settledAmount
 		hold.SettledAt = timePointer(at.UTC())
 	}
 	if toStatus == BillingHoldStatusReleased {
@@ -252,7 +347,7 @@ func (s *Service) ReleaseBillingHold(ctx context.Context, operationID, reason st
 	return s.transitionBillingHold(ctx, operationID, BillingHoldStatusReleased, 0, reason)
 }
 
-func (s *Service) transitionBillingHold(ctx context.Context, operationID, status string, settledAmount int, reason string) error {
+func (s *Service) transitionBillingHold(ctx context.Context, operationID, status string, settledAmount int64, reason string) error {
 	hold, found, err := s.repo.FindBillingHoldByOperationID(ctx, strings.TrimSpace(operationID))
 	if err != nil || !found {
 		return err

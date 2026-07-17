@@ -78,8 +78,8 @@ func departmentFromRequest(req DepartmentRequest, createdAt time.Time) (Departme
 	if !oneOf(status, DepartmentStatusActive, DepartmentStatusArchived) {
 		return Department{}, errors.New("status must be active or archived")
 	}
-	if req.MonthlyBudgetCents < 0 {
-		return Department{}, errors.New("monthly_budget_cents must be greater than or equal to 0")
+	if req.MonthlyBudgetMicros < 0 {
+		return Department{}, errors.New("monthly_budget_micros must be greater than or equal to 0")
 	}
 	if createdAt.IsZero() {
 		createdAt = now
@@ -89,14 +89,14 @@ func departmentFromRequest(req DepartmentRequest, createdAt time.Time) (Departme
 		costCenter = code
 	}
 	return Department{
-		Name:               name,
-		Code:               code,
-		ParentID:           strings.TrimSpace(req.ParentID),
-		CostCenter:         costCenter,
-		MonthlyBudgetCents: req.MonthlyBudgetCents,
-		Status:             status,
-		CreatedAt:          createdAt,
-		UpdatedAt:          now,
+		Name:                name,
+		Code:                code,
+		ParentID:            strings.TrimSpace(req.ParentID),
+		CostCenter:          costCenter,
+		MonthlyBudgetMicros: req.MonthlyBudgetMicros,
+		Status:              status,
+		CreatedAt:           createdAt,
+		UpdatedAt:           now,
 	}, nil
 }
 

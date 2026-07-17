@@ -71,8 +71,18 @@ import type {
   GatewayTraceSummary,
   GovernancePolicy,
   GovernancePolicyRequest,
-  ModelPricing,
-  ModelPricingRequest,
+	PricingDraftUpdateRequest,
+	PricingEvaluation,
+	PricingPublishRequest,
+	PricingRule,
+	PricingRuleAnalysis,
+	PricingRuleCreateRequest,
+	PricingRuleDetail,
+	PricingRuleVersion,
+	PricingSimulationRequest,
+	PricingSimulationResult,
+	PricingSurface,
+	PricingValidationResult,
 	OrganizationGroup,
 	OrganizationGroupRequest,
 	ModelRoute,
@@ -416,19 +426,104 @@ export async function simulateGatewayRouting(model: string, estimatedTokens: num
   return { ...response.data, candidates: listOrEmpty(response.data.candidates) }
 }
 
-export async function getModelPricings(): Promise<ModelPricing[]> {
-  const response = await apiClient.get<ModelPricing[] | null>('/admin/model-pricings')
-  return listOrEmpty(response.data)
+type PricingEnvelope<T> = { data: T }
+
+function pricingData<T>(payload: T | PricingEnvelope<T>): T {
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    return (payload as PricingEnvelope<T>).data
+  }
+  return payload as T
 }
 
-export async function createModelPricing(payload: ModelPricingRequest): Promise<ModelPricing> {
-  const response = await apiClient.post<ModelPricing>('/admin/model-pricings', payload)
-  return response.data
+function pricingPath(surface: PricingSurface, suffix: string): string {
+  return `/${surface}${suffix}`
 }
 
-export async function updateModelPricing(id: string, payload: ModelPricingRequest): Promise<ModelPricing> {
-  const response = await apiClient.put<ModelPricing>(`/admin/model-pricings/${id}`, payload)
-  return response.data
+function normalizePricingAnalysis(value: PricingRuleAnalysis | null | undefined): PricingRuleAnalysis {
+  const payload = value || {} as PricingRuleAnalysis
+  return {
+    ...payload,
+    required_facts: listOrEmpty(payload.required_facts),
+    tiers: listOrEmpty(payload.tiers).map((tier) => ({ ...tier, conditions: listOrEmpty(tier.conditions) })),
+    line_codes: listOrEmpty(payload.line_codes)
+  }
+}
+
+function normalizePricingVersion(value: PricingRuleVersion): PricingRuleVersion {
+  return {
+    ...value,
+    analysis: normalizePricingAnalysis(value.analysis),
+    test_cases: listOrEmpty(value.test_cases)
+  }
+}
+
+function normalizePricingDetail(value: PricingRuleDetail): PricingRuleDetail {
+  return {
+    ...value,
+    active_version: value.active_version ? normalizePricingVersion(value.active_version) : undefined,
+    draft: value.draft ? normalizePricingVersion(value.draft) : undefined,
+    versions: listOrEmpty(value.versions).map(normalizePricingVersion)
+  }
+}
+
+export async function getPricingRules(surface: PricingSurface, params?: Record<string, string>): Promise<PricingRule[]> {
+  const response = await apiClient.get<PricingRule[] | PricingEnvelope<PricingRule[] | null> | null>(pricingPath(surface, '/pricing-rules'), { params })
+  return listOrEmpty(pricingData(response.data))
+}
+
+export async function getPricingRule(surface: PricingSurface, id: string): Promise<PricingRuleDetail> {
+  const response = await apiClient.get<PricingRuleDetail | PricingEnvelope<PricingRuleDetail>>(pricingPath(surface, `/pricing-rules/${id}`))
+  return normalizePricingDetail(pricingData(response.data))
+}
+
+export async function createPricingRule(surface: PricingSurface, payload: PricingRuleCreateRequest): Promise<PricingRuleDetail> {
+  const response = await apiClient.post<PricingRuleDetail | PricingEnvelope<PricingRuleDetail>>(pricingPath(surface, '/pricing-rules'), payload)
+  return normalizePricingDetail(pricingData(response.data))
+}
+
+export async function updatePricingRuleDraft(surface: PricingSurface, id: string, payload: PricingDraftUpdateRequest): Promise<PricingRuleDetail> {
+  const response = await apiClient.put<PricingRuleDetail | PricingEnvelope<PricingRuleDetail>>(pricingPath(surface, `/pricing-rules/${id}/draft`), payload)
+  return normalizePricingDetail(pricingData(response.data))
+}
+
+export async function validatePricingRule(surface: PricingSurface, expression: string, testCases: PricingRuleCreateRequest['test_cases']): Promise<PricingValidationResult> {
+  const response = await apiClient.post<PricingValidationResult | PricingEnvelope<PricingValidationResult>>(
+    pricingPath(surface, '/pricing-rules/validate'),
+    { expression, test_cases: testCases },
+    { validateStatus: (status) => status === 200 || status === 422 }
+  )
+  const result = pricingData(response.data)
+  return {
+    ...result,
+    analysis: result.analysis ? normalizePricingAnalysis(result.analysis) : undefined,
+    test_results: listOrEmpty(result.test_results).map((test) => ({ ...test, lines: listOrEmpty(test.lines) })),
+    errors: listOrEmpty(result.errors)
+  }
+}
+
+export async function simulatePricingRule(surface: PricingSurface, payload: PricingSimulationRequest): Promise<PricingSimulationResult> {
+  const response = await apiClient.post<PricingSimulationResult | PricingEnvelope<PricingSimulationResult>>(pricingPath(surface, '/pricing-rules/simulate'), payload)
+  const result = pricingData(response.data)
+  return { ...result, lines: listOrEmpty(result.lines) }
+}
+
+export async function publishPricingRule(surface: PricingSurface, id: string, payload: PricingPublishRequest): Promise<PricingRuleDetail> {
+  const response = await apiClient.post<PricingRuleDetail | PricingEnvelope<PricingRuleDetail>>(pricingPath(surface, `/pricing-rules/${id}/publish`), payload)
+  return normalizePricingDetail(pricingData(response.data))
+}
+
+export async function activatePricingRuleVersion(surface: PricingSurface, id: string, versionID: string, expectedLockVersion: number): Promise<void> {
+  await apiClient.post(pricingPath(surface, `/pricing-rules/${id}/activate/${versionID}`), { expected_lock_version: expectedLockVersion })
+}
+
+export async function disablePricingRule(surface: PricingSurface, id: string, expectedLockVersion: number): Promise<void> {
+  await apiClient.post(pricingPath(surface, `/pricing-rules/${id}/disable`), { expected_lock_version: expectedLockVersion })
+}
+
+export async function getPricingEvaluation(surface: PricingSurface, id: string): Promise<PricingEvaluation> {
+  const response = await apiClient.get<PricingEvaluation | PricingEnvelope<PricingEvaluation>>(pricingPath(surface, `/pricing-evaluations/${id}`))
+  const result = pricingData(response.data)
+  return { ...result, lines: listOrEmpty(result.lines) }
 }
 
 export async function getEffectivePricingReport(params?: { model?: string; protocol?: string; window_hours?: number }): Promise<EffectivePricingReport> {

@@ -26,6 +26,8 @@ docs/roadmap/*
 !docs/roadmap/effectivepricing/**
 !docs/roadmap/models/
 !docs/roadmap/models/**
+!docs/roadmap/price/
+!docs/roadmap/price/**
 !docs/roadmap/v2/
 docs/roadmap/v2/*
 !docs/roadmap/v2/README.md

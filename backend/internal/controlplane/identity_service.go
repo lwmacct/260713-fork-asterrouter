@@ -189,7 +189,7 @@ func (s *Service) CurrentAccountPasswordHash(ctx context.Context, actor string) 
 func accountProfileFromUser(user WorkspaceUser) AccountProfile {
 	return AccountProfile{
 		ID: user.ID, Email: user.Email, DisplayName: user.DisplayName, AvatarDataURL: user.AvatarDataURL,
-		Status: user.Status, Role: user.Role, BalanceCents: user.BalanceCents,
+		Status: user.Status, Role: user.Role, BalanceMicros: user.BalanceMicros,
 		ConcurrencyLimit: user.ConcurrencyLimit, RPMLimit: user.RPMLimit,
 		ExternalIssuer: user.ExternalIssuer, EmailVerified: user.EmailVerified,
 		PasswordEnabled: user.PasswordHash != "", TOTPEnabled: user.TOTPEnabled,
@@ -741,7 +741,7 @@ func applyWorkspaceUserDefaults(user *WorkspaceUser, values []WorkspaceUserDefau
 	if len(values) == 0 {
 		return
 	}
-	user.BalanceCents = max(values[0].BalanceCents, 0)
+	user.BalanceMicros = max(values[0].BalanceMicros, 0)
 	user.ConcurrencyLimit = max(values[0].ConcurrencyLimit, 0)
 	user.RPMLimit = max(values[0].RPMLimit, 0)
 }

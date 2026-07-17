@@ -954,7 +954,7 @@ func New(opts Options) http.Handler {
 	operatorAPI.Use(requireAdminAuth(opts.Runtime.AdminToken, opts.AuthService))
 	operatorAPI.Use(requireProfile(opts.SettingsService, "relay_operator"))
 	operatorAPI.Use(requireSurfaceAccess(opts.ControlService, controlplane.SurfaceRelayOperator))
-	registerOperatorRoutes(operatorAPI, opts.OperatorService)
+	registerOperatorRoutes(operatorAPI, opts.OperatorService, opts.ControlService)
 	registerSharedCoreRoutes(operatorAPI, opts.ControlService, false)
 	registerSurfaceSettings(operatorAPI, opts.SettingsService, opts.ControlService)
 	registerSystemRoutes(operatorAPI.Group("/system"), opts.SystemService, opts.SettingsService, opts.ControlService)
@@ -1076,9 +1076,9 @@ func retentionCutoff(days int) time.Time {
 }
 
 func workspaceUserDefaults(admin settings.AdminSettings, source string) controlplane.WorkspaceUserDefaults {
-	result := controlplane.WorkspaceUserDefaults{BalanceCents: admin.DefaultBalanceCents, ConcurrencyLimit: admin.DefaultConcurrency, RPMLimit: admin.DefaultRPM}
+	result := controlplane.WorkspaceUserDefaults{BalanceMicros: admin.DefaultBalanceMicros, ConcurrencyLimit: admin.DefaultConcurrency, RPMLimit: admin.DefaultRPM}
 	if override, ok := admin.AuthSourceDefaults[source]; ok && override.Enabled {
-		result = controlplane.WorkspaceUserDefaults{BalanceCents: override.BalanceCents, ConcurrencyLimit: override.Concurrency, RPMLimit: override.RPM}
+		result = controlplane.WorkspaceUserDefaults{BalanceMicros: override.BalanceMicros, ConcurrencyLimit: override.Concurrency, RPMLimit: override.RPM}
 	}
 	return result
 }

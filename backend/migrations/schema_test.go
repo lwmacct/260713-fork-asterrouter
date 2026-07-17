@@ -23,7 +23,7 @@ import (
 	"github.com/astercloud/asterrouter/backend/internal/testutil"
 )
 
-//go:embed *.sql testdata/*.sql
+//go:embed *.sql
 var migrationFiles embed.FS
 
 var migrationNamePattern = regexp.MustCompile(`^(\d{3})_[a-z0-9_]+\.sql$`)
@@ -352,73 +352,39 @@ func TestRuntimeSchemaMatchesMigrationSnapshots(t *testing.T) {
 	assertStringMapEqual(t, "indexes", snapshotIndexes, runtimeIndexes)
 }
 
-func TestV030LegacySchemaUpgradesWithCandidateRuntime(t *testing.T) {
+func TestPublishedPricingRuleVersionIsDatabaseImmutable(t *testing.T) {
 	schema := testutil.NewPostgresSchema(t)
-	legacyDB := testutil.OpenPostgres(t, schema.URL)
-	applyV030LegacySchema(t, legacyDB)
-
+	initializeRuntimeSchema(t, schema.URL)
 	ctx := context.Background()
-	createdAt := time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC)
-	seedStatements := []string{
-		`
-	INSERT INTO provider_connections(id,name,type,base_url,status,models,priority,secret_configured,secret_hint,secret_ciphertext,created_at,updated_at)
-	VALUES('provider-v030','v0.3 provider','openai_compatible','https://provider.example/v1','active','["legacy-model"]',10,TRUE,'...legacy','ciphertext', $1, $1)`,
-		`
-	INSERT INTO workspace_users(id,email,display_name,status,role,balance_cents,concurrency_limit,rpm_limit,created_at,updated_at)
-	VALUES('user-v030','v030@example.test','v0.3 user','active','developer',700,5,0,$1,$1)`,
-		`
-	INSERT INTO api_keys(id,name,key_hash,fingerprint,prefix,status,key_type,customer_id,owner_user_id,policy_id,model_allowlist,qps_limit,monthly_token_limit,created_at,updated_at)
-	VALUES('key-v030','v0.3 key','v030-key-hash','v030fingerprint','ast_v030','active','user','','user-v030','','["legacy-model"]',10,1000,$1,$1)`,
-		`
-	INSERT INTO usage_records(id,api_key_id,customer_id,api_fingerprint,model,upstream_model,provider_id,provider_account_id,status,error_type,latency_ms,input_tokens,output_tokens,cost_cents,created_at)
-	VALUES('usage-v030','key-v030','','v030fingerprint','legacy-model','legacy-model','provider-v030','','forwarded','',12,7,11,9,$1)`,
-	}
-	for _, statement := range seedStatements {
-		if _, err := legacyDB.ExecContext(ctx, statement, createdAt); err != nil {
-			t.Fatalf("seed v0.3.0 fixture: %v", err)
-		}
-	}
-
-	// Opening the current repository is the candidate upgrade step. The v0.3.0
-	// fixture intentionally lacks session_version and all notification tables.
-	candidate, err := controlplane.NewPostgresRepository(ctx, schema.URL)
+	repo, err := controlplane.NewPostgresRepository(ctx, schema.URL)
 	if err != nil {
-		t.Fatalf("upgrade v0.3.0 schema with candidate runtime: %v", err)
+		t.Fatal(err)
 	}
-	defer candidate.Close()
-
-	providers, err := candidate.ListProviders(ctx)
-	if err != nil || len(providers) != 1 || providers[0].ID != "provider-v030" || providers[0].SecretCiphertext != "ciphertext" {
-		t.Fatalf("upgraded providers=%+v err=%v", providers, err)
+	defer repo.Close()
+	service := controlplane.NewService(repo, "/v1")
+	detail, err := service.CreatePricingRule(ctx, "migration-test", controlplane.PricingRuleCreateRequest{
+		Name: "Immutable", Purpose: controlplane.PricingPurposeUsageCost, ScopeType: controlplane.PricingScopeGlobal,
+		Model: "*", Currency: "USD", AuthoringMode: controlplane.PricingAuthoringRaw,
+		Expression: `v1: fixed_line("request", "request", 1)`,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	users, err := candidate.ListWorkspaceUsers(ctx)
-	if err != nil || len(users) != 1 || users[0].ID != "user-v030" || users[0].SessionVersion != 1 || users[0].BalanceCents != 700 {
-		t.Fatalf("upgraded users=%+v err=%v", users, err)
+	detail, err = service.PublishPricingRule(ctx, "migration-test", detail.Rule.ID, controlplane.PricingPublishRequest{
+		DraftVersionID: detail.Draft.ID, ExpectedLockVersion: detail.Rule.LockVersion,
+		ExpressionHash: detail.Draft.ExpressionHash,
+	})
+	if err != nil || detail.ActiveVersion == nil {
+		t.Fatalf("publish detail=%+v err=%v", detail, err)
 	}
-	key, found, err := candidate.FindAPIKeyByHash(ctx, "v030-key-hash")
-	if err != nil || !found || key.ID != "key-v030" || key.OwnerUserID != "user-v030" ||
-		!reflect.DeepEqual(key.Scopes, []string{controlplane.GatewayScopeInvoke, controlplane.GatewayScopeModelsRead}) ||
-		!reflect.DeepEqual(key.AllowedModalities, []string{controlplane.GatewayModalityMetadata, controlplane.GatewayModalityText}) ||
-		!reflect.DeepEqual(key.AllowedOperations, []string{controlplane.GatewayOperationListModels, controlplane.GatewayOperationChatCompletion}) ||
-		key.LanePolicy != controlplane.GatewayLanePolicyDirectOnly || key.ArtifactPolicy != controlplane.GatewayArtifactPolicyProxyOnly {
-		t.Fatalf("upgraded key=%+v found=%t err=%v", key, found, err)
-	}
-	usage, err := candidate.QueryUsageRecords(ctx, controlplane.UsageQuery{APIKeyID: "key-v030", Limit: 10})
-	if err != nil || len(usage) != 1 || usage[0].ID != "usage-v030" || usage[0].InputTokens != 7 || usage[0].OutputTokens != 11 {
-		t.Fatalf("upgraded usage=%+v err=%v", usage, err)
-	}
-
-	service := controlplane.NewService(candidate, "/v1", "candidate-upgrade-test-secret")
-	settings, err := service.CustomerNotificationSettings(ctx, "v030@example.test")
-	if err != nil || len(settings.Preferences) != 9 {
-		t.Fatalf("candidate notification defaults=%+v err=%v", settings, err)
-	}
-	if _, err := service.UpdateCustomerNotificationSettings(ctx, "v030@example.test", controlplane.CustomerNotificationSettingsRequest{Preferences: settings.Preferences}); err != nil {
-		t.Fatalf("persist candidate notification preferences: %v", err)
-	}
-	var preferenceCount int
-	if err := legacyDB.QueryRowContext(ctx, `SELECT count(*) FROM customer_notification_preferences WHERE user_id = 'user-v030'`).Scan(&preferenceCount); err != nil || preferenceCount != len(settings.Preferences) {
-		t.Fatalf("upgraded notification preferences=%d err=%v", preferenceCount, err)
+	db := testutil.OpenPostgres(t, schema.URL)
+	for name, statement := range map[string]string{
+		"update": `UPDATE pricing_rule_versions SET expression='v1: fixed_line("request", "request", 2)' WHERE id=$1`,
+		"delete": `DELETE FROM pricing_rule_versions WHERE id=$1`,
+	} {
+		if _, err := db.ExecContext(ctx, statement, detail.ActiveVersion.ID); err == nil {
+			t.Fatalf("published pricing version %s was not rejected", name)
+		}
 	}
 }
 
@@ -446,17 +412,6 @@ func applyMigrationSnapshots(t testing.TB, db *sql.DB) {
 		if _, err := db.ExecContext(ctx, string(body)); err != nil {
 			t.Fatalf("apply migration %s: %v", name, err)
 		}
-	}
-}
-
-func applyV030LegacySchema(t testing.TB, db *sql.DB) {
-	t.Helper()
-	body, err := migrationFiles.ReadFile("testdata/v0.3.0_legacy_schema.sql")
-	if err != nil {
-		t.Fatalf("read v0.3.0 legacy schema fixture: %v", err)
-	}
-	if _, err := db.ExecContext(context.Background(), string(body)); err != nil {
-		t.Fatalf("apply v0.3.0 legacy schema fixture: %v", err)
 	}
 }
 

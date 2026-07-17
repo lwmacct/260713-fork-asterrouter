@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS departments (
   code TEXT NOT NULL UNIQUE,
   parent_id TEXT NOT NULL DEFAULT '',
   cost_center TEXT NOT NULL DEFAULT '',
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL

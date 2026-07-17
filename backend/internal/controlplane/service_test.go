@@ -81,17 +81,17 @@ func TestGovernancePolicyLifecycleValidatesWorkspaceKeyScope(t *testing.T) {
 		t.Fatalf("CreateAPIKey(): %v", err)
 	}
 	policy, err := svc.CreateGovernancePolicy(ctx, "tester", GovernancePolicyRequest{
-		Name:               "Workspace key policy",
-		ScopeType:          GovernancePolicyScopeAPIKey,
-		ScopeID:            created.Record.ID,
-		ModelAllowlist:     []string{"gpt-4o-mini", "gpt-4o-mini", ""},
-		QPSLimit:           10,
-		MonthlyTokenLimit:  1000000,
-		MonthlyBudgetCents: 50000,
-		OverageAction:      GovernancePolicyOverageBlock,
-		PromptLoggingMode:  GovernancePolicyPromptLoggingMetadataOnly,
-		RetentionDays:      30,
-		Status:             GovernancePolicyStatusActive,
+		Name:                "Workspace key policy",
+		ScopeType:           GovernancePolicyScopeAPIKey,
+		ScopeID:             created.Record.ID,
+		ModelAllowlist:      []string{"gpt-4o-mini", "gpt-4o-mini", ""},
+		QPSLimit:            10,
+		MonthlyTokenLimit:   1000000,
+		MonthlyBudgetMicros: 50000,
+		OverageAction:       GovernancePolicyOverageBlock,
+		PromptLoggingMode:   GovernancePolicyPromptLoggingMetadataOnly,
+		RetentionDays:       30,
+		Status:              GovernancePolicyStatusActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateGovernancePolicy(): %v", err)
@@ -277,15 +277,15 @@ func TestEnforceGatewayPolicyRejectsMonthlyTokenQuota(t *testing.T) {
 	}
 }
 
-func TestEnforceGatewayPolicyRejectsWorkspaceKeyBudget(t *testing.T) {
+func TestEnforceGatewayPolicyDefersWorkspaceKeyBudgetToAdmissionHold(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryRepository(), "/v1")
 	policy, err := svc.CreateGovernancePolicy(ctx, "tester", GovernancePolicyRequest{
-		Name:               "Budget guard",
-		ScopeType:          GovernancePolicyScopeGlobal,
-		MonthlyBudgetCents: 250,
-		OverageAction:      GovernancePolicyOverageBlock,
-		Status:             GovernancePolicyStatusActive,
+		Name:                "Budget guard",
+		ScopeType:           GovernancePolicyScopeGlobal,
+		MonthlyBudgetMicros: 250,
+		OverageAction:       GovernancePolicyOverageBlock,
+		Status:              GovernancePolicyStatusActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateGovernancePolicy(): %v", err)
@@ -302,11 +302,12 @@ func TestEnforceGatewayPolicyRejectsWorkspaceKeyBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthorizeGatewayModel(): %v", err)
 	}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "gpt-4o-mini", Status: "forwarded", CostCents: 250}); err != nil {
-		t.Fatalf("RecordGatewayUsage(): %v", err)
+	recordTestPricedGatewayUsage(t, svc, auth, GatewayUsageInput{Model: "gpt-4o-mini", Status: "forwarded"}, 250)
+	if err := svc.EnforceGatewayPolicy(ctx, auth); err != nil {
+		t.Fatalf("EnforceGatewayPolicy() must defer budget enforcement to billing hold: %v", err)
 	}
-	if err := svc.EnforceGatewayPolicy(ctx, auth); !errors.Is(err, ErrGatewayBudgetExceeded) {
-		t.Fatalf("EnforceGatewayPolicy() err = %v", err)
+	if err := svc.EnforceGatewayOngoingPolicy(ctx, auth); !errors.Is(err, ErrGatewayBudgetExceeded) {
+		t.Fatalf("EnforceGatewayOngoingPolicy() err = %v", err)
 	}
 }
 
@@ -329,14 +330,12 @@ func TestUsageReportQueryAggregatesBeyondCurrentPage(t *testing.T) {
 		t.Fatalf("AuthorizeGatewayModel(): %v", err)
 	}
 	inputs := []GatewayUsageInput{
-		{Model: "model-a", ProviderID: "provider-a", ProviderAccountID: "account-a", Status: "forwarded", InputTokens: 1, OutputTokens: 1, CostCents: 100, LatencyMS: 10, UsageDimensions: UsageDimensions{UsageDimensionOutputImages: {Quantity: 1, Unit: UsageUnitCount, Source: "core", Confidence: UsageConfidenceObserved}}},
-		{Model: "model-b", ProviderID: "provider-b", ProviderAccountID: "account-b", Status: "error", ErrorType: "policy_error", InputTokens: 2, OutputTokens: 2, CostCents: 200, LatencyMS: 20, UsageDimensions: UsageDimensions{UsageDimensionOutputVideoMilliseconds: {Quantity: 1500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}},
-		{Model: "model-b", ProviderID: "provider-b", ProviderAccountID: "account-c", Status: "forwarded", InputTokens: 3, OutputTokens: 3, CostCents: 300, LatencyMS: 30, UsageDimensions: UsageDimensions{UsageDimensionOutputAudioMilliseconds: {Quantity: 2500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}},
+		{Model: "model-a", ProviderID: "provider-a", ProviderAccountID: "account-a", Status: "forwarded", InputTokens: 1, OutputTokens: 1, LatencyMS: 10, UsageDimensions: UsageDimensions{UsageDimensionOutputImages: {Quantity: 1, Unit: UsageUnitCount, Source: "core", Confidence: UsageConfidenceObserved}}},
+		{Model: "model-b", ProviderID: "provider-b", ProviderAccountID: "account-b", Status: "error", ErrorType: "policy_error", InputTokens: 2, OutputTokens: 2, LatencyMS: 20, UsageDimensions: UsageDimensions{UsageDimensionOutputVideoMilliseconds: {Quantity: 1500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}},
+		{Model: "model-b", ProviderID: "provider-b", ProviderAccountID: "account-c", Status: "forwarded", InputTokens: 3, OutputTokens: 3, LatencyMS: 30, UsageDimensions: UsageDimensions{UsageDimensionOutputAudioMilliseconds: {Quantity: 2500, Unit: UsageUnitMillisecond, Source: "provider", Confidence: UsageConfidenceReported}}},
 	}
-	for _, input := range inputs {
-		if err := svc.RecordGatewayUsage(context.Background(), auth, input); err != nil {
-			t.Fatalf("RecordGatewayUsage(): %v", err)
-		}
+	for index, input := range inputs {
+		recordTestPricedGatewayUsage(t, svc, auth, input, int64((index+1)*100))
 	}
 
 	report, err := svc.UsageReportQuery(context.Background(), UsageQuery{Limit: 1})
@@ -346,7 +345,7 @@ func TestUsageReportQueryAggregatesBeyondCurrentPage(t *testing.T) {
 	if len(report.Recent) != 1 {
 		t.Fatalf("recent should remain paginated, got %d", len(report.Recent))
 	}
-	if report.TotalRequests != 3 || report.ErrorRequests != 1 || report.TotalTokens != 12 || report.TotalOutputImages != 1 || report.TotalVideoDuration != 1500 || report.TotalAudioDuration != 2500 || report.TotalCostCents != 600 || report.AvgLatencyMS != 20 {
+	if report.TotalRequests != 3 || report.ErrorRequests != 1 || report.TotalTokens != 12 || report.TotalOutputImages != 1 || report.TotalVideoDuration != 1500 || report.TotalAudioDuration != 2500 || report.TotalUsageCostMicros != 600 || report.AvgLatencyMS != 20 {
 		t.Fatalf("aggregate does not include all records: %+v", report)
 	}
 	byModel := map[string]UsageModelSummary{}
@@ -382,68 +381,15 @@ func TestUsageReportQueryAggregatesBeyondCurrentPage(t *testing.T) {
 	}
 }
 
-func TestModelPricingEstimatesGatewayUsageCost(t *testing.T) {
+func TestPricingRuleEstimatesGatewayUsageCost(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), "/v1")
-	if err := svc.EnsureSeedData(context.Background()); err != nil {
-		t.Fatalf("EnsureSeedData(): %v", err)
+	publishTestUsagePricingRule(t, svc, `v1: token_line("input", uncached_input_tokens, 3000000) + token_line("output", output_tokens, 6000000)`)
+	amount, found, err := svc.EstimateModelUsageCostMicros(context.Background(), "priced-model", 1_000_000, 500_000)
+	if err != nil || !found || amount != 6_000_000 {
+		t.Fatalf("EstimateModelUsageCostMicros() amount=%d found=%t err=%v", amount, found, err)
 	}
-	pricing, err := svc.CreateModelPricing(context.Background(), "tester", ModelPricingRequest{
-		Model:                       "priced-model",
-		Currency:                    "usd",
-		InputPriceCentsPer1MTokens:  200,
-		OutputPriceCentsPer1MTokens: 400,
-		Status:                      ModelPricingStatusActive,
-	})
-	if err != nil {
-		t.Fatalf("CreateModelPricing(): %v", err)
-	}
-	updated, err := svc.UpdateModelPricing(context.Background(), "tester", pricing.ID, ModelPricingRequest{
-		Model:                       "priced-model",
-		Currency:                    "USD",
-		InputPriceCentsPer1MTokens:  300,
-		OutputPriceCentsPer1MTokens: 600,
-		Status:                      ModelPricingStatusActive,
-	})
-	if err != nil {
-		t.Fatalf("UpdateModelPricing(): %v", err)
-	}
-	if updated.InputPriceCentsPer1MTokens != 300 || updated.OutputPriceCentsPer1MTokens != 600 || updated.Currency != "USD" {
-		t.Fatalf("pricing update mismatch: %+v", updated)
-	}
-	if _, err := svc.CreateModelPricing(context.Background(), "tester", ModelPricingRequest{
-		Model:                       "priced-model",
-		InputPriceCentsPer1MTokens:  1,
-		OutputPriceCentsPer1MTokens: 1,
-	}); err == nil {
-		t.Fatal("expected duplicate model pricing error")
-	}
-
-	created, err := svc.CreateAPIKey(context.Background(), "tester", APIKeyCreateRequest{
-		Name:              "Priced usage key",
-		ModelAllowlist:    []string{"priced-model"},
-		MonthlyTokenLimit: 0,
-	})
-	if err != nil {
-		t.Fatalf("CreateAPIKey(): %v", err)
-	}
-	auth, err := svc.AuthorizeGatewayModel(context.Background(), created.Key, "priced-model")
-	if err != nil {
-		t.Fatalf("AuthorizeGatewayModel(): %v", err)
-	}
-	if err := svc.RecordGatewayUsage(context.Background(), auth, GatewayUsageInput{
-		Model:        "priced-model",
-		Status:       "forwarded",
-		InputTokens:  1_000_000,
-		OutputTokens: 500_000,
-	}); err != nil {
-		t.Fatalf("RecordGatewayUsage(): %v", err)
-	}
-	report, err := svc.UsageReportQuery(context.Background(), UsageQuery{Model: "priced-model"})
-	if err != nil {
-		t.Fatalf("UsageReportQuery(): %v", err)
-	}
-	if report.TotalCostCents != 600 {
-		t.Fatalf("estimated cost cents = %d, want 600; report=%+v", report.TotalCostCents, report)
+	if _, err := svc.CreatePricingRule(context.Background(), "tester", PricingRuleCreateRequest{Name: "Duplicate", Purpose: PricingPurposeUsageCost, ScopeType: PricingScopeGlobal, Model: "*", Currency: "USD", Expression: `v1: fixed_line("free", "request", 0)`}); err == nil {
+		t.Fatal("expected duplicate pricing slot error")
 	}
 }
 
@@ -463,28 +409,27 @@ func TestCostAllocationReportAggregatesByWorkspaceKeyAndModel(t *testing.T) {
 	inputs := []struct {
 		auth  GatewayAuthContext
 		usage GatewayUsageInput
+		cost  int64
 	}{
-		{platformAuth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 10, OutputTokens: 10, CostCents: 100, LatencyMS: 10}},
-		{billingAuth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 20, OutputTokens: 5, CostCents: 250, LatencyMS: 20}},
-		{billingAuth, GatewayUsageInput{Model: "model-b", Status: "error", ErrorType: "policy_error", InputTokens: 7, OutputTokens: 3, CostCents: 150, LatencyMS: 40}},
+		{platformAuth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 10, OutputTokens: 10, LatencyMS: 10}, 100},
+		{billingAuth, GatewayUsageInput{Model: "model-a", Status: "forwarded", InputTokens: 20, OutputTokens: 5, LatencyMS: 20}, 250},
+		{billingAuth, GatewayUsageInput{Model: "model-b", Status: "error", ErrorType: "policy_error", InputTokens: 7, OutputTokens: 3, LatencyMS: 40}, 150},
 	}
 	for _, input := range inputs {
-		if err := svc.RecordGatewayUsage(ctx, input.auth, input.usage); err != nil {
-			t.Fatalf("RecordGatewayUsage(): %v", err)
-		}
+		recordTestPricedGatewayUsage(t, svc, input.auth, input.usage, input.cost)
 	}
 	keyReport, err := svc.CostAllocationReportQuery(ctx, CostAllocationByAPIKey, UsageQuery{})
 	if err != nil {
 		t.Fatalf("CostAllocationReportQuery(api_key): %v", err)
 	}
-	if keyReport.TotalRequests != 3 || len(keyReport.Rows) != 2 || keyReport.Rows[0].APIKeyName != "Billing key" || keyReport.Rows[0].TotalCostCents != 400 {
+	if keyReport.TotalRequests != 3 || len(keyReport.Rows) != 2 || keyReport.Rows[0].APIKeyName != "Billing key" || keyReport.Rows[0].TotalUsageCostMicros != 400 {
 		t.Fatalf("workspace key allocation mismatch: %+v", keyReport)
 	}
 	modelReport, err := svc.CostAllocationReportQuery(ctx, CostAllocationByModel, UsageQuery{})
 	if err != nil {
 		t.Fatalf("CostAllocationReportQuery(model): %v", err)
 	}
-	if len(modelReport.Rows) != 2 || modelReport.Rows[0].Model != "model-a" || modelReport.Rows[0].TotalCostCents != 350 {
+	if len(modelReport.Rows) != 2 || modelReport.Rows[0].Model != "model-a" || modelReport.Rows[0].TotalUsageCostMicros != 350 {
 		t.Fatalf("model allocation mismatch: %+v", modelReport)
 	}
 	if _, err := svc.CostAllocationReportQuery(ctx, "project", UsageQuery{}); !errors.Is(err, ErrInvalidCostAllocationDimension) {
@@ -511,7 +456,7 @@ func TestCostAllocationReportAggregatesByUserAndDepartment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", InputTokens: 10, CostCents: 25}); err != nil {
+	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", InputTokens: 10}); err != nil {
 		t.Fatal(err)
 	}
 	userReport, err := svc.CostAllocationReportQuery(ctx, CostAllocationByUser, UsageQuery{})
@@ -811,17 +756,17 @@ func TestRoutingGroupTypeSpecificConfiguration(t *testing.T) {
 	svc := NewService(NewMemoryRepository(), "/v1", "test-secret-key")
 
 	subscription, err := svc.CreateRoutingGroup(context.Background(), "tester", RoutingGroupRequest{
-		Name:               "Team subscription",
-		Platform:           "openai_compatible",
-		GroupType:          RoutingGroupTypeSubscription,
-		RateMultiplier:     1,
-		MonthlyBudgetCents: 5000,
-		Status:             RoutingGroupStatusActive,
+		Name:                "Team subscription",
+		Platform:            "openai_compatible",
+		GroupType:           RoutingGroupTypeSubscription,
+		RateMultiplier:      1,
+		MonthlyBudgetMicros: 5000,
+		Status:              RoutingGroupStatusActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateRoutingGroup(subscription): %v", err)
 	}
-	if subscription.GroupType != RoutingGroupTypeSubscription || subscription.MonthlyBudgetCents != 5000 {
+	if subscription.GroupType != RoutingGroupTypeSubscription || subscription.MonthlyBudgetMicros != 5000 {
 		t.Fatalf("subscription fields not preserved: %+v", subscription)
 	}
 
@@ -897,13 +842,13 @@ func TestRoutingGroupTypeSpecificValidation(t *testing.T) {
 	}
 
 	if _, err := svc.CreateRoutingGroup(context.Background(), "tester", RoutingGroupRequest{
-		Name:               "Bad peak",
-		Platform:           "openai_compatible",
-		GroupType:          RoutingGroupTypeSubscription,
-		RateMultiplier:     1,
-		MonthlyBudgetCents: 5000,
-		PeakRateEnabled:    true,
-		Status:             RoutingGroupStatusActive,
+		Name:                "Bad peak",
+		Platform:            "openai_compatible",
+		GroupType:           RoutingGroupTypeSubscription,
+		RateMultiplier:      1,
+		MonthlyBudgetMicros: 5000,
+		PeakRateEnabled:     true,
+		Status:              RoutingGroupStatusActive,
 	}); err == nil {
 		t.Fatal("peak rate without start/end should fail")
 	}
@@ -917,7 +862,7 @@ func TestRoutingGroupClearsFieldsThatDoNotBelongToType(t *testing.T) {
 		Platform:            "openai_compatible",
 		GroupType:           RoutingGroupTypeStandard,
 		RateMultiplier:      1,
-		MonthlyBudgetCents:  5000,
+		MonthlyBudgetMicros: 5000,
 		ImageEnabled:        true,
 		ImagePrice1KCents:   10,
 		VideoEnabled:        true,
@@ -931,7 +876,7 @@ func TestRoutingGroupClearsFieldsThatDoNotBelongToType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoutingGroup(): %v", err)
 	}
-	if group.MonthlyBudgetCents != 0 || group.ImageEnabled || group.VideoEnabled || group.PeakRateEnabled {
+	if group.MonthlyBudgetMicros != 0 || group.ImageEnabled || group.VideoEnabled || group.PeakRateEnabled {
 		t.Fatalf("standard group retained type-specific fields: %+v", group)
 	}
 }

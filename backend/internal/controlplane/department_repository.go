@@ -30,7 +30,7 @@ func (r *MemoryRepository) SaveDepartment(_ context.Context, department Departme
 
 func (r *PostgresRepository) ListDepartments(ctx context.Context) ([]Department, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, code, parent_id, cost_center, monthly_budget_cents, status, created_at, updated_at
+SELECT id, name, code, parent_id, cost_center, monthly_budget_micros, status, created_at, updated_at
 FROM departments
 ORDER BY status ASC, code ASC
 `)
@@ -41,7 +41,7 @@ ORDER BY status ASC, code ASC
 	out := make([]Department, 0)
 	for rows.Next() {
 		var department Department
-		if err := rows.Scan(&department.ID, &department.Name, &department.Code, &department.ParentID, &department.CostCenter, &department.MonthlyBudgetCents, &department.Status, &department.CreatedAt, &department.UpdatedAt); err != nil {
+		if err := rows.Scan(&department.ID, &department.Name, &department.Code, &department.ParentID, &department.CostCenter, &department.MonthlyBudgetMicros, &department.Status, &department.CreatedAt, &department.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, department)
@@ -51,16 +51,16 @@ ORDER BY status ASC, code ASC
 
 func (r *PostgresRepository) SaveDepartment(ctx context.Context, department Department) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO departments(id, name, code, parent_id, cost_center, monthly_budget_cents, status, created_at, updated_at)
+INSERT INTO departments(id, name, code, parent_id, cost_center, monthly_budget_micros, status, created_at, updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT(id) DO UPDATE SET
   name = EXCLUDED.name,
   code = EXCLUDED.code,
   parent_id = EXCLUDED.parent_id,
   cost_center = EXCLUDED.cost_center,
-  monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+  monthly_budget_micros = EXCLUDED.monthly_budget_micros,
   status = EXCLUDED.status,
   updated_at = EXCLUDED.updated_at
-`, department.ID, department.Name, department.Code, department.ParentID, department.CostCenter, department.MonthlyBudgetCents, department.Status, department.CreatedAt, department.UpdatedAt)
+`, department.ID, department.Name, department.Code, department.ParentID, department.CostCenter, department.MonthlyBudgetMicros, department.Status, department.CreatedAt, department.UpdatedAt)
 	return err
 }

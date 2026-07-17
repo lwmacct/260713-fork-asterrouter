@@ -80,15 +80,15 @@ type CanonicalInputArtifact struct {
 }
 
 type CanonicalLimits struct {
-	QPSLimit                 int `json:"qps_limit"`
-	RPMLimit                 int `json:"rpm_limit"`
-	TPMLimit                 int `json:"tpm_limit"`
-	ConcurrencyLimit         int `json:"concurrency_limit"`
-	MonthlyTokenLimit        int `json:"monthly_token_limit"`
-	MonthlyBudgetCents       int `json:"monthly_budget_cents"`
-	MonthlyImageLimit        int `json:"monthly_image_limit"`
-	MonthlyVideoSecondsLimit int `json:"monthly_video_seconds_limit"`
-	MonthlyAudioSecondsLimit int `json:"monthly_audio_seconds_limit"`
+	QPSLimit                 int   `json:"qps_limit"`
+	RPMLimit                 int   `json:"rpm_limit"`
+	TPMLimit                 int   `json:"tpm_limit"`
+	ConcurrencyLimit         int   `json:"concurrency_limit"`
+	MonthlyTokenLimit        int   `json:"monthly_token_limit"`
+	MonthlyBudgetMicros      int64 `json:"monthly_budget_micros"`
+	MonthlyImageLimit        int   `json:"monthly_image_limit"`
+	MonthlyVideoSecondsLimit int   `json:"monthly_video_seconds_limit"`
+	MonthlyAudioSecondsLimit int   `json:"monthly_audio_seconds_limit"`
 }
 
 type CanonicalAuthContext struct {

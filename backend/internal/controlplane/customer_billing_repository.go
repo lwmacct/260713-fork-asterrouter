@@ -104,11 +104,11 @@ func (r *MemoryRepository) RedeemCustomerCode(_ context.Context, request Custome
 	if !exists || user.Status != WorkspaceUserStatusActive {
 		return CustomerBillingEntry{}, errors.New("客户账户不存在或已停用")
 	}
-	user.BalanceCents += code.AmountCents
+	user.BalanceMicros += code.AmountMicros
 	user.UpdatedAt = request.Now
 	entry := CustomerBillingEntry{
 		ID: request.EntryID, UserID: request.UserID, Kind: CustomerBillingKindRedeem,
-		AmountCents: code.AmountCents, BalanceAfterCents: user.BalanceCents,
+		AmountMicros: code.AmountMicros, BalanceAfterMicros: user.BalanceMicros,
 		Reference: code.ID, Description: code.Title, CreatedAt: request.Now,
 	}
 	code.RedeemedCount++
@@ -124,8 +124,8 @@ func (r *MemoryRepository) RedeemCustomerCode(_ context.Context, request Custome
 
 func (r *PostgresRepository) GetCustomerWallet(ctx context.Context, userID string) (CustomerWallet, error) {
 	wallet := CustomerWallet{UserID: userID}
-	err := r.db.QueryRowContext(ctx, `SELECT gift_balance_cents, profit_balance_cents, updated_at FROM customer_wallets WHERE user_id=$1`, userID).
-		Scan(&wallet.GiftBalanceCents, &wallet.ProfitBalanceCents, &wallet.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, `SELECT gift_balance_micros, profit_balance_micros, updated_at FROM customer_wallets WHERE user_id=$1`, userID).
+		Scan(&wallet.GiftBalanceMicros, &wallet.ProfitBalanceMicros, &wallet.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return wallet, nil
 	}
@@ -142,7 +142,7 @@ WHERE user_id=$1 AND ($2='' OR kind=$2)
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id,user_id,kind,amount_cents,balance_after_cents,reference,description,created_at
+SELECT id,user_id,kind,amount_micros,balance_after_micros,reference,description,created_at
 FROM customer_billing_entries
 WHERE user_id=$1 AND ($2='' OR kind=$2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
@@ -155,7 +155,7 @@ ORDER BY created_at DESC LIMIT $5 OFFSET $6`, query.UserID, query.Kind, query.Fr
 	items := make([]CustomerBillingEntry, 0)
 	for rows.Next() {
 		var item CustomerBillingEntry
-		if err := rows.Scan(&item.ID, &item.UserID, &item.Kind, &item.AmountCents, &item.BalanceAfterCents, &item.Reference, &item.Description, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Kind, &item.AmountMicros, &item.BalanceAfterMicros, &item.Reference, &item.Description, &item.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, item)
@@ -165,7 +165,7 @@ ORDER BY created_at DESC LIMIT $5 OFFSET $6`, query.UserID, query.Kind, query.Fr
 
 func (r *PostgresRepository) ListAvailableCustomerVouchers(ctx context.Context, userID string, now time.Time) ([]CustomerVoucher, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id,user_id,title,amount_cents,minimum_recharge_cents,status,expires_at,created_at
+SELECT id,user_id,title,amount_micros,minimum_recharge_micros,status,expires_at,created_at
 FROM customer_vouchers WHERE user_id=$1 AND status='active' AND (expires_at IS NULL OR expires_at > $2)
 ORDER BY expires_at ASC NULLS LAST, created_at DESC`, userID, now)
 	if err != nil {
@@ -175,7 +175,7 @@ ORDER BY expires_at ASC NULLS LAST, created_at DESC`, userID, now)
 	items := make([]CustomerVoucher, 0)
 	for rows.Next() {
 		var item CustomerVoucher
-		if err := rows.Scan(&item.ID, &item.UserID, &item.Title, &item.AmountCents, &item.MinimumRechargeCents, &item.Status, &item.ExpiresAt, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Title, &item.AmountMicros, &item.MinimumRechargeMicros, &item.Status, &item.ExpiresAt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -185,10 +185,10 @@ ORDER BY expires_at ASC NULLS LAST, created_at DESC`, userID, now)
 
 func (r *PostgresRepository) SaveCustomerRedemptionCode(ctx context.Context, code CustomerRedemptionCode) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO customer_redemption_codes(id,code_hash,title,amount_cents,status,max_redemptions,redeemed_count,expires_at,created_at)
+INSERT INTO customer_redemption_codes(id,code_hash,title,amount_micros,status,max_redemptions,redeemed_count,expires_at,created_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT(id) DO UPDATE SET code_hash=EXCLUDED.code_hash,title=EXCLUDED.title,amount_cents=EXCLUDED.amount_cents,status=EXCLUDED.status,max_redemptions=EXCLUDED.max_redemptions,redeemed_count=EXCLUDED.redeemed_count,expires_at=EXCLUDED.expires_at`,
-		code.ID, code.CodeHash, code.Title, code.AmountCents, code.Status, code.MaxRedemptions, code.RedeemedCount, code.ExpiresAt, code.CreatedAt)
+ON CONFLICT(id) DO UPDATE SET code_hash=EXCLUDED.code_hash,title=EXCLUDED.title,amount_micros=EXCLUDED.amount_micros,status=EXCLUDED.status,max_redemptions=EXCLUDED.max_redemptions,redeemed_count=EXCLUDED.redeemed_count,expires_at=EXCLUDED.expires_at`,
+		code.ID, code.CodeHash, code.Title, code.AmountMicros, code.Status, code.MaxRedemptions, code.RedeemedCount, code.ExpiresAt, code.CreatedAt)
 	return err
 }
 
@@ -217,9 +217,9 @@ func (r *PostgresRepository) redeemCustomerCodeOnce(ctx context.Context, request
 	defer tx.Rollback()
 	var code CustomerRedemptionCode
 	err = tx.QueryRowContext(ctx, `
-SELECT id,title,amount_cents,status,max_redemptions,redeemed_count,expires_at,created_at
+SELECT id,title,amount_micros,status,max_redemptions,redeemed_count,expires_at,created_at
 FROM customer_redemption_codes WHERE code_hash=$1 FOR UPDATE`, request.CodeHash).
-		Scan(&code.ID, &code.Title, &code.AmountCents, &code.Status, &code.MaxRedemptions, &code.RedeemedCount, &code.ExpiresAt, &code.CreatedAt)
+		Scan(&code.ID, &code.Title, &code.AmountMicros, &code.Status, &code.MaxRedemptions, &code.RedeemedCount, &code.ExpiresAt, &code.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CustomerBillingEntry{}, ErrCustomerCodeNotFound
 	}
@@ -239,8 +239,8 @@ FROM customer_redemption_codes WHERE code_hash=$1 FOR UPDATE`, request.CodeHash)
 	if alreadyUsed {
 		return CustomerBillingEntry{}, ErrCustomerCodeAlreadyUsed
 	}
-	var currentBalance int
-	if err := tx.QueryRowContext(ctx, `SELECT balance_cents FROM workspace_users WHERE id=$1 AND status=$2 FOR UPDATE`, request.UserID, WorkspaceUserStatusActive).Scan(&currentBalance); err != nil {
+	var currentBalance int64
+	if err := tx.QueryRowContext(ctx, `SELECT balance_micros FROM workspace_users WHERE id=$1 AND status=$2 FOR UPDATE`, request.UserID, WorkspaceUserStatusActive).Scan(&currentBalance); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CustomerBillingEntry{}, errors.New("客户账户不存在或已停用")
 		}
@@ -248,13 +248,13 @@ FROM customer_redemption_codes WHERE code_hash=$1 FOR UPDATE`, request.CodeHash)
 	}
 	entry := CustomerBillingEntry{
 		ID: request.EntryID, UserID: request.UserID, Kind: CustomerBillingKindRedeem,
-		AmountCents: code.AmountCents, BalanceAfterCents: currentBalance + code.AmountCents,
+		AmountMicros: code.AmountMicros, BalanceAfterMicros: currentBalance + code.AmountMicros,
 		Reference: code.ID, Description: strings.TrimSpace(code.Title), CreatedAt: request.Now,
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE workspace_users SET balance_cents=$1,updated_at=$2 WHERE id=$3`, entry.BalanceAfterCents, request.Now, request.UserID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE workspace_users SET balance_micros=$1,updated_at=$2 WHERE id=$3`, entry.BalanceAfterMicros, request.Now, request.UserID); err != nil {
 		return CustomerBillingEntry{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO customer_billing_entries(id,user_id,kind,amount_cents,balance_after_cents,reference,description,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, entry.ID, entry.UserID, entry.Kind, entry.AmountCents, entry.BalanceAfterCents, entry.Reference, entry.Description, entry.CreatedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO customer_billing_entries(id,user_id,kind,amount_micros,balance_after_micros,reference,description,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, entry.ID, entry.UserID, entry.Kind, entry.AmountMicros, entry.BalanceAfterMicros, entry.Reference, entry.Description, entry.CreatedAt); err != nil {
 		return CustomerBillingEntry{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO customer_redemptions(code_id,user_id,entry_id,redeemed_at) VALUES($1,$2,$3,$4)`, code.ID, request.UserID, entry.ID, request.Now); err != nil {

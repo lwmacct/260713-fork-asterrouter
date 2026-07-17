@@ -11,7 +11,7 @@ func TestCustomerBillingRedeemIsAtomicAndIsolated(t *testing.T) {
 	ctx := context.Background()
 	repo := NewMemoryRepository()
 	svc := NewService(repo, "/v1")
-	first, _, err := svc.RegisterWorkspaceUser(ctx, "first-customer@example.test", "long-password", "First", false, WorkspaceUserDefaults{BalanceCents: 200})
+	first, _, err := svc.RegisterWorkspaceUser(ctx, "first-customer@example.test", "long-password", "First", false, WorkspaceUserDefaults{BalanceMicros: 200})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestCustomerBillingRedeemIsAtomicAndIsolated(t *testing.T) {
 	code := "ASTER-CUSTOMER-500"
 	if err := repo.SaveCustomerRedemptionCode(ctx, CustomerRedemptionCode{
 		ID: "crc_test", CodeHash: hashCustomerRedemptionCode(code), Title: "测试兑换金",
-		AmountCents: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 2, CreatedAt: time.Now().UTC(),
+		AmountMicros: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 2, CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestCustomerBillingRedeemIsAtomicAndIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RedeemCustomerCode(): %v", err)
 	}
-	if result.Entry.AmountCents != 500 || result.Overview.BalanceCents != 700 {
+	if result.Entry.AmountMicros != 500 || result.Overview.BalanceMicros != 700 {
 		t.Fatalf("unexpected first redemption: %+v", result)
 	}
 	if _, err := svc.RedeemCustomerCode(ctx, first.Email, CustomerRedeemRequest{Code: code}); !errors.Is(err, ErrCustomerCodeAlreadyUsed) {
@@ -60,11 +60,11 @@ func TestCustomerBillingRedeemIsAtomicAndIsolated(t *testing.T) {
 func TestCustomerRechargeDoesNotChangeBalanceWithoutPaymentProvider(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryRepository(), "/v1")
-	user, _, err := svc.RegisterWorkspaceUser(ctx, "recharge@example.test", "long-password", "Recharge", false, WorkspaceUserDefaults{BalanceCents: 900})
+	user, _, err := svc.RegisterWorkspaceUser(ctx, "recharge@example.test", "long-password", "Recharge", false, WorkspaceUserDefaults{BalanceMicros: 900})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.CreateCustomerRechargeOrder(ctx, user.Email, CustomerRechargeRequest{AmountCents: 1000, PaymentMethod: "wechat"})
+	_, err = svc.CreateCustomerRechargeOrder(ctx, user.Email, CustomerRechargeRequest{AmountMicros: 10_000_000, PaymentMethod: "wechat"})
 	if !errors.Is(err, ErrCustomerPaymentUnavailable) {
 		t.Fatalf("recharge error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCustomerRechargeDoesNotChangeBalanceWithoutPaymentProvider(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.BalanceCents != 900 || overview.TotalCents != 900 {
+	if overview.BalanceMicros != 900 || overview.TotalMicros != 900 {
 		t.Fatalf("unconfigured payment changed balance: %+v", overview)
 	}
 }

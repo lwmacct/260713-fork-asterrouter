@@ -145,6 +145,7 @@ func registerGatewayRoutes(r *gin.Engine, control *controlplane.Service, durable
 		}
 		operation, created, err := control.BeginCanonicalOperation(c.Request.Context(), canonicalAuth, req)
 		if err != nil {
+			recordGatewayAdmissionRejected(c, control, auth, req, startedAt, err)
 			writeGatewayError(c, err)
 			return
 		}
@@ -852,6 +853,38 @@ func gatewayPolicyErrorType(err error) string {
 		return "budget_exceeded"
 	default:
 		return "policy_error"
+	}
+}
+
+func recordGatewayAdmissionRejected(c *gin.Context, control *controlplane.Service, auth controlplane.GatewayAuthContext, request gatewaycore.CanonicalRequest, startedAt time.Time, err error) {
+	httpStatus, errorType, observable := gatewayAdmissionErrorDetails(err)
+	if !observable {
+		return
+	}
+	_ = control.RecordGatewayCall(c.Request.Context(), auth, request.Model, "admission_rejected", err.Error())
+	_ = recordGatewayUsage(control, c, auth, controlplane.GatewayUsageInput{
+		Model: request.Model, Protocol: string(request.Protocol), Status: "error", ErrorType: errorType,
+		LatencyMS: time.Since(startedAt).Milliseconds(),
+	})
+	recordGatewayTrace(control, c, auth, gatewayTraceInput(request, controlplane.GatewayProvider{}, "error", httpStatus, errorType, time.Since(startedAt).Milliseconds(), 0, 0, err.Error(), ""))
+}
+
+func gatewayAdmissionErrorDetails(err error) (int, string, bool) {
+	switch {
+	case errors.Is(err, controlplane.ErrBillingHoldBudgetExceeded), errors.Is(err, controlplane.ErrBillingHoldEstimateUnavailable):
+		return http.StatusPaymentRequired, "budget_hold_failed", true
+	case errors.Is(err, controlplane.ErrBillingHoldUsageEstimate):
+		return http.StatusBadRequest, "usage_estimate_required", true
+	case errors.Is(err, controlplane.ErrBillingHoldImageQuotaExceeded):
+		return http.StatusTooManyRequests, "image_quota_exceeded", true
+	case errors.Is(err, controlplane.ErrBillingHoldVideoQuotaExceeded):
+		return http.StatusTooManyRequests, "video_quota_exceeded", true
+	case errors.Is(err, controlplane.ErrBillingHoldAudioQuotaExceeded):
+		return http.StatusTooManyRequests, "audio_quota_exceeded", true
+	case errors.Is(err, controlplane.ErrBillingHoldStateConflict):
+		return http.StatusConflict, "billing_hold_conflict", true
+	default:
+		return 0, "", false
 	}
 }
 

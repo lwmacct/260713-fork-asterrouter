@@ -61,8 +61,8 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat().format(value || 0)
 }
 
-function formatCost(cents: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format((cents || 0) / 100)
+function formatCost(micros: number): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format((micros || 0) / 1_000_000)
 }
 
 function formatDate(value?: string): string {
@@ -184,7 +184,7 @@ onMounted(load)
           <span class="metric-icon"><WalletCards :size="18" /></span>
           <div>
             <span>{{ t('portal.cost') }}</span>
-            <strong>{{ formatCost(usage?.total_cost_cents || 0) }}</strong>
+            <strong>{{ formatCost(usage?.total_usage_cost_micros || 0) }}</strong>
             <small>{{ formatNumber(usage?.error_requests || 0) }} {{ t('usage.errors') }}</small>
           </div>
         </article>
@@ -348,7 +348,7 @@ onMounted(load)
                 <td>{{ item.model }}</td>
                 <td>{{ formatNumber(item.requests) }}</td>
                 <td>{{ formatNumber(item.tokens) }}</td>
-                <td>{{ formatCost(item.cost_cents) }}</td>
+                <td>{{ formatCost(item.usage_cost_micros) }}</td>
               </tr>
               <tr v-if="!(usage?.by_model || []).length">
                 <td colspan="4" class="empty-cell">{{ loading ? t('common.loading') : t('portal.emptyUsage') }}</td>

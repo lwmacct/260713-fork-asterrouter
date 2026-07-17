@@ -221,9 +221,9 @@ describe('API module contracts', () => {
     expect(client.get).toHaveBeenLastCalledWith('/customer/billing/entries', { params: query })
     await customer.redeemCustomerCode('CODE-1')
     expect(client.post).toHaveBeenLastCalledWith('/customer/billing/redeem', { code: 'CODE-1' })
-    await customer.createCustomerRechargeOrder({ amount_cents: 1000, payment_method: 'alipay', voucher_id: 'voucher-1' })
+    await customer.createCustomerRechargeOrder({ amount_micros: 1000, payment_method: 'alipay', voucher_id: 'voucher-1' })
     expect(client.post).toHaveBeenLastCalledWith('/customer/billing/recharge-orders', {
-      amount_cents: 1000, payment_method: 'alipay', voucher_id: 'voucher-1'
+      amount_micros: 1000, payment_method: 'alipay', voucher_id: 'voucher-1'
     })
     await customer.getCustomerNotificationSettings()
     expect(client.get).toHaveBeenLastCalledWith('/customer/notification-settings')
@@ -296,8 +296,8 @@ describe('API module contracts', () => {
     expect(client.delete).toHaveBeenLastCalledWith('/operator/risk-rules/risk-1')
     await operator.getOperatorBalances()
     expect(client.get).toHaveBeenLastCalledWith('/operator/balance-entries')
-    await operator.createOperatorBalance({ customer_id: 'customer-1', amount_cents: 100 })
-    expect(client.post).toHaveBeenLastCalledWith('/operator/balance-entries', { customer_id: 'customer-1', amount_cents: 100 })
+    await operator.createOperatorBalance({ customer_id: 'customer-1', amount_micros: 100 })
+    expect(client.post).toHaveBeenLastCalledWith('/operator/balance-entries', { customer_id: 'customer-1', amount_micros: 100 })
     await operator.getOperatorCustomerKeys()
     expect(client.get).toHaveBeenLastCalledWith('/operator/customer-keys')
     await operator.rotateOperatorCustomerKey('key-1', 300)

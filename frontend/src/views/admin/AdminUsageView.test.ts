@@ -18,7 +18,11 @@ const emptyUsageReport: UsageReport = {
   total_output_images: 0,
   total_video_milliseconds: 0,
   total_audio_milliseconds: 0,
-  total_cost_cents: 0,
+  total_usage_cost_micros: 0,
+  priced_requests: 0,
+  unpriced_requests: 0,
+  disputed_requests: 0,
+  cost_available: false,
   avg_latency_ms: 0,
   by_model: [],
   recent: []
@@ -29,7 +33,7 @@ const emptyAllocationReport: CostAllocationReport = {
   total_requests: 0,
   error_requests: 0,
   total_tokens: 0,
-  total_cost_cents: 0,
+  total_usage_cost_micros: 0,
   avg_latency_ms: 0,
   rows: []
 }

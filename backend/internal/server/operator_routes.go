@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerOperatorRoutes(group *gin.RouterGroup, svc *operatorcore.Service) {
+func registerOperatorRoutes(group *gin.RouterGroup, svc *operatorcore.Service, control *controlplane.Service) {
 	if svc == nil {
 		return
 	}
@@ -18,7 +18,7 @@ func registerOperatorRoutes(group *gin.RouterGroup, svc *operatorcore.Service) {
 	registerOperatorCRUD(group, "customer-groups", svc.ListGroups, svc.SaveGroup, svc.DeleteGroup)
 	registerOperatorCRUD(group, "customers", svc.ListCustomers, svc.SaveCustomer, svc.DeleteCustomer)
 	registerOperatorCRUD(group, "plans", svc.ListPlans, svc.SavePlan, svc.DeletePlan)
-	registerOperatorCRUD(group, "pricing-rules", svc.ListPricingRules, svc.SavePricingRule, svc.DeletePricingRule)
+	registerPricingRuleRoutes(group, control, PricingSurfaceOperator)
 	registerOperatorCRUD(group, "risk-rules", svc.ListRiskRules, svc.SaveRiskRule, svc.DeleteRiskRule)
 	group.GET("/risk-blocks", func(c *gin.Context) {
 		data, err := svc.ListRiskBlocks(c.Request.Context())

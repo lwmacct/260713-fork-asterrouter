@@ -38,7 +38,7 @@ const navGroups = [
       { to: '/admin/gateway-simulator', label: 'admin.gatewaySimulator', icon: FlaskConical },
       { to: '/admin/routing-groups', label: 'admin.routingGroups', icon: Route },
       { to: '/admin/provider-accounts', label: 'admin.providerAccounts', icon: RadioTower },
-      { to: '/admin/model-pricings', label: 'admin.modelPricings', icon: BadgeDollarSign },
+      { to: '/admin/pricing', label: 'pricingRules.adminTitle', icon: BadgeDollarSign },
       { to: '/admin/effective-pricing', label: 'admin.effectivePricing', icon: BadgeDollarSign }
     ]
   },

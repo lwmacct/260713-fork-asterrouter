@@ -56,12 +56,14 @@ CREATE TABLE IF NOT EXISTS billing_ledger_entries (
   usage_version INTEGER NOT NULL,
   usage_record_id TEXT NOT NULL,
   request_fingerprint TEXT NOT NULL,
-  entry_type TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'USD',
+  purpose TEXT NOT NULL CHECK (purpose IN ('usage_cost', 'customer_charge')),
+  amount_micros BIGINT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
+  pricing_evaluation_id TEXT NOT NULL REFERENCES pricing_evaluations(id) ON DELETE RESTRICT,
+  pricing_rule_version_id TEXT NOT NULL REFERENCES pricing_rule_versions(id) ON DELETE RESTRICT,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE(operation_id, attempt_id, usage_version)
+  UNIQUE(operation_id, attempt_id, usage_version, purpose)
 );
 
 CREATE INDEX IF NOT EXISTS billing_ledger_operation_created_idx

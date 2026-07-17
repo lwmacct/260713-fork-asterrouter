@@ -222,6 +222,7 @@ func seedTransactionalOutboxVersionsWithMax(t *testing.T, repo Repository, base 
 	ctx := context.Background()
 	svc := NewService(repo, "/v1")
 	svc.now = func() time.Time { return base }
+	publishTestUsagePricingRule(t, svc, `v1: unit_line("input", total_input_tokens, "token", 1)`)
 	operation, created, err := svc.BeginCanonicalOperation(ctx, operationTestAuth(), operationTestRequest("", "outbox-fingerprint"))
 	if err != nil || !created {
 		t.Fatalf("BeginCanonicalOperation() created=%t err=%v", created, err)
@@ -234,16 +235,18 @@ func seedTransactionalOutboxVersionsWithMax(t *testing.T, repo Repository, base 
 		record := UsageRecord{
 			ID: "usage-seed", OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: version, UsageSource: "synthetic",
 			RequestFingerprint: operation.RequestFingerprint, APIKeyID: "key-operation", APIFingerprint: "fingerprint-operation",
-			Model: "model-a", Status: "forwarded", InputTokens: version, CostCents: version, CreatedAt: base,
+			Model: "model-a", Status: "forwarded", InputTokens: version, UsageCostCurrency: "USD", PricingStatus: "unpriced", CreatedAt: base,
 		}
-		billing, outbox, err := usageLedgerRecords(record)
+		record.ID = "usage_" + usageLedgerDigest(record)
+		settlement, err := svc.buildUsageSettlement(ctx, record)
 		if err != nil {
 			t.Fatal(err)
 		}
-		outbox.MaxAttempts = maxAttempts
-		record.ID = billing.UsageRecordID
-		if applied, err := repo.ApplyUsageLedger(ctx, record, billing, outbox, nil); err != nil || !applied {
-			t.Fatalf("ApplyUsageLedger(version=%d) applied=%t err=%v", version, applied, err)
+		for index := range settlement.OutboxEvents {
+			settlement.OutboxEvents[index].MaxAttempts = maxAttempts
+		}
+		if applied, err := repo.ApplyUsageSettlement(ctx, settlement); err != nil || !applied {
+			t.Fatalf("ApplyUsageSettlement(version=%d) applied=%t err=%v", version, applied, err)
 		}
 	}
 	return operation.ID + ":" + attempt.ID

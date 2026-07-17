@@ -25,7 +25,7 @@ func TestGatewayBillingHoldLifecycle(t *testing.T) {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
 		hold := gatewayBillingHoldFromResponse(t, control, recorder)
-		if hold.Status != controlplane.BillingHoldStatusSettled || hold.ReservedAmountCents != 10 || hold.SettledAmountCents != 5 {
+		if hold.Status != controlplane.BillingHoldStatusSettled || hold.ReservedAmountMicros != 10 || hold.SettledAmountMicros != 5 {
 			t.Fatalf("settled hold=%+v", hold)
 		}
 	})
@@ -104,13 +104,19 @@ func setupGatewayBillingHoldRuntime(t *testing.T, upstreamURL string) (http.Hand
 	}
 	account := createGatewayTestAccount(t, control, provider, "billing-upstream", "billing-account-secret", 10, 1)
 	createGatewayTestModelAndRoutes(t, control, "billing-model", "default", []gatewayTestRoute{{account: account, upstreamModel: "billing-upstream", priority: 10}})
-	if _, err := control.CreateModelPricing(context.Background(), "tester", controlplane.ModelPricingRequest{
-		Model: "billing-model", Currency: "USD", OutputPriceCentsPer1MTokens: 1_000_000, Status: controlplane.ModelPricingStatusActive,
-	}); err != nil {
+	pricing, err := control.CreatePricingRule(context.Background(), "tester", controlplane.PricingRuleCreateRequest{
+		Name: "Billing usage", Purpose: controlplane.PricingPurposeUsageCost, ScopeType: controlplane.PricingScopeGlobal,
+		Model: "*", Currency: "USD", AuthoringMode: controlplane.PricingAuthoringRaw,
+		Expression: `v1: unit_line("output", output_tokens, "token", 1)`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.PublishPricingRule(context.Background(), "tester", pricing.Rule.ID, controlplane.PricingPublishRequest{DraftVersionID: pricing.Draft.ID, ExpectedLockVersion: pricing.Rule.LockVersion, ExpressionHash: pricing.Draft.ExpressionHash}); err != nil {
 		t.Fatal(err)
 	}
 	created, err := control.CreateAPIKey(context.Background(), "tester", controlplane.APIKeyCreateRequest{
-		Name: "Billing key", ModelAllowlist: []string{"billing-model"}, MonthlyBudgetCents: 100,
+		Name: "Billing key", ModelAllowlist: []string{"billing-model"}, MonthlyBudgetMicros: 100,
 	})
 	if err != nil {
 		t.Fatal(err)

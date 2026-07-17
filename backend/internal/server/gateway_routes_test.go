@@ -158,13 +158,28 @@ func TestGatewayChatCompletionEnforcesQPSLimitAndRecordsTrace(t *testing.T) {
 }
 
 func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"budget-upstream","object":"chat.completion","choices":[]}`))
+	}))
+	defer upstream.Close()
+
 	handler, control := newTestRuntime(t, RuntimeConfig{})
+	provider, err := control.CreateProvider(context.Background(), "tester", controlplane.ProviderRequest{
+		Name: "budget provider", Type: "openai_compatible", BaseURL: upstream.URL + "/v1",
+		Status: controlplane.ProviderStatusActive, Models: []string{"budget-upstream"}, APIKey: "budget-secret",
+	})
+	if err != nil {
+		t.Fatalf("CreateProvider(): %v", err)
+	}
+	account := createGatewayTestAccount(t, control, provider, "budget-upstream", "budget-secret", 10, 1)
+	createGatewayTestModelAndRoutes(t, control, "gpt-4o-mini", "default", []gatewayTestRoute{{account: account, upstreamModel: "budget-upstream", priority: 10}})
 	policy, err := control.CreateGovernancePolicy(context.Background(), "tester", controlplane.GovernancePolicyRequest{
-		Name:               "Workspace key budget",
-		ScopeType:          controlplane.GovernancePolicyScopeGlobal,
-		MonthlyBudgetCents: 100,
-		OverageAction:      controlplane.GovernancePolicyOverageBlock,
-		Status:             controlplane.GovernancePolicyStatusActive,
+		Name:                "Workspace key budget",
+		ScopeType:           controlplane.GovernancePolicyScopeGlobal,
+		MonthlyBudgetMicros: 100,
+		OverageAction:       controlplane.GovernancePolicyOverageBlock,
+		Status:              controlplane.GovernancePolicyStatusActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateGovernancePolicy(): %v", err)
@@ -179,16 +194,16 @@ func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testi
 	if err != nil {
 		t.Fatalf("CreateAPIKey(): %v", err)
 	}
-	auth, err := control.AuthorizeGatewayModel(context.Background(), created.Key, "gpt-4o-mini")
+	_, err = control.AuthorizeGatewayModel(context.Background(), created.Key, "gpt-4o-mini")
 	if err != nil {
 		t.Fatalf("AuthorizeGatewayModel(): %v", err)
 	}
-	if err := control.RecordGatewayUsage(context.Background(), auth, controlplane.GatewayUsageInput{
-		Model:     "gpt-4o-mini",
-		Status:    "forwarded",
-		CostCents: 100,
-	}); err != nil {
-		t.Fatalf("RecordGatewayUsage(): %v", err)
+	pricing, err := control.CreatePricingRule(context.Background(), "tester", controlplane.PricingRuleCreateRequest{Name: "Budget rule", Purpose: controlplane.PricingPurposeUsageCost, ScopeType: controlplane.PricingScopeGlobal, Model: "*", Currency: "USD", AuthoringMode: controlplane.PricingAuthoringRaw, Expression: `v1: fixed_line("request", "request", 250)`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.PublishPricingRule(context.Background(), "tester", pricing.Rule.ID, controlplane.PricingPublishRequest{DraftVersionID: pricing.Draft.ID, ExpectedLockVersion: pricing.Rule.LockVersion, ExpressionHash: pricing.Draft.ExpressionHash}); err != nil {
+		t.Fatal(err)
 	}
 
 	body := bytes.NewBufferString(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`)
@@ -197,10 +212,10 @@ func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testi
 	req.Header.Set("Authorization", "Bearer "+created.Key)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusTooManyRequests {
+	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("budget status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "workspace key monthly budget exceeded") {
+	if !strings.Contains(rec.Body.String(), `"type":"budget_hold_failed"`) {
 		t.Fatalf("budget error not returned: %s", rec.Body.String())
 	}
 
@@ -210,7 +225,7 @@ func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testi
 	}
 	var foundUsage bool
 	for _, record := range usage.Recent {
-		if record.ErrorType == "budget_exceeded" && record.Status == "error" {
+		if record.ErrorType == "budget_hold_failed" && record.Status == "error" {
 			foundUsage = true
 		}
 	}
@@ -223,7 +238,7 @@ func TestGatewayChatCompletionEnforcesWorkspaceKeyBudgetAndRecordsTrace(t *testi
 		t.Fatalf("ListGatewayTraces(): %v", err)
 	}
 	for _, trace := range traces {
-		if trace.ErrorType == "budget_exceeded" && trace.HTTPStatus == http.StatusTooManyRequests {
+		if trace.ErrorType == "budget_hold_failed" && trace.HTTPStatus == http.StatusPaymentRequired {
 			return
 		}
 	}

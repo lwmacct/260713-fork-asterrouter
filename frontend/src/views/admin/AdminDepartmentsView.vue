@@ -22,7 +22,7 @@ const departmentForm = reactive<DepartmentRequest>({
   code: '',
   parent_id: '',
   cost_center: '',
-  monthly_budget_cents: 0,
+  monthly_budget_micros: 0,
   status: 'active'
 })
 
@@ -52,7 +52,7 @@ function resetForm() {
     code: '',
     parent_id: '',
     cost_center: '',
-    monthly_budget_cents: 0,
+    monthly_budget_micros: 0,
     status: 'active'
   })
 }
@@ -70,7 +70,7 @@ function openEditModal(department: Department) {
     code: department.code,
     parent_id: department.parent_id,
     cost_center: department.cost_center,
-    monthly_budget_cents: department.monthly_budget_cents,
+    monthly_budget_micros: department.monthly_budget_micros,
     status: department.status
   })
   modalOpen.value = true
@@ -87,12 +87,12 @@ function parentLabel(parentID: string): string {
   return parent ? `${parent.name} · ${parent.code}` : parentID
 }
 
-function formatCost(cents: number): string {
+function formatCost(micros: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2
-  }).format(cents / 100)
+  }).format(micros / 1_000_000)
 }
 
 async function load() {
@@ -201,7 +201,7 @@ onMounted(load)
               </td>
               <td>{{ parentLabel(department.parent_id) }}</td>
               <td>{{ department.cost_center || '-' }}</td>
-              <td>{{ department.monthly_budget_cents ? formatCost(department.monthly_budget_cents) : t('apiKeys.unlimited') }}</td>
+              <td>{{ department.monthly_budget_micros ? formatCost(department.monthly_budget_micros) : t('apiKeys.unlimited') }}</td>
               <td><span class="pill" :class="department.status === 'active' ? 'status-success' : 'status-warning'">{{ department.status }}</span></td>
               <td>
                 <button class="button secondary" type="button" @click="openEditModal(department)">
@@ -251,7 +251,7 @@ onMounted(load)
           </div>
           <div class="field">
             <label>{{ t('departments.monthlyBudget') }}</label>
-            <input v-model.number="departmentForm.monthly_budget_cents" type="number" min="0" step="100" />
+            <input v-model.number="departmentForm.monthly_budget_micros" type="number" min="0" step="100" />
           </div>
           <div class="field">
             <label>{{ t('providers.status') }}</label>

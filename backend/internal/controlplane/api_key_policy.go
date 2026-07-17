@@ -26,7 +26,7 @@ type apiKeyPolicyFields struct {
 	tpmLimit                 int
 	concurrencyLimit         int
 	monthlyTokenLimit        int
-	monthlyBudgetCents       int
+	monthlyBudgetMicros      int64
 	monthlyImageLimit        int
 	monthlyVideoSecondsLimit int
 	monthlyAudioSecondsLimit int
@@ -40,7 +40,7 @@ func apiKeyPolicyFromCreateRequest(req APIKeyCreateRequest) apiKeyPolicyFields {
 	return apiKeyPolicyFields{
 		scopes: req.Scopes, allowedModalities: req.AllowedModalities, allowedOperations: req.AllowedOperations,
 		qpsLimit: req.QPSLimit, rpmLimit: req.RPMLimit, tpmLimit: req.TPMLimit, concurrencyLimit: req.ConcurrencyLimit,
-		monthlyTokenLimit: req.MonthlyTokenLimit, monthlyBudgetCents: req.MonthlyBudgetCents,
+		monthlyTokenLimit: req.MonthlyTokenLimit, monthlyBudgetMicros: req.MonthlyBudgetMicros,
 		monthlyImageLimit: req.MonthlyImageLimit, monthlyVideoSecondsLimit: req.MonthlyVideoSecondsLimit,
 		monthlyAudioSecondsLimit: req.MonthlyAudioSecondsLimit, allowedCIDRs: req.AllowedCIDRs,
 		lanePolicy: req.LanePolicy, artifactPolicy: req.ArtifactPolicy, artifactSinkID: req.ArtifactSinkID,
@@ -51,7 +51,7 @@ func apiKeyPolicyFromUpdateRequest(req APIKeyUpdateRequest) apiKeyPolicyFields {
 	return apiKeyPolicyFields{
 		scopes: req.Scopes, allowedModalities: req.AllowedModalities, allowedOperations: req.AllowedOperations,
 		qpsLimit: req.QPSLimit, rpmLimit: req.RPMLimit, tpmLimit: req.TPMLimit, concurrencyLimit: req.ConcurrencyLimit,
-		monthlyTokenLimit: req.MonthlyTokenLimit, monthlyBudgetCents: req.MonthlyBudgetCents,
+		monthlyTokenLimit: req.MonthlyTokenLimit, monthlyBudgetMicros: req.MonthlyBudgetMicros,
 		monthlyImageLimit: req.MonthlyImageLimit, monthlyVideoSecondsLimit: req.MonthlyVideoSecondsLimit,
 		monthlyAudioSecondsLimit: req.MonthlyAudioSecondsLimit, allowedCIDRs: req.AllowedCIDRs,
 		lanePolicy: req.LanePolicy, artifactPolicy: req.ArtifactPolicy, artifactSinkID: req.ArtifactSinkID,
@@ -61,7 +61,7 @@ func apiKeyPolicyFromUpdateRequest(req APIKeyUpdateRequest) apiKeyPolicyFields {
 func apiKeyPolicyForUpdate(record APIKeyRecord, req APIKeyUpdateRequest) apiKeyPolicyFields {
 	requested := apiKeyPolicyFromUpdateRequest(req)
 	if req.Scopes != nil || req.AllowedModalities != nil || req.AllowedOperations != nil || req.AllowedCIDRs != nil ||
-		req.RPMLimit != 0 || req.TPMLimit != 0 || req.ConcurrencyLimit != 0 || req.MonthlyBudgetCents != 0 ||
+		req.RPMLimit != 0 || req.TPMLimit != 0 || req.ConcurrencyLimit != 0 || req.MonthlyBudgetMicros != 0 ||
 		req.MonthlyImageLimit != 0 || req.MonthlyVideoSecondsLimit != 0 || req.MonthlyAudioSecondsLimit != 0 ||
 		strings.TrimSpace(req.LanePolicy) != "" || strings.TrimSpace(req.ArtifactPolicy) != "" || strings.TrimSpace(req.ArtifactSinkID) != "" {
 		return requested
@@ -75,13 +75,16 @@ func apiKeyPolicyForUpdate(record APIKeyRecord, req APIKeyUpdateRequest) apiKeyP
 func normalizeAPIKeyPolicy(fields apiKeyPolicyFields) (apiKeyPolicyFields, error) {
 	limits := []int{
 		fields.qpsLimit, fields.rpmLimit, fields.tpmLimit, fields.concurrencyLimit,
-		fields.monthlyTokenLimit, fields.monthlyBudgetCents, fields.monthlyImageLimit,
+		fields.monthlyTokenLimit, fields.monthlyImageLimit,
 		fields.monthlyVideoSecondsLimit, fields.monthlyAudioSecondsLimit,
 	}
 	for _, limit := range limits {
 		if limit < 0 {
 			return apiKeyPolicyFields{}, errors.New("api key limits must be greater than or equal to 0")
 		}
+	}
+	if fields.monthlyBudgetMicros < 0 {
+		return apiKeyPolicyFields{}, errors.New("api key limits must be greater than or equal to 0")
 	}
 
 	var err error
@@ -135,7 +138,7 @@ func applyAPIKeyPolicy(record *APIKeyRecord, fields apiKeyPolicyFields) {
 	record.TPMLimit = fields.tpmLimit
 	record.ConcurrencyLimit = fields.concurrencyLimit
 	record.MonthlyTokenLimit = fields.monthlyTokenLimit
-	record.MonthlyBudgetCents = fields.monthlyBudgetCents
+	record.MonthlyBudgetMicros = fields.monthlyBudgetMicros
 	record.MonthlyImageLimit = fields.monthlyImageLimit
 	record.MonthlyVideoSecondsLimit = fields.monthlyVideoSecondsLimit
 	record.MonthlyAudioSecondsLimit = fields.monthlyAudioSecondsLimit
@@ -182,7 +185,7 @@ func apiKeyPolicyFromRecord(record APIKeyRecord) apiKeyPolicyFields {
 	return apiKeyPolicyFields{
 		scopes: record.Scopes, allowedModalities: record.AllowedModalities, allowedOperations: record.AllowedOperations,
 		qpsLimit: record.QPSLimit, rpmLimit: record.RPMLimit, tpmLimit: record.TPMLimit, concurrencyLimit: record.ConcurrencyLimit,
-		monthlyTokenLimit: record.MonthlyTokenLimit, monthlyBudgetCents: record.MonthlyBudgetCents,
+		monthlyTokenLimit: record.MonthlyTokenLimit, monthlyBudgetMicros: record.MonthlyBudgetMicros,
 		monthlyImageLimit: record.MonthlyImageLimit, monthlyVideoSecondsLimit: record.MonthlyVideoSecondsLimit,
 		monthlyAudioSecondsLimit: record.MonthlyAudioSecondsLimit, allowedCIDRs: record.AllowedCIDRs,
 		lanePolicy: record.LanePolicy, artifactPolicy: record.ArtifactPolicy, artifactSinkID: record.ArtifactSinkID,

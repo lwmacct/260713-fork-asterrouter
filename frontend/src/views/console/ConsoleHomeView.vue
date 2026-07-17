@@ -57,8 +57,8 @@ function formatNumber(value?: number): string {
   return new Intl.NumberFormat().format(value || 0)
 }
 
-function formatCost(cents?: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format((cents || 0) / 100)
+function formatCost(micros?: number): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format((micros || 0) / 1_000_000)
 }
 
 function formatDate(value?: string): string {
@@ -224,7 +224,7 @@ onMounted(load)
           <span class="metric-icon"><WalletCards :size="18" /></span>
           <div>
             <span>{{ t('console.cost') }}</span>
-            <strong>{{ formatCost(usage?.total_cost_cents) }}</strong>
+            <strong>{{ formatCost(usage?.total_usage_cost_micros) }}</strong>
             <small>{{ formatNumber(usage?.error_requests) }} {{ t('usage.errors') }}</small>
           </div>
         </article>
@@ -405,7 +405,7 @@ onMounted(load)
                   <td>{{ formatNumber(item.requests) }}</td>
                   <td>{{ formatNumber(item.errors) }}</td>
                   <td>{{ formatNumber(item.tokens) }}</td>
-                  <td>{{ formatCost(item.cost_cents) }}</td>
+                  <td>{{ formatCost(item.usage_cost_micros) }}</td>
                 </tr>
                 <tr v-if="!(usage?.by_model || []).length">
                   <td colspan="5" class="empty-cell"></td>

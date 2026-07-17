@@ -23,7 +23,7 @@ const AdminExportJobsView = () => import('@/views/admin/AdminExportJobsView.vue'
 const AdminGatewayTracesView = () => import('@/views/admin/AdminGatewayTracesView.vue')
 const AdminGatewayModelsView = () => import('@/views/admin/AdminGatewayModelsView.vue')
 const AdminGatewaySimulatorView = () => import('@/views/admin/AdminGatewaySimulatorView.vue')
-const AdminModelPricingsView = () => import('@/views/admin/AdminModelPricingsView.vue')
+const AdminPricingView = () => import('@/views/admin/AdminPricingView.vue')
 const AdminModelRoutesView = () => import('@/views/admin/AdminModelRoutesView.vue')
 const AdminPluginsView = () => import('@/views/admin/AdminPluginsView.vue')
 const AdminPoliciesView = () => import('@/views/admin/AdminPoliciesView.vue')
@@ -171,7 +171,7 @@ const router = createRouter({
         { path: 'gateway-simulator', component: AdminGatewaySimulatorView, meta: { titleKey: 'admin.gatewaySimulator', descriptionKey: 'gatewaySimulator.subtitle' } },
         { path: 'routing-groups', component: AdminRoutingGroupsView, meta: { titleKey: 'admin.routingGroups', descriptionKey: 'routingGroups.subtitle' } },
         { path: 'provider-accounts', component: AdminProviderAccountsView, meta: { titleKey: 'admin.providerAccounts', descriptionKey: 'providerAccounts.subtitle' } },
-        { path: 'model-pricings', component: AdminModelPricingsView, meta: { titleKey: 'admin.modelPricings', descriptionKey: 'modelPricings.subtitle' } },
+        { path: 'pricing', component: AdminPricingView, meta: { titleKey: 'pricingRules.adminTitle', descriptionKey: 'pricingRules.adminSubtitle' } },
         { path: 'effective-pricing', component: AdminEffectivePricingView, meta: { titleKey: 'admin.effectivePricing', descriptionKey: 'effectivePricing.subtitle' } },
         { path: 'users', component: AdminUsersView, meta: { titleKey: 'admin.users', descriptionKey: 'users.subtitle' } },
         { path: 'departments', component: AdminDepartmentsView, meta: { titleKey: 'admin.departments', descriptionKey: 'departments.subtitle' } },
@@ -236,7 +236,7 @@ const router = createRouter({
         { path: 'model-routes', component: AdminModelRoutesView, meta: { titleKey: 'admin.modelRoutes', descriptionKey: 'modelRoutes.subtitle' } },
         { path: 'routing-groups', component: AdminRoutingGroupsView, meta: { titleKey: 'admin.routingGroups', descriptionKey: 'routingGroups.subtitle' } },
         { path: 'provider-accounts', component: AdminProviderAccountsView, meta: { titleKey: 'admin.providerAccounts', descriptionKey: 'providerAccounts.subtitle' } },
-        { path: 'model-pricings', component: AdminModelPricingsView, meta: { titleKey: 'admin.modelPricings', descriptionKey: 'modelPricings.subtitle' } },
+        { path: 'pricing', component: AdminPricingView, props: { surface: 'platform' }, meta: { titleKey: 'pricingRules.platformTitle', descriptionKey: 'pricingRules.platformSubtitle' } },
         { path: 'policies', component: AdminPoliciesView, meta: { titleKey: 'admin.policies', descriptionKey: 'policies.subtitle' } },
         { path: 'api-keys', component: PlatformKeysView, meta: { titleKey: 'admin.apiKeys', descriptionKey: 'platform.keySubtitle' } },
         { path: 'usage', component: AdminUsageView, meta: { titleKey: 'admin.usage', descriptionKey: 'usage.subtitle' } },

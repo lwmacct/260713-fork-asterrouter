@@ -231,7 +231,7 @@ func resourceForRequest(c *gin.Context) string {
 		return controlplane.RBACResourceProviders
 	case strings.HasPrefix(path, "/api-keys"):
 		return controlplane.RBACResourceAPIKeys
-	case strings.HasPrefix(path, "/usage"), strings.HasPrefix(path, "/cost-allocation"), strings.HasPrefix(path, "/model-pricings"):
+	case strings.HasPrefix(path, "/usage"), strings.HasPrefix(path, "/cost-allocation"), strings.HasPrefix(path, "/pricing-rules"), strings.HasPrefix(path, "/pricing-evaluations"):
 		return controlplane.RBACResourceUsage
 	case strings.HasPrefix(path, "/gateway-traces"):
 		return controlplane.RBACResourceTraces

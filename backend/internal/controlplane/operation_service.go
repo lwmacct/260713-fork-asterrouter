@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
+	"github.com/astercloud/asterrouter/backend/internal/pricing"
 )
 
 func (s *Service) BeginCanonicalOperation(ctx context.Context, auth gatewaycore.CanonicalAuthContext, request gatewaycore.CanonicalRequest) (AIOperation, bool, error) {
@@ -385,36 +386,175 @@ func (s *Service) TransactionalOutboxEvents(ctx context.Context, aggregateID str
 	return s.repo.ListTransactionalOutboxEvents(ctx, strings.TrimSpace(aggregateID))
 }
 
-func usageLedgerRecords(record UsageRecord) (BillingLedgerEntry, TransactionalOutboxEvent, error) {
-	digest := usageLedgerDigest(record)
-	record.ID = "usage_" + digest
-	billing := BillingLedgerEntry{
-		ID: "billing_" + digest, OperationID: record.OperationID, AttemptID: record.AttemptID,
-		UsageVersion: record.UsageVersion, UsageRecordID: record.ID, RequestFingerprint: record.RequestFingerprint,
-		EntryType: BillingLedgerEntryTypeUsage, AmountCents: record.CostCents, Currency: "USD",
-		Status: BillingLedgerStatusApplied, CreatedAt: record.CreatedAt,
-	}
-	payload, err := json.Marshal(struct {
-		UsageRecordID   string          `json:"usage_record_id"`
-		OperationID     string          `json:"operation_id"`
-		AttemptID       string          `json:"attempt_id"`
-		UsageVersion    int             `json:"usage_version"`
-		InputTokens     int             `json:"input_tokens"`
-		OutputTokens    int             `json:"output_tokens"`
-		UsageDimensions UsageDimensions `json:"usage_dimensions"`
-		CostCents       int             `json:"cost_cents"`
-		Status          string          `json:"status"`
-	}{record.ID, record.OperationID, record.AttemptID, record.UsageVersion, record.InputTokens, record.OutputTokens, record.UsageDimensions, record.CostCents, record.Status})
+func (s *Service) buildUsageSettlement(ctx context.Context, record UsageRecord) (UsageSettlement, error) {
+	operation, found, err := s.repo.FindAIOperation(ctx, record.OperationID)
 	if err != nil {
-		return BillingLedgerEntry{}, TransactionalOutboxEvent{}, fmt.Errorf("marshal usage outbox payload: %w", err)
+		return UsageSettlement{}, err
 	}
-	aggregateID := record.OperationID + ":" + record.AttemptID
-	outbox := TransactionalOutboxEvent{
-		ID: "outbox_" + digest, AggregateType: "usage_ledger", AggregateID: aggregateID,
-		EventType: OutboxEventUsage, EventVersion: record.UsageVersion, PayloadJSON: string(payload),
-		Status: OutboxStatusPending, AvailableAt: record.CreatedAt, MaxAttempts: OutboxDefaultMaxAttempts, CreatedAt: record.CreatedAt, UpdatedAt: record.CreatedAt,
+	if !found || operation.RequestFingerprint != record.RequestFingerprint {
+		return UsageSettlement{}, ErrUsageLedgerConflict
 	}
-	return billing, outbox, nil
+	hold, found, err := s.repo.FindBillingHoldByOperationID(ctx, record.OperationID)
+	if err != nil {
+		return UsageSettlement{}, err
+	}
+	if !found {
+		return UsageSettlement{}, errors.New("billing hold not found for usage settlement")
+	}
+	versions, err := s.repo.ListBillingHoldPricingVersions(ctx, hold.ID)
+	if err != nil {
+		return UsageSettlement{}, err
+	}
+	facts := pricingFactsFromUsage(operation, record)
+	settlement := UsageSettlement{Record: record}
+	for _, snapshot := range versions {
+		rule, version, findErr := s.PricingRuleVersionDetail(ctx, snapshot.PricingRuleVersionID)
+		if findErr != nil || version.State != PricingVersionStatePublished {
+			return UsageSettlement{}, ErrUsageLedgerConflict
+		}
+		compiled, compileErr := s.pricingEngine.CompileByHash(version.Expression, version.ExpressionHash)
+		result, evaluateErr := pricing.Result{}, compileErr
+		if evaluateErr == nil {
+			result, evaluateErr = s.pricingEngine.Evaluate(compiled, facts)
+		}
+		evaluationID := deterministicPricingEvaluationID(record, snapshot.Purpose)
+		if evaluateErr != nil {
+			factsHash, _ := facts.Hash()
+			evaluation := PricingEvaluation{
+				ID: evaluationID, Purpose: snapshot.Purpose, Phase: pricing.PhaseSettlement, OperationID: record.OperationID,
+				AttemptID: record.AttemptID, UsageRecordID: record.ID, UsageVersion: record.UsageVersion,
+				PricingRuleID: rule.ID, PricingRuleVersionID: version.ID, EngineVersion: version.EngineVersion,
+				ExpressionHash: version.ExpressionHash, FactsHash: factsHash, Facts: facts, Currency: pricing.CurrencyUSD,
+				NormalizationStatus: facts.NormalizationStatus, Status: PricingEvaluationStatusDisputed,
+				FailureCode: pricingFailureCode(evaluateErr), CreatedAt: record.CreatedAt,
+			}
+			settlement.Evaluations = append(settlement.Evaluations, evaluation)
+			if snapshot.Purpose == PricingPurposeUsageCost {
+				settlement.Record.PricingStatus = "disputed"
+				settlement.Record.UsageCostMicros = nil
+			}
+			continue
+		}
+		amount := result.AmountMicros
+		evaluation := PricingEvaluation{
+			ID: evaluationID, Purpose: snapshot.Purpose, Phase: pricing.PhaseSettlement, OperationID: record.OperationID,
+			AttemptID: record.AttemptID, UsageRecordID: record.ID, UsageVersion: record.UsageVersion,
+			PricingRuleID: rule.ID, PricingRuleVersionID: version.ID, EngineVersion: result.EngineVersion,
+			ExpressionHash: result.ExpressionHash, FactsHash: result.FactsHash, Facts: facts, AmountMicros: &amount,
+			Currency: result.Currency, MatchedTier: result.MatchedTier, Lines: result.Lines,
+			NormalizationStatus: facts.NormalizationStatus, Status: PricingEvaluationStatusSuccess, CreatedAt: record.CreatedAt,
+		}
+		settlement.Evaluations = append(settlement.Evaluations, evaluation)
+		ledger := BillingLedgerEntry{
+			ID: deterministicBillingLedgerID(record, snapshot.Purpose), OperationID: record.OperationID, AttemptID: record.AttemptID,
+			UsageVersion: record.UsageVersion, UsageRecordID: record.ID, RequestFingerprint: record.RequestFingerprint,
+			Purpose: snapshot.Purpose, AmountMicros: amount, Currency: result.Currency, PricingEvaluationID: evaluation.ID,
+			PricingRuleVersionID: version.ID, Status: BillingLedgerStatusApplied, CreatedAt: record.CreatedAt,
+		}
+		settlement.Ledgers = append(settlement.Ledgers, ledger)
+		if snapshot.Purpose == PricingPurposeUsageCost {
+			settlement.Record.UsageCostMicros = &amount
+			settlement.Record.UsageCostCurrency = result.Currency
+			settlement.Record.UsagePricingEvaluationID = evaluation.ID
+			if amount == 0 {
+				settlement.Record.PricingStatus = "free"
+			} else {
+				settlement.Record.PricingStatus = "priced"
+			}
+		} else if snapshot.Purpose == PricingPurposeCustomerCharge && record.CustomerID != "" {
+			outbox, outboxErr := customerChargeOutbox(record, ledger)
+			if outboxErr != nil {
+				return UsageSettlement{}, outboxErr
+			}
+			settlement.OutboxEvents = append(settlement.OutboxEvents, outbox)
+		}
+	}
+	riskOutbox, err := usageRecordedOutbox(settlement.Record)
+	if err != nil {
+		return UsageSettlement{}, err
+	}
+	settlement.OutboxEvents = append(settlement.OutboxEvents, riskOutbox)
+	return settlement, nil
+}
+
+func pricingFactsFromUsage(operation AIOperation, record UsageRecord) pricing.Facts {
+	totalInput := record.InputTokens
+	if record.TotalInputTokens != nil {
+		totalInput = *record.TotalInputTokens
+	}
+	uncachedInput := totalInput
+	if record.UncachedInputTokens != nil {
+		uncachedInput = *record.UncachedInputTokens
+	}
+	dimensions := record.UsageDimensions
+	return pricing.Facts{
+		TotalInputTokens: int64(totalInput), UncachedInputTokens: int64(uncachedInput), CacheReadTokens: int64Value(record.CacheReadTokens),
+		CacheWrite5mTokens: int64Value(record.CacheWrite5mTokens), CacheWrite1hTokens: int64Value(record.CacheWrite1hTokens),
+		OutputTokens: int64(record.OutputTokens), CacheFieldsPresent: record.CacheFieldsPresent,
+		InputImages: usageDimensionQuantity(dimensions, UsageDimensionInputImages), OutputImages: usageDimensionQuantity(dimensions, UsageDimensionOutputImages),
+		PartialImages: usageDimensionQuantity(dimensions, UsageDimensionPartialImages), InputVideoMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionInputVideoMilliseconds),
+		OutputVideoMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionOutputVideoMilliseconds), InputAudioMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionInputAudioMilliseconds),
+		OutputAudioMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionOutputAudioMilliseconds), RealtimeAudioMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionRealtimeAudioMilliseconds),
+		InputCharacters: usageDimensionQuantity(dimensions, UsageDimensionInputCharacters), Actions: usageDimensionQuantity(dimensions, UsageDimensionActions),
+		BatchItems: usageDimensionQuantity(dimensions, UsageDimensionBatchItems), InputBytes: usageDimensionQuantity(dimensions, UsageDimensionInputBytes),
+		OutputBytes: usageDimensionQuantity(dimensions, UsageDimensionOutputBytes), TransferBytes: usageDimensionQuantity(dimensions, UsageDimensionTransferBytes),
+		SessionMilliseconds: usageDimensionQuantity(dimensions, UsageDimensionSessionMilliseconds), Protocol: record.Protocol,
+		Operation: operation.Operation, Modality: operation.Modality, Lane: operation.Lane,
+		NormalizationStatus: record.UsageNormalizationStatus, Phase: pricing.PhaseSettlement, ObservedAt: record.CreatedAt,
+	}
+}
+
+func int64Value(value *int) int64 {
+	if value == nil {
+		return 0
+	}
+	return int64(*value)
+}
+
+func deterministicPricingEvaluationID(record UsageRecord, purpose string) string {
+	return "peval_" + prefix(hashAPIKey(usageLedgerDigest(record)+"\x00"+purpose), 24)
+}
+
+func deterministicBillingLedgerID(record UsageRecord, purpose string) string {
+	return "billing_" + prefix(hashAPIKey(usageLedgerDigest(record)+"\x00"+purpose), 24)
+}
+
+func pricingFailureCode(err error) string {
+	var pricingErr *pricing.Error
+	if errors.As(err, &pricingErr) && pricingErr.Code != "" {
+		return pricingErr.Code
+	}
+	return "pricing_evaluation_failed"
+}
+
+func usageRecordedOutbox(record UsageRecord) (TransactionalOutboxEvent, error) {
+	payload, err := json.Marshal(UsageRecordedEvent{
+		UsageRecordID: record.ID, OperationID: record.OperationID, AttemptID: record.AttemptID, UsageVersion: record.UsageVersion,
+		APIKeyID: record.APIKeyID, CustomerID: record.CustomerID, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens,
+		UsageDimensions: record.UsageDimensions, UsageCostMicros: record.UsageCostMicros, PricingStatus: record.PricingStatus, Status: record.Status,
+	})
+	if err != nil {
+		return TransactionalOutboxEvent{}, fmt.Errorf("marshal usage recorded event: %w", err)
+	}
+	digest := usageLedgerDigest(record)
+	return TransactionalOutboxEvent{
+		ID: "outbox_" + prefix(hashAPIKey(digest+"\x00"+OutboxEventUsageRecorded), 24), AggregateType: "usage", AggregateID: record.OperationID + ":" + record.AttemptID,
+		EventType: OutboxEventUsageRecorded, EventVersion: record.UsageVersion, PayloadJSON: string(payload), Status: OutboxStatusPending,
+		AvailableAt: record.CreatedAt, MaxAttempts: OutboxDefaultMaxAttempts, CreatedAt: record.CreatedAt, UpdatedAt: record.CreatedAt,
+	}, nil
+}
+
+func customerChargeOutbox(record UsageRecord, ledger BillingLedgerEntry) (TransactionalOutboxEvent, error) {
+	idempotencyKey := "customer_charge:" + ledger.ID
+	payload, err := json.Marshal(CustomerChargePostedEvent{BillingLedgerID: ledger.ID, CustomerID: record.CustomerID, AmountMicros: ledger.AmountMicros, Currency: ledger.Currency, IdempotencyKey: idempotencyKey})
+	if err != nil {
+		return TransactionalOutboxEvent{}, fmt.Errorf("marshal customer charge event: %w", err)
+	}
+	return TransactionalOutboxEvent{
+		ID: "outbox_" + prefix(hashAPIKey(ledger.ID+"\x00"+OutboxEventCustomerChargePosted), 24), AggregateType: "customer_charge", AggregateID: record.OperationID + ":" + record.AttemptID,
+		EventType: OutboxEventCustomerChargePosted, EventVersion: record.UsageVersion, PayloadJSON: string(payload), Status: OutboxStatusPending,
+		AvailableAt: record.CreatedAt, MaxAttempts: OutboxDefaultMaxAttempts, CreatedAt: record.CreatedAt, UpdatedAt: record.CreatedAt,
+	}, nil
 }
 
 func usageLedgerDigest(record UsageRecord) string {

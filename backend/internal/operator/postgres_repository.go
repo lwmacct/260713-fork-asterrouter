@@ -32,7 +32,7 @@ func (r *PostgresRepository) DeleteGroup(ctx context.Context, id string) error {
 }
 
 func (r *PostgresRepository) ListCustomers(ctx context.Context) ([]Customer, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,email,group_id,plan_id,status,balance_cents,credit_cents,notes,created_at,updated_at FROM operator_customers ORDER BY created_at DESC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,email,group_id,plan_id,status,balance_micros,credit_micros,notes,created_at,updated_at FROM operator_customers ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (r *PostgresRepository) ListCustomers(ctx context.Context) ([]Customer, err
 	out := []Customer{}
 	for rows.Next() {
 		var v Customer
-		if err := rows.Scan(&v.ID, &v.Name, &v.Email, &v.GroupID, &v.PlanID, &v.Status, &v.BalanceCents, &v.CreditCents, &v.Notes, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.Email, &v.GroupID, &v.PlanID, &v.Status, &v.BalanceMicros, &v.CreditMicros, &v.Notes, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -48,7 +48,7 @@ func (r *PostgresRepository) ListCustomers(ctx context.Context) ([]Customer, err
 	return out, rows.Err()
 }
 func (r *PostgresRepository) SaveCustomer(ctx context.Context, v Customer) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO operator_customers(id,name,email,group_id,plan_id,status,balance_cents,credit_cents,notes,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,group_id=EXCLUDED.group_id,plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,credit_cents=EXCLUDED.credit_cents,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at`, v.ID, v.Name, v.Email, v.GroupID, v.PlanID, v.Status, v.BalanceCents, v.CreditCents, v.Notes, v.CreatedAt, v.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO operator_customers(id,name,email,group_id,plan_id,status,balance_micros,credit_micros,notes,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,email=EXCLUDED.email,group_id=EXCLUDED.group_id,plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,credit_micros=EXCLUDED.credit_micros,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at`, v.ID, v.Name, v.Email, v.GroupID, v.PlanID, v.Status, v.BalanceMicros, v.CreditMicros, v.Notes, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 func (r *PostgresRepository) DeleteCustomer(ctx context.Context, id string) error {
@@ -57,7 +57,7 @@ func (r *PostgresRepository) DeleteCustomer(ctx context.Context, id string) erro
 }
 
 func (r *PostgresRepository) ListPlans(ctx context.Context) ([]Plan, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,description,monthly_fee_cents,included_tokens,monthly_limit_cents,rate_multiplier,status,created_at,updated_at FROM operator_plans ORDER BY created_at DESC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,description,monthly_fee_micros,included_tokens,monthly_limit_micros,status,created_at,updated_at FROM operator_plans ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (r *PostgresRepository) ListPlans(ctx context.Context) ([]Plan, error) {
 	out := []Plan{}
 	for rows.Next() {
 		var v Plan
-		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.MonthlyFeeCents, &v.IncludedTokens, &v.MonthlyLimitCents, &v.RateMultiplier, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.MonthlyFeeMicros, &v.IncludedTokens, &v.MonthlyLimitMicros, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -73,7 +73,7 @@ func (r *PostgresRepository) ListPlans(ctx context.Context) ([]Plan, error) {
 	return out, rows.Err()
 }
 func (r *PostgresRepository) SavePlan(ctx context.Context, v Plan) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO operator_plans(id,name,description,monthly_fee_cents,included_tokens,monthly_limit_cents,rate_multiplier,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,monthly_fee_cents=EXCLUDED.monthly_fee_cents,included_tokens=EXCLUDED.included_tokens,monthly_limit_cents=EXCLUDED.monthly_limit_cents,rate_multiplier=EXCLUDED.rate_multiplier,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, v.ID, v.Name, v.Description, v.MonthlyFeeCents, v.IncludedTokens, v.MonthlyLimitCents, v.RateMultiplier, v.Status, v.CreatedAt, v.UpdatedAt)
+	_, err := r.db.ExecContext(ctx, `INSERT INTO operator_plans(id,name,description,monthly_fee_micros,included_tokens,monthly_limit_micros,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,included_tokens=EXCLUDED.included_tokens,monthly_limit_micros=EXCLUDED.monthly_limit_micros,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, v.ID, v.Name, v.Description, v.MonthlyFeeMicros, v.IncludedTokens, v.MonthlyLimitMicros, v.Status, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 func (r *PostgresRepository) DeletePlan(ctx context.Context, id string) error {
@@ -81,33 +81,8 @@ func (r *PostgresRepository) DeletePlan(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *PostgresRepository) ListPricingRules(ctx context.Context) ([]PricingRule, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,plan_id,model,input_price_cents_per_1m_tokens,output_price_cents_per_1m_tokens,rate_multiplier,status,created_at,updated_at FROM operator_pricing_rules ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []PricingRule{}
-	for rows.Next() {
-		var v PricingRule
-		if err := rows.Scan(&v.ID, &v.Name, &v.PlanID, &v.Model, &v.InputPrice, &v.OutputPrice, &v.RateMultiplier, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-func (r *PostgresRepository) SavePricingRule(ctx context.Context, v PricingRule) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO operator_pricing_rules(id,name,plan_id,model,input_price_cents_per_1m_tokens,output_price_cents_per_1m_tokens,rate_multiplier,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,plan_id=EXCLUDED.plan_id,model=EXCLUDED.model,input_price_cents_per_1m_tokens=EXCLUDED.input_price_cents_per_1m_tokens,output_price_cents_per_1m_tokens=EXCLUDED.output_price_cents_per_1m_tokens,rate_multiplier=EXCLUDED.rate_multiplier,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, v.ID, v.Name, v.PlanID, v.Model, v.InputPrice, v.OutputPrice, v.RateMultiplier, v.Status, v.CreatedAt, v.UpdatedAt)
-	return err
-}
-func (r *PostgresRepository) DeletePricingRule(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM operator_pricing_rules WHERE id=$1`, id)
-	return err
-}
-
 func (r *PostgresRepository) ListBalanceEntries(ctx context.Context) ([]BalanceEntry, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,customer_id,kind,amount_cents,balance_after_cents,reference,note,actor,created_at FROM operator_balance_entries ORDER BY created_at DESC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,customer_id,kind,amount_micros,balance_after_micros,currency,billing_ledger_id,reference,note,actor,created_at FROM operator_balance_entries ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +90,7 @@ func (r *PostgresRepository) ListBalanceEntries(ctx context.Context) ([]BalanceE
 	out := []BalanceEntry{}
 	for rows.Next() {
 		var v BalanceEntry
-		if err := rows.Scan(&v.ID, &v.CustomerID, &v.Kind, &v.AmountCents, &v.BalanceAfter, &v.Reference, &v.Note, &v.Actor, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.CustomerID, &v.Kind, &v.AmountMicros, &v.BalanceAfter, &v.Currency, &v.BillingLedgerID, &v.Reference, &v.Note, &v.Actor, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -123,16 +98,28 @@ func (r *PostgresRepository) ListBalanceEntries(ctx context.Context) ([]BalanceE
 	return out, rows.Err()
 }
 func (r *PostgresRepository) ApplyBalanceEntry(ctx context.Context, v BalanceEntry) (BalanceEntry, error) {
+	if v.Currency == "" {
+		v.Currency = "USD"
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return BalanceEntry{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	var current int64
-	if v.Reference != "" {
+	if v.BillingLedgerID != "" {
+		var existing BalanceEntry
+		err := tx.QueryRowContext(ctx, `SELECT id,customer_id,kind,amount_micros,balance_after_micros,currency,billing_ledger_id,reference,note,actor,created_at FROM operator_balance_entries WHERE billing_ledger_id=$1`, v.BillingLedgerID).Scan(&existing.ID, &existing.CustomerID, &existing.Kind, &existing.AmountMicros, &existing.BalanceAfter, &existing.Currency, &existing.BillingLedgerID, &existing.Reference, &existing.Note, &existing.Actor, &existing.CreatedAt)
+		if err == nil {
+			return existing, tx.Commit()
+		}
+		if err != sql.ErrNoRows {
+			return BalanceEntry{}, err
+		}
+	} else if v.Reference != "" {
 		var existing BalanceEntry
 		var existingCreatedAt time.Time
-		err := tx.QueryRowContext(ctx, `SELECT id,customer_id,kind,amount_cents,balance_after_cents,reference,note,actor,created_at FROM operator_balance_entries WHERE customer_id=$1 AND reference=$2`, v.CustomerID, v.Reference).Scan(&existing.ID, &existing.CustomerID, &existing.Kind, &existing.AmountCents, &existing.BalanceAfter, &existing.Reference, &existing.Note, &existing.Actor, &existingCreatedAt)
+		err := tx.QueryRowContext(ctx, `SELECT id,customer_id,kind,amount_micros,balance_after_micros,currency,billing_ledger_id,reference,note,actor,created_at FROM operator_balance_entries WHERE customer_id=$1 AND reference=$2`, v.CustomerID, v.Reference).Scan(&existing.ID, &existing.CustomerID, &existing.Kind, &existing.AmountMicros, &existing.BalanceAfter, &existing.Currency, &existing.BillingLedgerID, &existing.Reference, &existing.Note, &existing.Actor, &existingCreatedAt)
 		if err == nil {
 			existing.CreatedAt = existingCreatedAt
 			return existing, tx.Commit()
@@ -141,14 +128,14 @@ func (r *PostgresRepository) ApplyBalanceEntry(ctx context.Context, v BalanceEnt
 			return BalanceEntry{}, err
 		}
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT balance_cents FROM operator_customers WHERE id=$1 FOR UPDATE`, v.CustomerID).Scan(&current); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT balance_micros FROM operator_customers WHERE id=$1 FOR UPDATE`, v.CustomerID).Scan(&current); err != nil {
 		return BalanceEntry{}, err
 	}
-	v.BalanceAfter = current + v.AmountCents
-	if _, err := tx.ExecContext(ctx, `UPDATE operator_customers SET balance_cents=$1,updated_at=$2 WHERE id=$3`, v.BalanceAfter, v.CreatedAt, v.CustomerID); err != nil {
+	v.BalanceAfter = current + v.AmountMicros
+	if _, err := tx.ExecContext(ctx, `UPDATE operator_customers SET balance_micros=$1,updated_at=$2 WHERE id=$3`, v.BalanceAfter, v.CreatedAt, v.CustomerID); err != nil {
 		return BalanceEntry{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operator_balance_entries(id,customer_id,kind,amount_cents,balance_after_cents,reference,note,actor,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.ID, v.CustomerID, v.Kind, v.AmountCents, v.BalanceAfter, v.Reference, v.Note, v.Actor, v.CreatedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO operator_balance_entries(id,customer_id,kind,amount_micros,balance_after_micros,currency,billing_ledger_id,reference,note,actor,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, v.ID, v.CustomerID, v.Kind, v.AmountMicros, v.BalanceAfter, v.Currency, v.BillingLedgerID, v.Reference, v.Note, v.Actor, v.CreatedAt); err != nil {
 		return BalanceEntry{}, err
 	}
 	if err := tx.Commit(); err != nil {

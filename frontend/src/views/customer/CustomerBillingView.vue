@@ -22,7 +22,7 @@ const error = ref('')
 const notice = ref('')
 const overview = ref<CustomerBillingOverview | null>(null)
 const entries = ref<CustomerBillingEntries>({ items: [], total: 0, limit: pageSize, offset: 0 })
-const selectedPreset = ref(5000)
+const selectedPreset = ref(10_000_000)
 const customMode = ref(false)
 const customAmount = ref<number | null>(null)
 const paymentMethod = ref<'wechat' | 'alipay'>('wechat')
@@ -30,7 +30,7 @@ const voucherID = ref('')
 const redeemCode = ref('')
 const filters = reactive({ kind: '', from: '', to: '' })
 
-const amountCents = computed(() => customMode.value ? Math.round(Number(customAmount.value || 0) * 100) : selectedPreset.value)
+const amountMicros = computed(() => customMode.value ? Math.round(Number(customAmount.value || 0) * 1_000_000) : selectedPreset.value)
 const currentPage = computed(() => Math.floor(entries.value.offset / pageSize) + 1)
 const totalPages = computed(() => Math.max(1, Math.ceil(entries.value.total / pageSize)))
 const paymentUnavailable = computed(() => !(overview.value?.payment_channels || []).some((item) => item.enabled))
@@ -87,13 +87,13 @@ function selectCustom() {
 async function submitRecharge() {
   error.value = ''
   notice.value = ''
-  if (amountCents.value < 100) {
+  if (amountMicros.value < 1_000_000) {
     error.value = t('customer.invalidAmount')
     return
   }
   saving.value = true
   try {
-    await createCustomerRechargeOrder({ amount_cents: amountCents.value, payment_method: paymentMethod.value, voucher_id: voucherID.value || undefined })
+    await createCustomerRechargeOrder({ amount_micros: amountMicros.value, payment_method: paymentMethod.value, voucher_id: voucherID.value || undefined })
     notice.value = t('customer.rechargeCreated')
     await load()
   } catch (err) {
@@ -140,12 +140,12 @@ function resetFilters() {
   loadEntries(0)
 }
 
-function formatMoney(cents = 0): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'CNY' }).format(cents / 100)
+function formatMoney(micros = 0): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(micros / 1_000_000)
 }
 
-function formatSignedMoney(cents: number): string {
-  return `${cents > 0 ? '+' : ''}${formatMoney(cents)}`
+function formatSignedMoney(micros: number): string {
+  return `${micros > 0 ? '+' : ''}${formatMoney(micros)}`
 }
 
 function formatDate(value?: string): string {
@@ -174,10 +174,10 @@ onMounted(load)
     <div v-if="notice" class="notice success"><Check :size="17" />{{ notice }}</div>
 
     <section class="billing-balance-strip">
-      <article><span><WalletCards :size="18" /></span><div><small>{{ t('customer.balance') }}</small><strong>{{ formatMoney(overview?.balance_cents) }}</strong></div></article>
-      <article><span class="gift"><Gift :size="18" /></span><div><small>{{ t('customer.giftBalance') }}</small><strong>{{ formatMoney(overview?.gift_balance_cents) }}</strong></div></article>
-      <article><span class="profit"><CircleDollarSign :size="18" /></span><div><small>{{ t('customer.profitBalance') }}</small><strong>{{ formatMoney(overview?.profit_balance_cents) }}</strong></div></article>
-      <article class="total"><span><ReceiptText :size="18" /></span><div><small>{{ t('customer.totalBalance') }}</small><strong>{{ formatMoney(overview?.total_cents) }}</strong></div></article>
+      <article><span><WalletCards :size="18" /></span><div><small>{{ t('customer.balance') }}</small><strong>{{ formatMoney(overview?.balance_micros) }}</strong></div></article>
+      <article><span class="gift"><Gift :size="18" /></span><div><small>{{ t('customer.giftBalance') }}</small><strong>{{ formatMoney(overview?.gift_balance_micros) }}</strong></div></article>
+      <article><span class="profit"><CircleDollarSign :size="18" /></span><div><small>{{ t('customer.profitBalance') }}</small><strong>{{ formatMoney(overview?.profit_balance_micros) }}</strong></div></article>
+      <article class="total"><span><ReceiptText :size="18" /></span><div><small>{{ t('customer.totalBalance') }}</small><strong>{{ formatMoney(overview?.total_micros) }}</strong></div></article>
     </section>
 
     <section class="billing-action-grid">
@@ -185,24 +185,24 @@ onMounted(load)
         <div class="panel-header"><div><h2>{{ t('customer.onlineRecharge') }}</h2><p>{{ t('customer.rechargeAmount') }}</p></div><WalletCards :size="18" /></div>
         <form class="panel-body recharge-form" @submit.prevent="submitRecharge">
           <div class="field"><span>{{ t('customer.rechargeAmount') }}</span><div class="recharge-amount-grid"><button v-for="amount in overview?.recharge_options || []" :key="amount" class="amount-option" :class="{ active: !customMode && selectedPreset === amount }" type="button" @click="selectPreset(amount)">{{ formatMoney(amount) }}</button><button class="amount-option" :class="{ active: customMode }" type="button" @click="selectCustom">{{ t('customer.customAmount') }}</button></div></div>
-          <label v-if="customMode" class="field custom-amount"><span>{{ t('customer.customAmount') }}</span><div><span>¥</span><input v-model.number="customAmount" type="number" min="1" max="100000" step="0.01" :placeholder="t('customer.customAmountPlaceholder')" /></div></label>
+          <label v-if="customMode" class="field custom-amount"><span>{{ t('customer.customAmount') }}</span><div><span>$</span><input v-model.number="customAmount" type="number" min="1" max="100000" step="0.01" :placeholder="t('customer.customAmountPlaceholder')" /></div></label>
           <div class="field"><span>{{ t('customer.paymentMethod') }}</span><div class="payment-methods"><button type="button" :class="{ active: paymentMethod === 'wechat' }" @click="paymentMethod = 'wechat'"><MessageCircle :size="19" /><span><strong>{{ t('customer.wechat') }}</strong><small v-if="paymentUnavailable">{{ t('customer.channelUnavailable') }}</small></span></button><button type="button" :class="{ active: paymentMethod === 'alipay' }" @click="paymentMethod = 'alipay'"><WalletCards :size="19" /><span><strong>{{ t('customer.alipay') }}</strong><small v-if="paymentUnavailable">{{ t('customer.channelUnavailable') }}</small></span></button></div></div>
-          <label class="field"><span>{{ t('customer.voucher') }}</span><select v-model="voucherID"><option value="">{{ t('customer.noVoucherOption') }}</option><option v-for="voucher in overview?.vouchers || []" :key="voucher.id" :value="voucher.id">{{ voucher.title }} · {{ formatMoney(voucher.amount_cents) }}</option></select></label>
+          <label class="field"><span>{{ t('customer.voucher') }}</span><select v-model="voucherID"><option value="">{{ t('customer.noVoucherOption') }}</option><option v-for="voucher in overview?.vouchers || []" :key="voucher.id" :value="voucher.id">{{ voucher.title }} · {{ formatMoney(voucher.amount_micros) }}</option></select></label>
           <div v-if="paymentUnavailable" class="billing-channel-notice">{{ t('customer.channelUnavailable') }}</div>
-          <div class="recharge-submit"><div><small>{{ t('customer.rechargeAmount') }}</small><strong>{{ formatMoney(amountCents) }}</strong></div><button class="button primary" type="submit" :disabled="saving">{{ saving ? t('customer.submitting') : t('customer.rechargeNow') }}</button></div>
+          <div class="recharge-submit"><div><small>{{ t('customer.rechargeAmount') }}</small><strong>{{ formatMoney(amountMicros) }}</strong></div><button class="button primary" type="submit" :disabled="saving">{{ saving ? t('customer.submitting') : t('customer.rechargeNow') }}</button></div>
         </form>
       </section>
 
       <div class="billing-side-stack">
         <section class="panel redeem-panel"><div class="panel-header"><div><h2>{{ t('customer.redeemTitle') }}</h2><p>{{ t('customer.billingHelp') }}</p></div><TicketPercent :size="18" /></div><form class="panel-body" @submit.prevent="redeem"><label class="redeem-input"><Search :size="17" /><input v-model="redeemCode" :placeholder="t('customer.redeemPlaceholder')" autocomplete="off" /></label><button class="button primary" type="submit" :disabled="saving || !redeemCode.trim()">{{ t('customer.redeem') }}</button></form></section>
-        <section class="panel voucher-panel"><div class="panel-header"><div><h2>{{ t('customer.availableVouchers') }}</h2><p>{{ overview?.vouchers.length || 0 }} {{ t('customer.voucher') }}</p></div><Gift :size="18" /></div><div class="voucher-list"><div v-for="voucher in overview?.vouchers || []" :key="voucher.id"><span><strong>{{ voucher.title }}</strong><small>{{ t('customer.minimumRecharge', { amount: formatMoney(voucher.minimum_recharge_cents) }) }}</small></span><div><strong>{{ formatMoney(voucher.amount_cents) }}</strong><small v-if="voucher.expires_at">{{ t('customer.expiresAt', { date: formatDate(voucher.expires_at) }) }}</small></div></div><p v-if="!(overview?.vouchers || []).length" class="empty-vouchers">{{ t('customer.noVouchers') }}</p></div></section>
+        <section class="panel voucher-panel"><div class="panel-header"><div><h2>{{ t('customer.availableVouchers') }}</h2><p>{{ overview?.vouchers.length || 0 }} {{ t('customer.voucher') }}</p></div><Gift :size="18" /></div><div class="voucher-list"><div v-for="voucher in overview?.vouchers || []" :key="voucher.id"><span><strong>{{ voucher.title }}</strong><small>{{ t('customer.minimumRecharge', { amount: formatMoney(voucher.minimum_recharge_micros) }) }}</small></span><div><strong>{{ formatMoney(voucher.amount_micros) }}</strong><small v-if="voucher.expires_at">{{ t('customer.expiresAt', { date: formatDate(voucher.expires_at) }) }}</small></div></div><p v-if="!(overview?.vouchers || []).length" class="empty-vouchers">{{ t('customer.noVouchers') }}</p></div></section>
       </div>
     </section>
 
     <section class="panel billing-detail-panel">
       <div class="panel-header billing-detail-header"><div><h2>{{ t('customer.billingDetails') }}</h2><p>{{ t('customer.pageSummary', { page: currentPage, total: entries.total }) }}</p></div><ReceiptText :size="18" /></div>
       <div class="billing-filters"><div class="billing-kind-tabs"><button v-for="option in kindOptions" :key="option.id" type="button" :class="{ active: filters.kind === option.id }" @click="filters.kind = option.id; loadEntries(0)">{{ option.label }}</button></div><label><span>{{ t('common.from') }}</span><input v-model="filters.from" type="date" /></label><label><span>{{ t('common.to') }}</span><input v-model="filters.to" type="date" /></label><button class="button secondary compact-button" type="button" @click="loadEntries(0)">{{ t('customer.filter') }}</button><button class="button ghost compact-button" type="button" @click="resetFilters">{{ t('customer.reset') }}</button></div>
-      <div class="table-scroll"><table class="data-table billing-table"><thead><tr><th>{{ t('customer.time') }}</th><th>{{ t('customer.description') }}</th><th>{{ t('customer.reference') }}</th><th>{{ t('customer.amount') }}</th><th>{{ t('customer.balanceAfter') }}</th></tr></thead><tbody><tr v-for="entry in entries.items" :key="entry.id"><td>{{ formatDate(entry.created_at) }}</td><td><span class="billing-kind pill" :class="entry.amount_cents >= 0 ? 'status-success' : 'status-warning'">{{ kindLabel(entry.kind) }}</span><strong>{{ entry.description || kindLabel(entry.kind) }}</strong></td><td><code>{{ entry.reference || '-' }}</code></td><td><strong :class="entry.amount_cents >= 0 ? 'positive-amount' : 'negative-amount'">{{ formatSignedMoney(entry.amount_cents) }}</strong></td><td>{{ formatMoney(entry.balance_after_cents) }}</td></tr><tr v-if="!entries.items.length"><td colspan="5" class="empty-cell">{{ t('customer.emptyEntries') }}</td></tr></tbody></table></div>
+      <div class="table-scroll"><table class="data-table billing-table"><thead><tr><th>{{ t('customer.time') }}</th><th>{{ t('customer.description') }}</th><th>{{ t('customer.reference') }}</th><th>{{ t('customer.amount') }}</th><th>{{ t('customer.balanceAfter') }}</th></tr></thead><tbody><tr v-for="entry in entries.items" :key="entry.id"><td>{{ formatDate(entry.created_at) }}</td><td><span class="billing-kind pill" :class="entry.amount_micros >= 0 ? 'status-success' : 'status-warning'">{{ kindLabel(entry.kind) }}</span><strong>{{ entry.description || kindLabel(entry.kind) }}</strong></td><td><code>{{ entry.reference || '-' }}</code></td><td><strong :class="entry.amount_micros >= 0 ? 'positive-amount' : 'negative-amount'">{{ formatSignedMoney(entry.amount_micros) }}</strong></td><td>{{ formatMoney(entry.balance_after_micros) }}</td></tr><tr v-if="!entries.items.length"><td colspan="5" class="empty-cell">{{ t('customer.emptyEntries') }}</td></tr></tbody></table></div>
       <div class="billing-pagination"><span>{{ t('customer.pageSummary', { page: currentPage, total: entries.total }) }}</span><div><button class="button secondary compact-button" type="button" :disabled="currentPage <= 1 || loading" @click="loadEntries(entries.offset - pageSize)">{{ t('common.previous') }}</button><button class="button secondary compact-button" type="button" :disabled="currentPage >= totalPages || loading" @click="loadEntries(entries.offset + pageSize)">{{ t('common.next') }}</button></div></div>
     </section>
   </main>

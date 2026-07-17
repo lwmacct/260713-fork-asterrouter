@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS usage_records (
   latency_ms BIGINT NOT NULL DEFAULT 0,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_cents INTEGER NOT NULL DEFAULT 0,
+  usage_cost_micros BIGINT,
+  usage_cost_currency TEXT NOT NULL DEFAULT 'USD',
+  usage_pricing_evaluation_id TEXT NOT NULL DEFAULT '',
+  pricing_status TEXT NOT NULL DEFAULT 'unpriced' CHECK (pricing_status IN ('priced', 'free', 'unpriced', 'disputed')),
   created_at TIMESTAMPTZ NOT NULL
 );

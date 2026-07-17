@@ -2,6 +2,20 @@ import { expect, type APIResponse, type Page } from '@playwright/test'
 
 export type Envelope<T> = { code: number; message: string; data: T }
 
+type PricingRuleDetail = {
+  rule: { id: string; lock_version: number; active_version_id?: string }
+  draft?: { id: string; expression_hash: string }
+}
+
+type PricingRuleInput = {
+  name: string
+  purpose: 'usage_cost' | 'customer_charge'
+  scope_type: 'global' | 'operator_plan'
+  scope_id: string
+  model: string
+  expression: string
+}
+
 const controlSurfaceForProfile: Record<string, string> = {
   enterprise: 'admin',
   personal: 'console',
@@ -35,6 +49,42 @@ export async function adminPost<T>(page: Page, token: string, path: string, data
   }))
 }
 
+async function pricingData<T>(response: APIResponse): Promise<T> {
+  const body = await response.json() as { data?: T; error?: unknown }
+  expect(response.status(), JSON.stringify(body)).toBe(200)
+  expect(body.data, JSON.stringify(body)).toBeDefined()
+  return body.data!
+}
+
+export async function createPublishedPricingRule(
+  page: Page,
+  token: string,
+  surface: 'admin' | 'operator',
+  input: PricingRuleInput
+): Promise<PricingRuleDetail> {
+  const headers = { Authorization: `Bearer ${token}` }
+  const detail = await pricingData<PricingRuleDetail>(await page.request.post(`/api/v1/${surface}/pricing-rules`, {
+    headers,
+    data: {
+      ...input,
+      currency: 'USD',
+      authoring_mode: 'raw',
+      test_cases: []
+    }
+  }))
+  expect(detail.draft).toBeDefined()
+  return pricingData<PricingRuleDetail>(await page.request.post(`/api/v1/${surface}/pricing-rules/${detail.rule.id}/publish`, {
+    headers,
+    data: {
+      draft_version_id: detail.draft!.id,
+      expected_lock_version: detail.rule.lock_version,
+      expected_active_version_id: detail.rule.active_version_id || '',
+      expression_hash: detail.draft!.expression_hash,
+      acknowledge_customer_impact: input.purpose === 'customer_charge'
+    }
+  }))
+}
+
 export async function loginUser(page: Page, email: string, password: string): Promise<string> {
   const result = await envelope<{ access_token: string }>(await page.request.post('/api/v1/auth/login', {
     data: { username: email, password, agreement_accepted: true }
@@ -45,7 +95,7 @@ export async function loginUser(page: Page, email: string, password: string): Pr
 export async function registerUsers(
   page: Page,
   adminToken: string,
-  users: Array<{ email: string; password: string; displayName: string; balanceCents?: number }>
+  users: Array<{ email: string; password: string; displayName: string; balanceMicros?: number }>
 ): Promise<Array<{ id: string; email: string }>> {
   const headers = { Authorization: `Bearer ${adminToken}` }
   const settings = await envelope<Record<string, unknown>>(await page.request.get(controlAPI('/settings'), { headers }))
@@ -58,7 +108,7 @@ export async function registerUsers(
           ...settings,
           registration_enabled: true,
           email_verify_enabled: false,
-          default_balance_cents: user.balanceCents ?? settings.default_balance_cents
+          default_balance_micros: user.balanceMicros ?? settings.default_balance_micros
         }
       }))
       const result = await envelope<{ user_id: string }>(await page.request.post('/api/v1/auth/register', {

@@ -15,7 +15,7 @@ import (
 func TestAdminDepartmentEndpoints(t *testing.T) {
 	handler, control := newTestRuntime(t, RuntimeConfig{})
 
-	parentBody := bytes.NewBufferString(`{"name":"Engineering","code":"eng","cost_center":"eng-core","monthly_budget_cents":250000,"status":"active"}`)
+	parentBody := bytes.NewBufferString(`{"name":"Engineering","code":"eng","cost_center":"eng-core","monthly_budget_micros":250000,"status":"active"}`)
 	parentReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/departments", parentBody)
 	parentReq.Header.Set("Content-Type", "application/json")
 	parentRec := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestAdminDepartmentEndpoints(t *testing.T) {
 		t.Fatalf("parent mismatch: %+v", parentResp.Data)
 	}
 
-	childBody := bytes.NewBufferString(`{"name":"Platform","code":"platform","parent_id":"` + parentResp.Data.ID + `","cost_center":"platform","monthly_budget_cents":120000,"status":"active"}`)
+	childBody := bytes.NewBufferString(`{"name":"Platform","code":"platform","parent_id":"` + parentResp.Data.ID + `","cost_center":"platform","monthly_budget_micros":120000,"status":"active"}`)
 	childReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/departments", childBody)
 	childReq.Header.Set("Content-Type", "application/json")
 	childRec := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestAdminDepartmentEndpoints(t *testing.T) {
 		t.Fatalf("child mismatch: %+v", childResp.Data)
 	}
 
-	updateBody := bytes.NewBufferString(`{"name":"Platform Services","code":"platform","parent_id":"` + parentResp.Data.ID + `","cost_center":"platform-svc","monthly_budget_cents":160000,"status":"archived"}`)
+	updateBody := bytes.NewBufferString(`{"name":"Platform Services","code":"platform","parent_id":"` + parentResp.Data.ID + `","cost_center":"platform-svc","monthly_budget_micros":160000,"status":"archived"}`)
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/departments/"+childResp.Data.ID, updateBody)
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestAdminDepartmentEndpoints(t *testing.T) {
 	if err := json.Unmarshal(updateRec.Body.Bytes(), &updateResp); err != nil {
 		t.Fatalf("decode update: %v", err)
 	}
-	if updateResp.Data.Name != "Platform Services" || updateResp.Data.Status != controlplane.DepartmentStatusArchived || updateResp.Data.MonthlyBudgetCents != 160000 {
+	if updateResp.Data.Name != "Platform Services" || updateResp.Data.Status != controlplane.DepartmentStatusArchived || updateResp.Data.MonthlyBudgetMicros != 160000 {
 		t.Fatalf("update mismatch: %+v", updateResp.Data)
 	}
 

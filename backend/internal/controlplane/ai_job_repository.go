@@ -61,6 +61,19 @@ func (r *MemoryRepository) CreateDurableAIJob(_ context.Context, operation AIOpe
 	if _, found := memoryBillingHoldForOperation(r.billingHolds, operation.ID); found {
 		return AIJob{}, false, fmt.Errorf("billing hold for operation %q already exists", operation.ID)
 	}
+	for _, evaluation := range billing.PricingEvaluations {
+		if _, exists := r.pricingEvaluations[evaluation.ID]; exists {
+			return AIJob{}, false, fmt.Errorf("pricing evaluation %q already exists", evaluation.ID)
+		}
+	}
+	for _, version := range billing.PricingVersions {
+		if version.HoldID != billing.Hold.ID || version.PricingRuleVersionID == "" || version.EstimateEvaluationID == "" {
+			return AIJob{}, false, errors.New("invalid billing hold pricing version")
+		}
+		if _, exists := r.billingHoldPricingVersions[version.HoldID+"\n"+version.Purpose]; exists {
+			return AIJob{}, false, errors.New("billing hold pricing purpose already exists")
+		}
+	}
 	if err := enforceMemoryBillingHoldBudget(r, billing); err != nil {
 		return AIJob{}, false, err
 	}
@@ -69,6 +82,12 @@ func (r *MemoryRepository) CreateDurableAIJob(_ context.Context, operation AIOpe
 	r.aiJobEvents[event.ID] = event
 	r.transactionalOutboxEvents[outbox.ID] = outbox
 	r.billingHolds[billing.Hold.ID] = billing.Hold
+	for _, evaluation := range billing.PricingEvaluations {
+		r.pricingEvaluations[evaluation.ID] = clonePricingEvaluation(evaluation)
+	}
+	for _, version := range billing.PricingVersions {
+		r.billingHoldPricingVersions[version.HoldID+"\n"+version.Purpose] = version
+	}
 	return job, true, nil
 }
 
@@ -530,6 +549,16 @@ func (r *PostgresRepository) CreateDurableAIJob(ctx context.Context, operation A
 	}
 	if err := insertBillingHold(ctx, tx, billing.Hold); err != nil {
 		return AIJob{}, false, err
+	}
+	for _, evaluation := range billing.PricingEvaluations {
+		if err := insertPricingEvaluation(ctx, tx, evaluation); err != nil {
+			return AIJob{}, false, err
+		}
+	}
+	for _, version := range billing.PricingVersions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO billing_hold_pricing_versions(hold_id,purpose,pricing_rule_version_id,estimate_evaluation_id,settlement_evaluation_id) VALUES($1,$2,$3,$4,'')`, version.HoldID, version.Purpose, version.PricingRuleVersionID, version.EstimateEvaluationID); err != nil {
+			return AIJob{}, false, err
+		}
 	}
 	if err := insertAIJob(ctx, tx, job); err != nil {
 		return AIJob{}, false, err

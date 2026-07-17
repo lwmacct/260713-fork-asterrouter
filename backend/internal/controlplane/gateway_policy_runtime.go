@@ -71,12 +71,22 @@ func minimumPositive(left, right int) int {
 	return right
 }
 
-func (auth GatewayAuthContext) effectiveMonthlyBudgetCents() int {
-	limit := auth.APIKey.MonthlyBudgetCents
+func (auth GatewayAuthContext) effectiveMonthlyBudgetMicros() int64 {
+	limit := auth.APIKey.MonthlyBudgetMicros
 	if auth.Policy != nil {
-		limit = minimumPositive(limit, auth.Policy.MonthlyBudgetCents)
+		limit = minimumPositiveInt64(limit, auth.Policy.MonthlyBudgetMicros)
 	}
 	return limit
+}
+
+func minimumPositiveInt64(left, right int64) int64 {
+	if left <= 0 {
+		return right
+	}
+	if right <= 0 || left < right {
+		return left
+	}
+	return right
 }
 
 func (auth GatewayAuthContext) shouldBlockOverage() bool {

@@ -271,7 +271,7 @@ func collectAuditLogsForExportQuery(ctx context.Context, control *controlplane.S
 }
 
 func usageCSVRows(records []controlplane.UsageRecord) [][]string {
-	rows := [][]string{{"time", "api_key_id", "api_fingerprint", "model", "upstream_model", "provider_id", "provider_account_id", "status", "error_type", "input_tokens", "output_tokens", "cost_cents", "latency_ms"}}
+	rows := [][]string{{"time", "api_key_id", "api_fingerprint", "model", "upstream_model", "provider_id", "provider_account_id", "status", "error_type", "input_tokens", "output_tokens", "usage_cost_micros", "usage_cost_currency", "pricing_status", "latency_ms"}}
 	for _, record := range records {
 		rows = append(rows, []string{
 			record.CreatedAt.Format(time.RFC3339),
@@ -285,7 +285,9 @@ func usageCSVRows(records []controlplane.UsageRecord) [][]string {
 			record.ErrorType,
 			strconv.Itoa(record.InputTokens),
 			strconv.Itoa(record.OutputTokens),
-			strconv.Itoa(record.CostCents),
+			optionalMicrosCSV(record.UsageCostMicros),
+			record.UsageCostCurrency,
+			record.PricingStatus,
 			strconv.FormatInt(record.LatencyMS, 10),
 		})
 	}
@@ -293,7 +295,7 @@ func usageCSVRows(records []controlplane.UsageRecord) [][]string {
 }
 
 func costAllocationCSVRows(report controlplane.CostAllocationReport) [][]string {
-	rows := [][]string{{"dimension", "resource_id", "resource_name", "api_key_id", "api_key_name", "api_fingerprint", "model", "requests", "error_requests", "total_tokens", "total_cost_cents", "avg_latency_ms", "budget_cents", "budget_used_percent", "cost_share_percent"}}
+	rows := [][]string{{"dimension", "resource_id", "resource_name", "api_key_id", "api_key_name", "api_fingerprint", "model", "requests", "error_requests", "total_tokens", "total_usage_cost_micros", "avg_latency_ms", "budget_micros", "budget_used_percent", "cost_share_percent"}}
 	for _, row := range report.Rows {
 		rows = append(rows, []string{
 			row.Dimension,
@@ -306,14 +308,21 @@ func costAllocationCSVRows(report controlplane.CostAllocationReport) [][]string 
 			strconv.Itoa(row.Requests),
 			strconv.Itoa(row.ErrorRequests),
 			strconv.Itoa(row.TotalTokens),
-			strconv.Itoa(row.TotalCostCents),
+			strconv.FormatInt(row.TotalUsageCostMicros, 10),
 			strconv.FormatInt(row.AvgLatencyMS, 10),
-			strconv.Itoa(row.BudgetCents),
+			strconv.FormatInt(row.BudgetMicros, 10),
 			strconv.FormatFloat(row.BudgetUsedPercent, 'f', 2, 64),
 			strconv.FormatFloat(row.CostSharePercent, 'f', 2, 64),
 		})
 	}
 	return rows
+}
+
+func optionalMicrosCSV(value *int64) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatInt(*value, 10)
 }
 
 func writeCostAllocationError(c *gin.Context, err error) {

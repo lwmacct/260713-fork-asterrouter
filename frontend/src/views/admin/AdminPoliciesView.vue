@@ -28,7 +28,7 @@ const form = reactive<GovernancePolicyRequest>({
   model_denylist: [],
   qps_limit: 0,
   monthly_token_limit: 0,
-  monthly_budget_cents: 0,
+  monthly_budget_micros: 0,
   overage_action: 'block',
   prompt_logging_mode: 'metadata_only',
   retention_days: 30,
@@ -67,7 +67,7 @@ function resetForm() {
     model_denylist: [],
     qps_limit: 0,
     monthly_token_limit: 0,
-    monthly_budget_cents: 0,
+    monthly_budget_micros: 0,
     overage_action: 'block',
     prompt_logging_mode: 'metadata_only',
     retention_days: 30,
@@ -95,7 +95,7 @@ function openEdit(policy: GovernancePolicy) {
     model_denylist: [...policy.model_denylist],
     qps_limit: policy.qps_limit,
     monthly_token_limit: policy.monthly_token_limit,
-    monthly_budget_cents: policy.monthly_budget_cents,
+    monthly_budget_micros: policy.monthly_budget_micros,
     overage_action: policy.overage_action,
     prompt_logging_mode: policy.prompt_logging_mode,
     retention_days: policy.retention_days,
@@ -112,9 +112,9 @@ function closeModal() {
   editing.value = null
 }
 
-function formatBudget(cents: number): string {
-  return cents
-    ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(cents / 100)
+function formatBudget(micros: number): string {
+  return micros
+    ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(micros / 1_000_000)
     : t('apiKeys.unlimited')
 }
 
@@ -239,7 +239,7 @@ onMounted(load)
                 <span>{{ policy.scope_id || '-' }}</span>
               </td>
               <td>
-                <strong>{{ formatBudget(policy.monthly_budget_cents) }}</strong>
+                <strong>{{ formatBudget(policy.monthly_budget_micros) }}</strong>
                 <span>{{ policy.qps_limit || '-' }} QPS · {{ policy.monthly_token_limit || '-' }} tokens</span>
               </td>
               <td>
@@ -315,7 +315,7 @@ onMounted(load)
           </label>
           <label>
             <span>{{ t('policies.monthlyBudget') }}</span>
-            <input v-model.number="form.monthly_budget_cents" type="number" min="0" />
+            <input v-model.number="form.monthly_budget_micros" type="number" min="0" />
           </label>
           <label>
             <span>{{ t('policies.retentionDays') }}</span>

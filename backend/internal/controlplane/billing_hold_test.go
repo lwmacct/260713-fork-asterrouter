@@ -19,7 +19,7 @@ func TestBillingHoldAdmissionIsAtomicAndIdempotent(t *testing.T) {
 		base := time.Date(2026, time.July, 15, 8, 0, 0, 0, time.UTC)
 		svc := NewService(repo, "/v1", "billing-hold-secret")
 		svc.now = func() time.Time { return base }
-		saveBillingHoldTestPricing(t, repo, "model-a")
+		saveBillingHoldTestPricing(t, svc, "model-a")
 		auth := billingHoldTestAuth("tenant-budget", "credential-budget", 30)
 
 		var createdCount atomic.Int32
@@ -61,7 +61,7 @@ func TestBillingHoldAdmissionIsAtomicAndIdempotent(t *testing.T) {
 			t.Fatalf("holds=%+v err=%v", holds, err)
 		}
 		for _, hold := range holds {
-			if hold.Status != BillingHoldStatusReserved || hold.ReservedAmountCents != 10 {
+			if hold.Status != BillingHoldStatusReserved || hold.ReservedAmountMicros != 10 {
 				t.Fatalf("unexpected hold after concurrent admission: %+v", hold)
 			}
 		}
@@ -78,7 +78,7 @@ func TestBillingHoldAdmissionIsAtomicAndIdempotent(t *testing.T) {
 
 		rejected := <-rejections
 		largerBudget := auth
-		largerBudget.Limits.MonthlyBudgetCents = 1_000
+		largerBudget.Limits.MonthlyBudgetMicros = 1_000
 		_, created, err = svc.BeginCanonicalOperation(ctx, largerBudget, rejected)
 		if err != nil || !created {
 			t.Fatalf("retry after budget rejection created=%t err=%v", created, err)
@@ -96,7 +96,7 @@ func TestBillingHoldSettlementUsesActualCostAndPreservesIsolation(t *testing.T) 
 		base := time.Date(2026, time.July, 15, 9, 0, 0, 0, time.UTC)
 		svc := NewService(repo, "/v1", "billing-hold-secret")
 		svc.now = func() time.Time { return base }
-		saveBillingHoldTestPricing(t, repo, "model-a")
+		saveBillingHoldTestPricing(t, svc, "model-a")
 		auth := billingHoldTestAuth("tenant-settle", "credential-settle", 100)
 		request := billingHoldTestRequest("settle")
 		operation, created, err := svc.BeginCanonicalOperation(ctx, auth, request)
@@ -108,21 +108,21 @@ func TestBillingHoldSettlementUsesActualCostAndPreservesIsolation(t *testing.T) 
 		}
 		usage := GatewayUsageInput{
 			OperationID: operation.ID, UsageVersion: 1, UsageSource: "upstream_final",
-			RequestFingerprint: operation.RequestFingerprint, Model: operation.Model, Status: "forwarded", CostCents: 25,
+			RequestFingerprint: operation.RequestFingerprint, Model: operation.Model, Status: "forwarded", OutputTokens: 25,
 		}
 		legacyAuth := GatewayAuthContext{APIKey: APIKeyRecord{ID: auth.CredentialID, Fingerprint: "billing-fingerprint"}}
 		if err := svc.RecordGatewayUsage(ctx, legacyAuth, usage); err != nil {
 			t.Fatal(err)
 		}
 		hold, found, err := svc.BillingHoldForOperation(ctx, operation.ID)
-		if err != nil || !found || hold.Status != BillingHoldStatusSettled || hold.ReservedAmountCents != 10 || hold.SettledAmountCents != 25 || hold.Version != 3 {
+		if err != nil || !found || hold.Status != BillingHoldStatusSettled || hold.ReservedAmountMicros != 10 || hold.SettledAmountMicros != 25 || hold.Version != 3 {
 			t.Fatalf("settled hold=%+v found=%t err=%v", hold, found, err)
 		}
 		if err := svc.RecordGatewayUsage(ctx, legacyAuth, usage); err != nil {
 			t.Fatal(err)
 		}
 		replayed, _, _ := svc.BillingHoldForOperation(ctx, operation.ID)
-		if replayed.Version != hold.Version || replayed.SettledAmountCents != hold.SettledAmountCents {
+		if replayed.Version != hold.Version || replayed.SettledAmountMicros != hold.SettledAmountMicros {
 			t.Fatalf("usage replay changed hold: before=%+v after=%+v", hold, replayed)
 		}
 		if _, changed, err := repo.TransitionBillingHold(ctx, operation.ID, hold.Version, BillingHoldStatusReleased, 0, "invalid", base); err == nil || changed {
@@ -130,7 +130,7 @@ func TestBillingHoldSettlementUsesActualCostAndPreservesIsolation(t *testing.T) 
 		}
 
 		tightBudget := auth
-		tightBudget.Limits.MonthlyBudgetCents = 30
+		tightBudget.Limits.MonthlyBudgetMicros = 30
 		if _, _, err := svc.BeginCanonicalOperation(ctx, tightBudget, billingHoldTestRequest("actual-cost-budget")); !errors.Is(err, ErrBillingHoldBudgetExceeded) {
 			t.Fatalf("actual settled cost budget error=%v", err)
 		}
@@ -144,7 +144,7 @@ func TestBillingHoldSettlementUsesActualCostAndPreservesIsolation(t *testing.T) 
 		}
 
 		unconfirmedAuth := auth
-		unconfirmedAuth.Limits.MonthlyBudgetCents = 1_000
+		unconfirmedAuth.Limits.MonthlyBudgetMicros = 1_000
 		unconfirmed, created, err := svc.BeginCanonicalOperation(ctx, unconfirmedAuth, billingHoldTestRequest("unconfirmed"))
 		if err != nil || !created {
 			t.Fatalf("unconfirmed operation created=%t err=%v", created, err)
@@ -171,9 +171,9 @@ func TestDurableBillingHoldAdmissionAndQueuedCancellationAreAtomic(t *testing.T)
 		svc := newAIJobTestService(t, repo)
 		base := time.Date(2026, time.July, 15, 10, 0, 0, 0, time.UTC)
 		svc.now = func() time.Time { return base }
-		saveBillingHoldTestPricing(t, repo, "image-model")
+		saveBillingHoldTestPricing(t, svc, "image-model")
 		auth := aiJobTestAuth("tenant-job-hold", "principal-job-hold")
-		auth.Limits.MonthlyBudgetCents = 100
+		auth.Limits.MonthlyBudgetMicros = 100
 		request := aiJobTestRequest("job-hold", "job-hold-fingerprint")
 
 		job, created, err := svc.BeginDurableAIJob(ctx, auth, request)
@@ -198,12 +198,12 @@ func TestDurableBillingHoldAdmissionAndQueuedCancellationAreAtomic(t *testing.T)
 
 		rejectedRequest := aiJobTestRequest("job-budget-rejected", "job-budget-rejected-fingerprint")
 		rejectedAuth := auth
-		rejectedAuth.Limits.MonthlyBudgetCents = 1
+		rejectedAuth.Limits.MonthlyBudgetMicros = 1
 		if _, _, err := svc.BeginDurableAIJob(ctx, rejectedAuth, rejectedRequest); !errors.Is(err, ErrBillingHoldBudgetExceeded) {
 			t.Fatalf("durable budget rejection error=%v", err)
 		}
 		retryAuth := rejectedAuth
-		retryAuth.Limits.MonthlyBudgetCents = 1_000
+		retryAuth.Limits.MonthlyBudgetMicros = 1_000
 		retried, created, err := svc.BeginDurableAIJob(ctx, retryAuth, rejectedRequest)
 		if err != nil || !created {
 			t.Fatalf("durable retry created=%t err=%v", created, err)
@@ -364,21 +364,31 @@ func forEachBillingHoldRepository(t *testing.T, run func(*testing.T, Repository)
 	}
 }
 
-func saveBillingHoldTestPricing(t *testing.T, repo Repository, model string) {
+func saveBillingHoldTestPricing(t *testing.T, service *Service, model string) {
 	t.Helper()
-	now := time.Date(2026, time.July, 15, 7, 0, 0, 0, time.UTC)
-	inputPrice := 0
-	outputPrice := 1_000_000
+	expression := `v1: unit_line("output", output_tokens, "token", 1)`
 	if model == "image-model" {
-		inputPrice = 1_000_000
-		outputPrice = 0
+		expression = `v1: unit_line("image", output_images, "image", 10)`
 	}
-	if err := repo.SaveModelPricing(context.Background(), ModelPricing{
-		ID: "price-" + model, Model: model, Currency: "USD",
-		InputPriceCentsPer1MTokens: inputPrice, OutputPriceCentsPer1MTokens: outputPrice,
-		Status: ModelPricingStatusActive, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatal(err)
+	publishTestUsagePricingRule(t, service, expression)
+}
+
+func TestBillingHoldUsesRequestMaxCostMicros(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	service := NewService(repo, "/v1", "request-max-cost-secret")
+	auth := billingHoldTestAuth("tenant-request-max", "credential-request-max", 100)
+	request := billingHoldTestRequest("request-max")
+	request.Payload = []byte(`{"max_cost_micros":75}`)
+
+	operation, created, err := service.BeginCanonicalOperation(ctx, auth, request)
+	if err != nil || !created {
+		t.Fatalf("BeginCanonicalOperation() operation=%+v created=%t err=%v", operation, created, err)
+	}
+	hold, found, err := service.BillingHoldForOperation(ctx, operation.ID)
+	if err != nil || !found || hold.ReservedAmountMicros != 75 || hold.EstimateSource != "request_max_cost" {
+		t.Fatalf("request max-cost hold=%+v found=%t err=%v", hold, found, err)
 	}
 }
 
@@ -403,6 +413,7 @@ func TestBillingHoldSettlesCumulativeIncrementalUsage(t *testing.T) {
 			repo := test.open(t)
 			defer repo.Close()
 			svc := NewService(repo, "/v1", "incremental-hold-secret")
+			saveBillingHoldTestPricing(t, svc, "model-a")
 			identity := testutil.UniqueID("incremental-hold")
 			auth := billingHoldTestAuth("tenant-"+identity, "credential-"+identity, 0)
 			request := billingHoldTestRequest(identity)
@@ -424,7 +435,7 @@ func TestBillingHoldSettlesCumulativeIncrementalUsage(t *testing.T) {
 					OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: version, UsageSource: source,
 					RequestFingerprint: operation.RequestFingerprint, Model: operation.Model, UpstreamModel: attempt.UpstreamModel,
 					Protocol: operation.Protocol, ProviderID: attempt.ProviderID, ProviderAccountID: attempt.ProviderAccountID,
-					Status: "forwarded", CostCents: amount, SkipProcurementCostEstimate: true,
+					Status: "forwarded", OutputTokens: amount, SkipProcurementCostEstimate: true,
 				})
 				if err != nil {
 					t.Fatalf("RecordGatewayUsage(version=%d): %v", version, err)
@@ -433,12 +444,12 @@ func TestBillingHoldSettlesCumulativeIncrementalUsage(t *testing.T) {
 			record(1, 3, "provider_incremental")
 			record(2, 4, "provider_incremental")
 			hold, found, err := svc.BillingHoldForOperation(ctx, operation.ID)
-			if err != nil || !found || hold.Status != BillingHoldStatusCommitted || hold.SettledAmountCents != 0 {
+			if err != nil || !found || hold.Status != BillingHoldStatusCommitted || hold.SettledAmountMicros != 0 {
 				t.Fatalf("incremental hold=%+v found=%t err=%v", hold, found, err)
 			}
 			record(3, 0, "gateway_final")
 			hold, found, err = svc.BillingHoldForOperation(ctx, operation.ID)
-			if err != nil || !found || hold.Status != BillingHoldStatusSettled || hold.SettledAmountCents != 7 {
+			if err != nil || !found || hold.Status != BillingHoldStatusSettled || hold.SettledAmountMicros != 7 {
 				t.Fatalf("settled hold=%+v found=%t err=%v", hold, found, err)
 			}
 			entries, err := svc.BillingLedgerEntries(ctx, operation.ID)
@@ -449,11 +460,11 @@ func TestBillingHoldSettlesCumulativeIncrementalUsage(t *testing.T) {
 	}
 }
 
-func billingHoldTestAuth(tenantID, credentialID string, budget int) gatewaycore.CanonicalAuthContext {
+func billingHoldTestAuth(tenantID, credentialID string, budget int64) gatewaycore.CanonicalAuthContext {
 	return gatewaycore.CanonicalAuthContext{
 		CredentialSource: gatewaycore.CredentialSourceAPIKey, CredentialID: credentialID, ProfileScope: ProfileScopePlatform,
 		TenantID: tenantID, PrincipalType: APIKeyTypeService, PrincipalID: "principal-" + tenantID,
-		Limits: gatewaycore.CanonicalLimits{MonthlyBudgetCents: budget},
+		Limits: gatewaycore.CanonicalLimits{MonthlyBudgetMicros: budget},
 	}
 }
 

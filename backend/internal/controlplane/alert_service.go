@@ -231,33 +231,44 @@ func (s *Service) syncAPIKeyQuotaAlertForAuth(ctx context.Context, auth GatewayA
 	return s.syncAPIKeyQuotaAlert(ctx, auth, used, now)
 }
 
-func (s *Service) syncAPIKeyBudgetAlert(ctx context.Context, auth GatewayAuthContext, usedCents int, now time.Time) error {
+func (s *Service) syncAPIKeyBudgetAlert(ctx context.Context, auth GatewayAuthContext, usedMicros int64, now time.Time) error {
 	now = now.UTC()
-	limit := auth.effectiveMonthlyBudgetCents()
+	limit := auth.effectiveMonthlyBudgetMicros()
+	limitMicros := int64(limit)
 	dedupeKey := "api_key_budget:" + auth.APIKey.ID + ":" + alertMonthKey(now)
 	if limit <= 0 {
 		return s.resolveAlertByDedupeKey(ctx, systemActor, dedupeKey, fmt.Sprintf("API key %s has no monthly budget policy.", auth.APIKey.Name))
 	}
-	usedPercent := percentCeil(usedCents, limit)
+	usedPercent := percentCeil64(usedMicros, limitMicros)
 	if usedPercent < apiKeyQuotaWarningPercent {
 		return s.resolveAlertByDedupeKey(ctx, systemActor, dedupeKey, fmt.Sprintf("API key %s budget usage is within policy.", auth.APIKey.Name))
 	}
 	severity := AlertSeverityWarning
 	title := "API key monthly budget reached warning threshold"
-	if usedCents >= limit {
+	if usedMicros >= limitMicros {
 		severity = AlertSeverityCritical
 		title = "API key monthly budget exhausted"
 	}
-	input := alertInput{Type: AlertTypeAPIKeyBudget, Severity: severity, Title: title, Summary: fmt.Sprintf("API key %s used %d of %d monthly cost cents (%d%%).", auth.APIKey.Name, usedCents, limit, usedPercent), ResourceType: "api_key", ResourceID: auth.APIKey.ID, DedupeKey: dedupeKey, Metadata: map[string]string{"api_key_name": auth.APIKey.Name, "api_key_fingerprint": auth.APIKey.Fingerprint, "monthly_budget_cents": strconv.Itoa(limit), "current_month_cost_cents": strconv.Itoa(usedCents), "budget_used_percent": strconv.Itoa(usedPercent), "budget_month": alertMonthKey(now)}, ObservedAt: now}
+	input := alertInput{Type: AlertTypeAPIKeyBudget, Severity: severity, Title: title, Summary: fmt.Sprintf("API key %s used %d of %d monthly microdollars (%d%%).", auth.APIKey.Name, usedMicros, limitMicros, usedPercent), ResourceType: "api_key", ResourceID: auth.APIKey.ID, DedupeKey: dedupeKey, Metadata: map[string]string{"api_key_name": auth.APIKey.Name, "api_key_fingerprint": auth.APIKey.Fingerprint, "monthly_budget_micros": strconv.FormatInt(limitMicros, 10), "current_month_usage_cost_micros": strconv.FormatInt(usedMicros, 10), "budget_used_percent": strconv.Itoa(usedPercent), "budget_month": alertMonthKey(now)}, ObservedAt: now}
 	applyGatewayPlatformSnapshotToAlertInput(&input, auth)
 	return s.upsertAlert(ctx, input)
 }
 
+func percentCeil64(value, limit int64) int {
+	if value <= 0 || limit <= 0 {
+		return 0
+	}
+	if value > math.MaxInt64/100 {
+		return 100
+	}
+	return int((value*100 + limit - 1) / limit)
+}
+
 func (s *Service) syncAPIKeyBudgetAlertForAuth(ctx context.Context, auth GatewayAuthContext, now time.Time) error {
-	if auth.effectiveMonthlyBudgetCents() <= 0 {
+	if auth.effectiveMonthlyBudgetMicros() <= 0 {
 		return nil
 	}
-	used, err := s.repo.SumUsageCostCentsByAPIKeySince(ctx, auth.APIKey.ID, monthStart(now))
+	used, err := s.repo.SumUsageCostMicrosByAPIKeySince(ctx, auth.APIKey.ID, monthStart(now))
 	if err != nil {
 		return err
 	}

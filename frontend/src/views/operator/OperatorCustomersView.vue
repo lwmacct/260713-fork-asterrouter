@@ -21,7 +21,7 @@ const editing = ref<OperatorCustomer | null>(null)
 const keyCustomer = ref<OperatorCustomer | null>(null)
 const createdKey = ref('')
 
-const form = reactive({ name: '', email: '', group_id: '', plan_id: '', status: 'active', credit_cents: 0, notes: '' })
+const form = reactive({ name: '', email: '', group_id: '', plan_id: '', status: 'active', credit_micros: 0, notes: '' })
 const keyForm = reactive({
   name: '',
   policy_id: '',
@@ -49,7 +49,7 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', email: '', group_id: '', plan_id: '', status: 'active', credit_cents: 0, notes: '' })
+  Object.assign(form, { name: '', email: '', group_id: '', plan_id: '', status: 'active', credit_micros: 0, notes: '' })
   modal.value = true
 }
 
@@ -113,7 +113,7 @@ onMounted(load)
             <tr v-for="item in filtered" :key="item.id">
               <td><strong>{{ item.name }}</strong><span>{{ item.email || item.id }}</span></td>
               <td>{{ groupName(item.group_id) }}</td><td>{{ planName(item.plan_id) }}</td>
-              <td>{{ (item.balance_cents / 100).toFixed(2) }}</td><td>{{ (item.credit_cents / 100).toFixed(2) }}</td>
+              <td>{{ (item.balance_micros / 1_000_000).toFixed(6) }}</td><td>{{ (item.credit_micros / 1_000_000).toFixed(6) }}</td>
               <td><span class="pill" :class="item.status === 'active' ? 'status-success' : 'status-warning'">{{ item.status }}</span></td>
               <td class="table-actions"><button class="icon-button" :title="t('common.edit')" @click="openEdit(item)"><Edit3 :size="16" /></button><button class="icon-button" :title="t('operatorDomain.createKey')" @click="openKey(item)"><KeyRound :size="16" /></button></td>
             </tr>
@@ -131,7 +131,7 @@ onMounted(load)
           <div class="field"><label>Email</label><input v-model="form.email" type="email" /></div>
           <div class="field"><label>{{ t('operatorDomain.group') }}</label><select v-model="form.group_id"><option value="">-</option><option v-for="item in groups" :key="item.id" :value="item.id">{{ item.name }}</option></select></div>
           <div class="field"><label>{{ t('operatorDomain.plan') }}</label><select v-model="form.plan_id"><option value="">-</option><option v-for="item in plans" :key="item.id" :value="item.id">{{ item.name }}</option></select></div>
-          <div class="field"><label>{{ t('operatorDomain.credit') }}</label><input v-model.number="form.credit_cents" type="number" min="0" /></div>
+          <div class="field"><label>{{ t('operatorDomain.credit') }}</label><input v-model.number="form.credit_micros" type="number" min="0" /></div>
           <div class="field"><label>{{ t('providers.status') }}</label><select v-model="form.status"><option value="active">active</option><option value="disabled">disabled</option></select></div>
           <div class="field field-wide"><label>{{ t('operatorDomain.notes') }}</label><textarea v-model="form.notes" rows="3" /></div>
         </div>

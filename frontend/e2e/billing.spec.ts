@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { adminPost, createGatewayFixture, envelope, loginDemo, loginUser, registerUsers } from './fixtures'
+import { adminPost, createGatewayFixture, createPublishedPricingRule, envelope, loginDemo, loginUser, registerUsers } from './fixtures'
 
 async function operatorPost<T>(page: Page, token: string, path: string, data: unknown): Promise<T> {
   return envelope<T>(await page.request.post(`/api/v1/operator${path}`, {
@@ -28,8 +28,8 @@ test('@smoke @j06 operator allocation and customer billing notifications stay at
   const runID = `${testInfo.project.name}-${Date.now()}`
   const password = 'synthetic-password-123'
   const [lowBalanceUser, fundedUser] = await registerUsers(page, adminToken, [
-    { email: `customer-low-${runID}@example.test`, password, displayName: 'Low Balance Customer', balanceCents: 500 },
-    { email: `customer-funded-${runID}@example.test`, password, displayName: 'Funded Customer', balanceCents: 5000 }
+    { email: `customer-low-${runID}@example.test`, password, displayName: 'Low Balance Customer', balanceMicros: 5_000_000 },
+    { email: `customer-funded-${runID}@example.test`, password, displayName: 'Funded Customer', balanceMicros: 50_000_000 }
   ])
   const lowToken = await loginUser(page, lowBalanceUser.email, password)
   const fundedToken = await loginUser(page, fundedUser.email, password)
@@ -39,57 +39,55 @@ test('@smoke @j06 operator allocation and customer billing notifications stay at
 
   const plan = await operatorPost<{ id: string }>(page, adminToken, '/plans', {
     name: `Internal allocation ${runID}`,
-    monthly_fee_cents: 0,
+    monthly_fee_micros: 0,
     included_tokens: 100000,
-    monthly_limit_cents: 10000,
-    rate_multiplier: 1,
+    monthly_limit_micros: 100_000_000,
     status: 'active'
   })
-  await operatorPost(page, adminToken, '/pricing-rules', {
+  await createPublishedPricingRule(page, adminToken, 'operator', {
     name: `Synthetic pricing ${runID}`,
-    plan_id: plan.id,
+    purpose: 'customer_charge',
+    scope_type: 'operator_plan',
+    scope_id: plan.id,
     model: publicModel,
-    input_price_cents_per_1m_tokens: 1000000,
-    output_price_cents_per_1m_tokens: 1000000,
-    rate_multiplier: 1,
-    status: 'active'
+    expression: 'v1: token_line("input", uncached_input_tokens, 10000000000) + token_line("output", output_tokens, 10000000000)'
   })
   const operatorCustomer = await operatorPost<{ id: string }>(page, adminToken, '/customers', {
     name: `Internal consumer ${runID}`,
     email: `internal-${runID}@example.test`,
     plan_id: plan.id,
     status: 'active',
-    credit_cents: 0
+    credit_micros: 0
   })
-  const allocation = await operatorPost<{ id: string; balance_after_cents: number }>(page, adminToken, '/balance-entries', {
+  const allocation = await operatorPost<{ id: string; balance_after_micros: number }>(page, adminToken, '/balance-entries', {
     customer_id: operatorCustomer.id,
     kind: 'allocation_increase',
-    amount_cents: 1000,
+    amount_micros: 10_000_000,
     reference: `allocation-${runID}`,
     note: 'Synthetic initial allocation'
   })
-  expect(allocation.balance_after_cents).toBe(1000)
-  const duplicate = await operatorPost<{ id: string; balance_after_cents: number }>(page, adminToken, '/balance-entries', {
+  expect(allocation.balance_after_micros).toBe(10_000_000)
+  const duplicate = await operatorPost<{ id: string; balance_after_micros: number }>(page, adminToken, '/balance-entries', {
     customer_id: operatorCustomer.id,
     kind: 'allocation_increase',
-    amount_cents: 1000,
+    amount_micros: 10_000_000,
     reference: `allocation-${runID}`,
     note: 'Synthetic duplicate retry'
   })
   expect(duplicate.id).toBe(allocation.id)
-  expect(duplicate.balance_after_cents).toBe(1000)
-  expect((await operatorPost<{ balance_after_cents: number }>(page, adminToken, '/balance-entries', {
+  expect(duplicate.balance_after_micros).toBe(10_000_000)
+  expect((await operatorPost<{ balance_after_micros: number }>(page, adminToken, '/balance-entries', {
     customer_id: operatorCustomer.id,
     kind: 'allocation_decrease',
-    amount_cents: -100,
+    amount_micros: -1_000_000,
     reference: `reclaim-${runID}`
-  })).balance_after_cents).toBe(900)
-  expect((await operatorPost<{ balance_after_cents: number }>(page, adminToken, '/balance-entries', {
+  })).balance_after_micros).toBe(9_000_000)
+  expect((await operatorPost<{ balance_after_micros: number }>(page, adminToken, '/balance-entries', {
     customer_id: operatorCustomer.id,
     kind: 'cost_correction',
-    amount_cents: 50,
+    amount_micros: 500_000,
     reference: `correction-${runID}`
-  })).balance_after_cents).toBe(950)
+  })).balance_after_micros).toBe(9_500_000)
 
   const operatorKey = await operatorPost<{ key: string; record: { id: string } }>(page, adminToken, `/customers/${operatorCustomer.id}/keys`, {
     name: `Operator customer key ${runID}`,
@@ -105,11 +103,17 @@ test('@smoke @j06 operator allocation and customer billing notifications stay at
   const operatorUsage = await operatorGet<{ total_requests: number; recent: Array<{ customer_id: string }> }>(page, adminToken, `/usage?customer_id=${operatorCustomer.id}`)
   expect(operatorUsage.total_requests).toBe(1)
   expect(operatorUsage.recent).toContainEqual(expect.objectContaining({ customer_id: operatorCustomer.id }))
-  const customers = await operatorGet<Array<{ id: string; balance_cents: number }>>(page, adminToken, '/customers')
-  expect(customers).toContainEqual(expect.objectContaining({ id: operatorCustomer.id, balance_cents: 932 }))
-  const entries = await operatorGet<Array<{ customer_id: string; kind: string; balance_after_cents: number }>>(page, adminToken, '/balance-entries')
+  await expect.poll(async () => {
+    const customers = await operatorGet<Array<{ id: string; balance_micros: number }>>(page, adminToken, '/customers')
+    return customers.find((customer) => customer.id === operatorCustomer.id)?.balance_micros
+  }, { message: 'customer charge ledger consumed by operator balance', timeout: 10_000 }).toBe(9_320_000)
+  await expect.poll(async () => {
+    const entries = await operatorGet<Array<{ customer_id: string }>>(page, adminToken, '/balance-entries')
+    return entries.filter((entry) => entry.customer_id === operatorCustomer.id).length
+  }, { message: 'customer charge balance entry created', timeout: 10_000 }).toBe(4)
+  const entries = await operatorGet<Array<{ customer_id: string; kind: string; balance_after_micros: number }>>(page, adminToken, '/balance-entries')
   expect(entries.filter((entry) => entry.customer_id === operatorCustomer.id)).toHaveLength(4)
-  expect(entries).toContainEqual(expect.objectContaining({ customer_id: operatorCustomer.id, kind: 'usage', balance_after_cents: 932 }))
+  expect(entries).toContainEqual(expect.objectContaining({ customer_id: operatorCustomer.id, kind: 'usage_charge', balance_after_micros: 9_320_000 }))
 
   const userKey = await adminPost<{ key: string; record: { id: string } }>(page, adminToken, '/api-keys', {
     name: `Low balance owned key ${runID}`,
@@ -125,16 +129,16 @@ test('@smoke @j06 operator allocation and customer billing notifications stay at
   })
   expect(customerCompletion.status()).toBe(200)
 
-  const lowBilling = await customerGet<{ balance_cents: number; total_cents: number }>(page, lowToken, '/billing')
-  const fundedBilling = await customerGet<{ balance_cents: number; total_cents: number }>(page, fundedToken, '/billing')
-  expect(lowBilling).toMatchObject({ balance_cents: 500, total_cents: 500 })
-  expect(fundedBilling).toMatchObject({ balance_cents: 5000, total_cents: 5000 })
+  const lowBilling = await customerGet<{ balance_micros: number; total_micros: number }>(page, lowToken, '/billing')
+  const fundedBilling = await customerGet<{ balance_micros: number; total_micros: number }>(page, fundedToken, '/billing')
+  expect(lowBilling).toMatchObject({ balance_micros: 5_000_000, total_micros: 5_000_000 })
+  expect(fundedBilling).toMatchObject({ balance_micros: 50_000_000, total_micros: 50_000_000 })
   const recharge = await page.request.post('/api/v1/customer/billing/recharge-orders', {
     headers: { Authorization: `Bearer ${lowToken}` },
-    data: { amount_cents: 1000, payment_method: 'wechat' }
+    data: { amount_micros: 10_000_000, payment_method: 'wechat' }
   })
   expect(recharge.status()).toBe(503)
-  expect(await customerGet<{ balance_cents: number }>(page, lowToken, '/billing')).toMatchObject({ balance_cents: 500 })
+  expect(await customerGet<{ balance_micros: number }>(page, lowToken, '/billing')).toMatchObject({ balance_micros: 5_000_000 })
 
   await operatorPost(page, adminToken, '/notices', {
     title: `Synthetic notice ${runID}`,

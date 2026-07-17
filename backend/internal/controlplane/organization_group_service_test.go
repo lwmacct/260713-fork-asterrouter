@@ -52,11 +52,9 @@ func TestCostAllocationReportAggregatesByOrganizationGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth, _ := svc.AuthorizeGatewayModel(ctx, created.Key, "model")
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", CostCents: 50}); err != nil {
-		t.Fatal(err)
-	}
+	recordTestPricedGatewayUsage(t, svc, auth, GatewayUsageInput{Model: "model", Status: "forwarded"}, 50)
 	report, err := svc.CostAllocationReportQuery(ctx, CostAllocationByGroup, UsageQuery{})
-	if err != nil || len(report.Rows) != 1 || report.Rows[0].ResourceID != group.ID || report.Rows[0].ResourceName != group.Name || report.Rows[0].TotalCostCents != 50 {
+	if err != nil || len(report.Rows) != 1 || report.Rows[0].ResourceID != group.ID || report.Rows[0].ResourceName != group.Name || report.Rows[0].TotalUsageCostMicros != 50 {
 		t.Fatalf("group report=%+v err=%v", report, err)
 	}
 }

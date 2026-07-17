@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS customer_wallets (
   user_id TEXT PRIMARY KEY REFERENCES workspace_users(id) ON DELETE CASCADE,
-  gift_balance_cents INTEGER NOT NULL DEFAULT 0,
-  profit_balance_cents INTEGER NOT NULL DEFAULT 0,
+  gift_balance_micros BIGINT NOT NULL DEFAULT 0,
+  profit_balance_micros BIGINT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL
 );
 
@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS customer_billing_entries (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
   kind TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  balance_after_cents INTEGER NOT NULL,
+  amount_micros BIGINT NOT NULL,
+  balance_after_micros BIGINT NOT NULL,
   reference TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS customer_redemption_codes (
   id TEXT PRIMARY KEY,
   code_hash TEXT NOT NULL UNIQUE,
   title TEXT NOT NULL DEFAULT '',
-  amount_cents INTEGER NOT NULL,
+  amount_micros BIGINT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   max_redemptions INTEGER NOT NULL DEFAULT 1,
   redeemed_count INTEGER NOT NULL DEFAULT 0,
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS customer_vouchers (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  minimum_recharge_cents INTEGER NOT NULL DEFAULT 0,
+  amount_micros BIGINT NOT NULL,
+  minimum_recharge_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL

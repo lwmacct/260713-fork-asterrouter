@@ -367,8 +367,8 @@ async function copyRecoveryCodes() {
 	window.setTimeout(() => (copied.value = false), 1600)
 }
 
-function money(cents: number) {
-	return new Intl.NumberFormat(locale.value, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100)
+function money(micros: number) {
+	return new Intl.NumberFormat(locale.value, { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(micros / 1_000_000)
 }
 
 function date(value: string) {
@@ -419,7 +419,7 @@ onMounted(async () => {
 					<div><div class="account-name-line"><h2>{{ profile.display_name || profile.email || profile.id }}</h2><span class="pill status-success">{{ profile.role }}</span><span class="pill" :class="profile.status === 'active' ? 'status-success' : 'status-warning'">{{ profile.status }}</span></div><p>{{ profile.email || profile.id }}</p></div>
 				</div>
 				<div class="account-metrics">
-					<div><span>{{ t('account.balance') }}</span><strong>{{ money(profile.balance_cents) }}</strong></div>
+					<div><span>{{ t('account.balance') }}</span><strong>{{ money(profile.balance_micros) }}</strong></div>
 					<div><span>{{ t('account.concurrency') }}</span><strong>{{ profile.concurrency_limit }}</strong></div>
 					<div><span>RPM</span><strong>{{ profile.rpm_limit || t('account.unlimited') }}</strong></div>
 					<div><span>{{ t('account.registeredAt') }}</span><strong>{{ date(profile.created_at) }}</strong></div>

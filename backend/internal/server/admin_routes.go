@@ -20,7 +20,7 @@ func registerAdminRoutes(admin *gin.RouterGroup, control *controlplane.Service, 
 	registerRoutingAdminRoutes(admin, control)
 	registerGatewayModelAdminRoutes(admin, control)
 	registerAPIKeyAdminRoutes(admin, control)
-	registerModelPricingAdminRoutes(admin, control)
+	registerPricingRuleRoutes(admin, control, PricingSurfaceAdmin)
 	registerEffectivePricingAdminRoutes(admin, control)
 	registerAIJobAdminRoutes(admin, control, runtime, "")
 	registerArtifactAdminRoutes(admin, control, "")

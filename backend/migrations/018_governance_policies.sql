@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS governance_policies (
   model_denylist TEXT NOT NULL DEFAULT '[]',
   qps_limit INTEGER NOT NULL DEFAULT 0,
   monthly_token_limit INTEGER NOT NULL DEFAULT 0,
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   overage_action TEXT NOT NULL DEFAULT 'block',
   prompt_logging_mode TEXT NOT NULL DEFAULT 'metadata_only',
   retention_days INTEGER NOT NULL DEFAULT 30,

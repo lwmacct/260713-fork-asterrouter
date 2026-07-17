@@ -4,13 +4,15 @@ import i18n, { getLocale } from '@/i18n'
 
 export class ApiClientError extends Error {
   status: number
-  code?: number
+  code?: number | string
+  payload?: unknown
 
-  constructor(message: string, status: number, code?: number) {
+  constructor(message: string, status: number, code?: number | string, payload?: unknown) {
     super(message)
     this.name = 'ApiClientError'
     this.status = status
     this.code = code
+    this.payload = payload
   }
 }
 
@@ -59,7 +61,7 @@ apiClient.interceptors.request.use((config) => {
     '/gateway-simulator',
     '/api-keys',
     '/policies',
-    '/model-pricings',
+    '/pricing-rules',
     '/usage',
     '/gateway-traces',
     '/alerts',
@@ -85,6 +87,8 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
+type ErrorEnvelope = ApiResponse<unknown> & { error?: { code?: string; message?: string } }
+
 apiClient.interceptors.response.use(
   (response) => {
     const payload = response.data as ApiResponse<unknown>
@@ -99,10 +103,11 @@ apiClient.interceptors.response.use(
     }
     return response
   },
-  (error: AxiosError<ApiResponse<unknown>>) => {
+  (error: AxiosError<ErrorEnvelope>) => {
     const status = error.response?.status || 0
     if (status === 401) redirectToLogin()
-    const message = normalizeMessage(status, error.response?.data?.message || error.message || t('common.networkError'))
-    return Promise.reject(new ApiClientError(message, status, error.response?.data?.code))
+    const payload = error.response?.data
+    const message = normalizeMessage(status, payload?.error?.message || payload?.message || error.message || t('common.networkError'))
+    return Promise.reject(new ApiClientError(message, status, payload?.error?.code || payload?.code, payload))
   }
 )

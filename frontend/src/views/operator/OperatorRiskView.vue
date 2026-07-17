@@ -27,7 +27,7 @@ const fields: CrudField[] = [
 	{ key: 'name', label: t('operatorDomain.name'), required: true },
 	{ key: 'rule_type', label: t('operatorDomain.ruleType'), type: 'select', required: true, default: 'rpm', options: [
 		{ value: 'rpm', label: 'RPM' }, { value: 'tokens', label: 'Token' },
-		{ value: 'spend', label: '成本（分）' }, { value: 'error_rate', label: '错误率（%）' }
+		{ value: 'spend', label: '成本（微美元）' }, { value: 'error_rate', label: '错误率（%）' }
 	] },
 	{ key: 'threshold', label: t('operatorDomain.threshold'), type: 'number', min: 0 },
 	{ key: 'window_minutes', label: t('operatorDomain.windowMinutes'), type: 'number', min: 1, default: 60 },

@@ -15,7 +15,7 @@ const navGroups = [
       { to: '/platform/model-routes', label: 'admin.modelRoutes', icon: Route },
       { to: '/platform/routing-groups', label: 'admin.routingGroups', icon: Route },
       { to: '/platform/provider-accounts', label: 'admin.providerAccounts', icon: Server },
-      { to: '/platform/model-pricings', label: 'admin.modelPricings', icon: BadgeDollarSign }
+      { to: '/platform/pricing', label: 'pricingRules.platformTitle', icon: BadgeDollarSign }
     ]
   },
   {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/astercloud/asterrouter/backend/internal/gatewaycore"
+	"github.com/astercloud/asterrouter/backend/internal/pricing"
 )
 
 const aiOperationSelectColumns = `id, profile_scope, tenant_id, credential_id, credential_source, integration_id,
@@ -350,54 +351,79 @@ func (r *MemoryRepository) CompleteAIAttempt(_ context.Context, id, status, erro
 	return true, nil
 }
 
-func (r *MemoryRepository) ApplyUsageLedger(_ context.Context, record UsageRecord, billing BillingLedgerEntry, outbox TransactionalOutboxEvent, events []PlatformUsageDeliveryEvent) (bool, error) {
+func (r *MemoryRepository) ApplyUsageSettlement(_ context.Context, settlement UsageSettlement) (bool, error) {
+	record := settlement.Record
 	usageDimensions, err := NormalizeUsageDimensions(record.UsageDimensions)
 	if err != nil {
 		return false, err
 	}
 	record.UsageDimensions = usageDimensions
-	if err := validateUsageLedgerApplication(record, billing); err != nil {
+	settlement.Record = record
+	if err := validateUsageSettlement(settlement); err != nil {
 		return false, err
 	}
-	normalizeTransactionalOutboxEvent(&outbox)
+	for index := range settlement.OutboxEvents {
+		normalizeTransactionalOutboxEvent(&settlement.OutboxEvents[index])
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, found := r.aiOperations[billing.OperationID]; !found {
-		return false, fmt.Errorf("ai operation %q not found", billing.OperationID)
+	if _, found := r.aiOperations[record.OperationID]; !found {
+		return false, fmt.Errorf("ai operation %q not found", record.OperationID)
 	}
-	if billing.AttemptID != "" {
-		attempt, found := r.aiAttempts[billing.AttemptID]
-		if !found || attempt.OperationID != billing.OperationID {
-			return false, fmt.Errorf("ai attempt %q not found for operation", billing.AttemptID)
+	if record.AttemptID != "" {
+		attempt, found := r.aiAttempts[record.AttemptID]
+		if !found || attempt.OperationID != record.OperationID {
+			return false, fmt.Errorf("ai attempt %q not found for operation", record.AttemptID)
 		}
 	}
-	for _, current := range r.billingLedgerEntries {
-		if current.OperationID == billing.OperationID && current.AttemptID == billing.AttemptID && current.UsageVersion == billing.UsageVersion {
-			if current.RequestFingerprint != billing.RequestFingerprint || current.AmountCents != billing.AmountCents || current.UsageRecordID != billing.UsageRecordID {
-				return false, ErrUsageLedgerConflict
+	existingCount := 0
+	for _, billing := range settlement.Ledgers {
+		for _, current := range r.billingLedgerEntries {
+			if sameBillingLedgerIdentity(current, billing) {
+				existingCount++
+				if !sameBillingLedgerContent(current, billing) {
+					return false, ErrUsageLedgerConflict
+				}
 			}
-			existing, found := r.usageRecords[current.UsageRecordID]
-			if !found || !usageDimensionsEqual(existing.UsageDimensions, record.UsageDimensions) {
-				return false, ErrUsageLedgerConflict
+		}
+	}
+	if existingCount > 0 {
+		if existingCount != len(settlement.Ledgers) {
+			return false, ErrUsageLedgerConflict
+		}
+		existing, found := r.usageRecords[record.ID]
+		if !found || !usageDimensionsEqual(existing.UsageDimensions, record.UsageDimensions) || existing.PricingStatus != record.PricingStatus || !optionalMoneyEqual(existing.UsageCostMicros, record.UsageCostMicros) {
+			return false, ErrUsageLedgerConflict
+		}
+		return false, nil
+	}
+	if len(settlement.Ledgers) == 0 {
+		if existing, found := r.usageRecords[record.ID]; found {
+			if usageDimensionsEqual(existing.UsageDimensions, record.UsageDimensions) && existing.PricingStatus == record.PricingStatus && optionalMoneyEqual(existing.UsageCostMicros, record.UsageCostMicros) {
+				return false, nil
 			}
-			return false, nil
+			return false, ErrUsageLedgerConflict
 		}
 	}
 	if _, exists := r.usageRecords[record.ID]; exists {
 		return false, fmt.Errorf("usage record %q already exists", record.ID)
 	}
-	if _, exists := r.billingLedgerEntries[billing.ID]; exists {
-		return false, fmt.Errorf("billing ledger entry %q already exists", billing.ID)
-	}
-	if _, exists := r.transactionalOutboxEvents[outbox.ID]; exists {
-		return false, fmt.Errorf("transactional outbox event %q already exists", outbox.ID)
-	}
-	for _, current := range r.transactionalOutboxEvents {
-		if current.AggregateType == outbox.AggregateType && current.AggregateID == outbox.AggregateID && current.EventType == outbox.EventType && current.EventVersion == outbox.EventVersion {
-			return false, fmt.Errorf("transactional outbox event is not unique")
+	for _, evaluation := range settlement.Evaluations {
+		if _, exists := r.pricingEvaluations[evaluation.ID]; exists {
+			return false, fmt.Errorf("pricing evaluation %q already exists", evaluation.ID)
 		}
 	}
-	for _, event := range events {
+	for _, billing := range settlement.Ledgers {
+		if _, exists := r.billingLedgerEntries[billing.ID]; exists {
+			return false, fmt.Errorf("billing ledger entry %q already exists", billing.ID)
+		}
+	}
+	for _, outbox := range settlement.OutboxEvents {
+		if err := validateMemoryOutboxInsert(r.transactionalOutboxEvents, outbox); err != nil {
+			return false, err
+		}
+	}
+	for _, event := range settlement.PlatformEvents {
 		if _, exists := r.platformUsageDeliveryEvents[event.ID]; exists {
 			return false, fmt.Errorf("platform usage delivery event %q already exists", event.ID)
 		}
@@ -407,16 +433,68 @@ func (r *MemoryRepository) ApplyUsageLedger(_ context.Context, record UsageRecor
 			}
 		}
 	}
-	if err := settleMemoryBillingHoldForUsage(r, record, billing); err != nil {
-		return false, err
+	for _, billing := range settlement.Ledgers {
+		if billing.Purpose == PricingPurposeUsageCost {
+			if err := settleMemoryBillingHoldForUsage(r, record, billing); err != nil {
+				return false, err
+			}
+		}
+	}
+	for _, evaluation := range settlement.Evaluations {
+		key := memoryBillingHoldPricingVersionKeyForEvaluation(r, evaluation.PricingRuleVersionID, evaluation.Purpose, record.OperationID)
+		if key != "" {
+			version := r.billingHoldPricingVersions[key]
+			version.SettlementEvaluationID = evaluation.ID
+			r.billingHoldPricingVersions[key] = version
+		}
+		if evaluation.Purpose == PricingPurposeUsageCost && evaluation.Status == PricingEvaluationStatusDisputed && billingHoldUsageIsFinal(record) {
+			hold, found := memoryBillingHoldForOperation(r.billingHolds, record.OperationID)
+			if found && !oneOf(hold.Status, BillingHoldStatusSettled, BillingHoldStatusReleased, BillingHoldStatusDisputed) {
+				updated, transitionErr := prepareBillingHoldTransition(hold, BillingHoldStatusDisputed, 0, "pricing_evaluation_failed", record.CreatedAt)
+				if transitionErr != nil {
+					return false, transitionErr
+				}
+				r.billingHolds[hold.ID] = updated
+			}
+		}
+	}
+	if record.PricingStatus == "unpriced" && billingHoldUsageIsFinal(record) {
+		hold, found := memoryBillingHoldForOperation(r.billingHolds, record.OperationID)
+		if found && !oneOf(hold.Status, BillingHoldStatusSettled, BillingHoldStatusReleased) {
+			updated, transitionErr := prepareBillingHoldTransition(hold, BillingHoldStatusSettled, 0, "usage_unpriced", record.CreatedAt)
+			if transitionErr != nil {
+				return false, transitionErr
+			}
+			r.billingHolds[hold.ID] = updated
+		}
 	}
 	r.usageRecords[record.ID] = record
-	r.billingLedgerEntries[billing.ID] = billing
-	r.transactionalOutboxEvents[outbox.ID] = outbox
-	for _, event := range events {
+	for _, evaluation := range settlement.Evaluations {
+		r.pricingEvaluations[evaluation.ID] = clonePricingEvaluation(evaluation)
+	}
+	for _, billing := range settlement.Ledgers {
+		r.billingLedgerEntries[billing.ID] = billing
+	}
+	for _, outbox := range settlement.OutboxEvents {
+		r.transactionalOutboxEvents[outbox.ID] = outbox
+	}
+	for _, event := range settlement.PlatformEvents {
 		r.platformUsageDeliveryEvents[event.ID] = event
 	}
 	return true, nil
+}
+
+func memoryBillingHoldPricingVersionKeyForEvaluation(r *MemoryRepository, versionID, purpose, operationID string) string {
+	hold, found := memoryBillingHoldForOperation(r.billingHolds, operationID)
+	if !found {
+		return ""
+	}
+	key := hold.ID + "\n" + purpose
+	version, found := r.billingHoldPricingVersions[key]
+	if !found || version.PricingRuleVersionID != versionID {
+		return ""
+	}
+	return key
 }
 
 func (r *MemoryRepository) ListBillingLedgerEntries(_ context.Context, operationID string) ([]BillingLedgerEntry, error) {
@@ -877,80 +955,124 @@ func (r *PostgresRepository) CompleteAIAttempt(ctx context.Context, id, status, 
 	return rows == 1, err
 }
 
-func (r *PostgresRepository) ApplyUsageLedger(ctx context.Context, record UsageRecord, billing BillingLedgerEntry, outbox TransactionalOutboxEvent, events []PlatformUsageDeliveryEvent) (bool, error) {
+func (r *PostgresRepository) ApplyUsageSettlement(ctx context.Context, settlement UsageSettlement) (bool, error) {
+	record := settlement.Record
 	usageDimensions, err := NormalizeUsageDimensions(record.UsageDimensions)
 	if err != nil {
 		return false, err
 	}
 	record.UsageDimensions = usageDimensions
-	if err := validateUsageLedgerApplication(record, billing); err != nil {
+	settlement.Record = record
+	if err := validateUsageSettlement(settlement); err != nil {
 		return false, err
 	}
-	normalizeTransactionalOutboxEvent(&outbox)
+	for index := range settlement.OutboxEvents {
+		normalizeTransactionalOutboxEvent(&settlement.OutboxEvents[index])
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if billing.AttemptID != "" {
+	if record.AttemptID != "" {
 		var attemptExists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ai_attempts WHERE id=$1 AND operation_id=$2)`, billing.AttemptID, billing.OperationID).Scan(&attemptExists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ai_attempts WHERE id=$1 AND operation_id=$2)`, record.AttemptID, record.OperationID).Scan(&attemptExists); err != nil {
 			return false, err
 		}
 		if !attemptExists {
-			return false, fmt.Errorf("ai attempt %q not found for operation", billing.AttemptID)
+			return false, fmt.Errorf("ai attempt %q not found for operation", record.AttemptID)
 		}
 	}
-	result, err := tx.ExecContext(ctx, `
-INSERT INTO billing_ledger_entries(id, operation_id, attempt_id, usage_version, usage_record_id, request_fingerprint, entry_type, amount_cents, currency, status, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-ON CONFLICT(operation_id, attempt_id, usage_version) DO NOTHING
-`, billing.ID, billing.OperationID, billing.AttemptID, billing.UsageVersion, billing.UsageRecordID, billing.RequestFingerprint, billing.EntryType, billing.AmountCents, billing.Currency, billing.Status, billing.CreatedAt)
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if rows == 0 {
+	existingCount := 0
+	for _, billing := range settlement.Ledgers {
 		var current BillingLedgerEntry
-		err = tx.QueryRowContext(ctx, `SELECT id, operation_id, attempt_id, usage_version, usage_record_id, request_fingerprint, entry_type, amount_cents, currency, status, created_at FROM billing_ledger_entries WHERE operation_id=$1 AND attempt_id=$2 AND usage_version=$3`, billing.OperationID, billing.AttemptID, billing.UsageVersion).Scan(
+		err = tx.QueryRowContext(ctx, `SELECT id,operation_id,attempt_id,usage_version,usage_record_id,request_fingerprint,purpose,amount_micros,currency,pricing_evaluation_id,pricing_rule_version_id,status,created_at FROM billing_ledger_entries WHERE operation_id=$1 AND attempt_id=$2 AND usage_version=$3 AND purpose=$4`, billing.OperationID, billing.AttemptID, billing.UsageVersion, billing.Purpose).Scan(
 			&current.ID, &current.OperationID, &current.AttemptID, &current.UsageVersion, &current.UsageRecordID, &current.RequestFingerprint,
-			&current.EntryType, &current.AmountCents, &current.Currency, &current.Status, &current.CreatedAt,
+			&current.Purpose, &current.AmountMicros, &current.Currency, &current.PricingEvaluationID, &current.PricingRuleVersionID, &current.Status, &current.CreatedAt,
 		)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return false, err
 		}
-		if current.RequestFingerprint != billing.RequestFingerprint || current.AmountCents != billing.AmountCents || current.UsageRecordID != billing.UsageRecordID {
+		existingCount++
+		if !sameBillingLedgerContent(current, billing) {
+			return false, ErrUsageLedgerConflict
+		}
+	}
+	if existingCount > 0 {
+		if existingCount != len(settlement.Ledgers) {
 			return false, ErrUsageLedgerConflict
 		}
 		var existingUsageJSON []byte
-		if err := tx.QueryRowContext(ctx, `SELECT usage_dimensions FROM usage_records WHERE id=$1`, current.UsageRecordID).Scan(&existingUsageJSON); err != nil {
+		var existingStatus string
+		var existingAmount *int64
+		if err := tx.QueryRowContext(ctx, `SELECT usage_dimensions,pricing_status,usage_cost_micros FROM usage_records WHERE id=$1`, record.ID).Scan(&existingUsageJSON, &existingStatus, &existingAmount); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return false, ErrUsageLedgerConflict
 			}
 			return false, err
 		}
 		existingDimensions, err := ParseUsageDimensionsJSON(string(existingUsageJSON))
-		if err != nil || !usageDimensionsEqual(existingDimensions, record.UsageDimensions) {
+		if err != nil || !usageDimensionsEqual(existingDimensions, record.UsageDimensions) || existingStatus != record.PricingStatus || !optionalMoneyEqual(existingAmount, record.UsageCostMicros) {
 			return false, ErrUsageLedgerConflict
 		}
 		return false, nil
 	}
-	if err := settlePostgresBillingHoldForUsage(ctx, tx, record, billing); err != nil {
-		return false, err
+	if len(settlement.Ledgers) == 0 {
+		var existingUsageJSON []byte
+		var existingStatus string
+		var existingAmount *int64
+		err := tx.QueryRowContext(ctx, `SELECT usage_dimensions,pricing_status,usage_cost_micros FROM usage_records WHERE id=$1`, record.ID).Scan(&existingUsageJSON, &existingStatus, &existingAmount)
+		if err == nil {
+			existingDimensions, parseErr := ParseUsageDimensionsJSON(string(existingUsageJSON))
+			if parseErr == nil && usageDimensionsEqual(existingDimensions, record.UsageDimensions) && existingStatus == record.PricingStatus && optionalMoneyEqual(existingAmount, record.UsageCostMicros) {
+				return false, nil
+			}
+			return false, ErrUsageLedgerConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+	}
+	for _, evaluation := range settlement.Evaluations {
+		if err := insertPricingEvaluation(ctx, tx, evaluation); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE billing_hold_pricing_versions SET settlement_evaluation_id=$1 WHERE hold_id=(SELECT id FROM billing_holds WHERE operation_id=$2) AND purpose=$3 AND pricing_rule_version_id=$4`, evaluation.ID, evaluation.OperationID, evaluation.Purpose, evaluation.PricingRuleVersionID); err != nil {
+			return false, err
+		}
+		if evaluation.Purpose == PricingPurposeUsageCost && evaluation.Status == PricingEvaluationStatusDisputed {
+			if err := disputePostgresBillingHoldForUsage(ctx, tx, record, evaluation.FailureCode); err != nil {
+				return false, err
+			}
+		}
+	}
+	for _, billing := range settlement.Ledgers {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO billing_ledger_entries(id,operation_id,attempt_id,usage_version,usage_record_id,request_fingerprint,purpose,amount_micros,currency,pricing_evaluation_id,pricing_rule_version_id,status,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, billing.ID, billing.OperationID, billing.AttemptID, billing.UsageVersion, billing.UsageRecordID, billing.RequestFingerprint, billing.Purpose, billing.AmountMicros, billing.Currency, billing.PricingEvaluationID, billing.PricingRuleVersionID, billing.Status, billing.CreatedAt); err != nil {
+			return false, err
+		}
+		if billing.Purpose == PricingPurposeUsageCost {
+			if err := settlePostgresBillingHoldForUsage(ctx, tx, record, billing); err != nil {
+				return false, err
+			}
+		}
+	}
+	if record.PricingStatus == "unpriced" {
+		if err := settlePostgresUnpricedUsage(ctx, tx, record); err != nil {
+			return false, err
+		}
 	}
 	if err := saveUsageRecord(ctx, tx, record); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO transactional_outbox(id, aggregate_type, aggregate_id, event_type, event_version, payload_json, status, available_at, attempt_count, max_attempts, lease_until, lease_token, last_error, published_at, created_at, updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,'','',NULL,$11,$12)
-`, outbox.ID, outbox.AggregateType, outbox.AggregateID, outbox.EventType, outbox.EventVersion, outbox.PayloadJSON, outbox.Status, outbox.AvailableAt, outbox.AttemptCount, outbox.MaxAttempts, outbox.CreatedAt, outbox.UpdatedAt); err != nil {
-		return false, err
+	for _, outbox := range settlement.OutboxEvents {
+		if err := insertTransactionalOutboxEvent(ctx, tx, outbox); err != nil {
+			return false, err
+		}
 	}
-	for _, event := range events {
+	for _, event := range settlement.PlatformEvents {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO platform_usage_delivery_events(id, sink_id, usage_record_id, event_id, payload_json, status, attempt_count, max_attempts, next_attempt_at, lease_until, lease_token, delivered_at, last_http_status, last_error, target_hint, created_at, updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,'',NULL,0,'',$10,$11,$12)
@@ -964,15 +1086,49 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,'',NULL,0,'',$10,$11,$12)
 	return true, nil
 }
 
-func validateUsageLedgerApplication(record UsageRecord, billing BillingLedgerEntry) error {
-	if strings.TrimSpace(record.OperationID) == "" || record.OperationID != billing.OperationID || record.AttemptID != billing.AttemptID || record.UsageVersion <= 0 || record.UsageVersion != billing.UsageVersion || record.ID != billing.UsageRecordID || record.RequestFingerprint == "" || record.RequestFingerprint != billing.RequestFingerprint {
+func validateUsageSettlement(settlement UsageSettlement) error {
+	record := settlement.Record
+	if strings.TrimSpace(record.OperationID) == "" || record.UsageVersion <= 0 || record.ID == "" || record.RequestFingerprint == "" {
 		return ErrUsageLedgerConflict
+	}
+	evaluations := make(map[string]PricingEvaluation, len(settlement.Evaluations))
+	for _, evaluation := range settlement.Evaluations {
+		if evaluation.ID == "" || evaluation.OperationID != record.OperationID || evaluation.AttemptID != record.AttemptID || evaluation.UsageRecordID != record.ID || evaluation.UsageVersion != record.UsageVersion || evaluation.Phase != pricing.PhaseSettlement {
+			return ErrUsageLedgerConflict
+		}
+		evaluations[evaluation.ID] = evaluation
+	}
+	purposes := make(map[string]struct{}, len(settlement.Ledgers))
+	for _, billing := range settlement.Ledgers {
+		if record.OperationID != billing.OperationID || record.AttemptID != billing.AttemptID || record.UsageVersion != billing.UsageVersion || record.ID != billing.UsageRecordID || record.RequestFingerprint != billing.RequestFingerprint || billing.Status != BillingLedgerStatusApplied || billing.Currency != pricing.CurrencyUSD || billing.AmountMicros < 0 {
+			return ErrUsageLedgerConflict
+		}
+		evaluation, found := evaluations[billing.PricingEvaluationID]
+		if !found || evaluation.Status != PricingEvaluationStatusSuccess || evaluation.AmountMicros == nil || *evaluation.AmountMicros != billing.AmountMicros || evaluation.Purpose != billing.Purpose || evaluation.PricingRuleVersionID != billing.PricingRuleVersionID {
+			return ErrUsageLedgerConflict
+		}
+		if _, duplicate := purposes[billing.Purpose]; duplicate {
+			return ErrUsageLedgerConflict
+		}
+		purposes[billing.Purpose] = struct{}{}
 	}
 	return nil
 }
 
+func sameBillingLedgerIdentity(left, right BillingLedgerEntry) bool {
+	return left.OperationID == right.OperationID && left.AttemptID == right.AttemptID && left.UsageVersion == right.UsageVersion && left.Purpose == right.Purpose
+}
+
+func sameBillingLedgerContent(left, right BillingLedgerEntry) bool {
+	return sameBillingLedgerIdentity(left, right) && left.UsageRecordID == right.UsageRecordID && left.RequestFingerprint == right.RequestFingerprint && left.AmountMicros == right.AmountMicros && left.Currency == right.Currency && left.PricingEvaluationID == right.PricingEvaluationID && left.PricingRuleVersionID == right.PricingRuleVersionID
+}
+
+func optionalMoneyEqual(left, right *int64) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
 func (r *PostgresRepository) ListBillingLedgerEntries(ctx context.Context, operationID string) ([]BillingLedgerEntry, error) {
-	query := `SELECT id, operation_id, attempt_id, usage_version, usage_record_id, request_fingerprint, entry_type, amount_cents, currency, status, created_at FROM billing_ledger_entries`
+	query := `SELECT id,operation_id,attempt_id,usage_version,usage_record_id,request_fingerprint,purpose,amount_micros,currency,pricing_evaluation_id,pricing_rule_version_id,status,created_at FROM billing_ledger_entries`
 	args := []any{}
 	if strings.TrimSpace(operationID) != "" {
 		query += ` WHERE operation_id=$1`
@@ -987,7 +1143,7 @@ func (r *PostgresRepository) ListBillingLedgerEntries(ctx context.Context, opera
 	out := make([]BillingLedgerEntry, 0)
 	for rows.Next() {
 		var entry BillingLedgerEntry
-		if err := rows.Scan(&entry.ID, &entry.OperationID, &entry.AttemptID, &entry.UsageVersion, &entry.UsageRecordID, &entry.RequestFingerprint, &entry.EntryType, &entry.AmountCents, &entry.Currency, &entry.Status, &entry.CreatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.OperationID, &entry.AttemptID, &entry.UsageVersion, &entry.UsageRecordID, &entry.RequestFingerprint, &entry.Purpose, &entry.AmountMicros, &entry.Currency, &entry.PricingEvaluationID, &entry.PricingRuleVersionID, &entry.Status, &entry.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, entry)

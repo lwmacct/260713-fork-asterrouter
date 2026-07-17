@@ -12,7 +12,7 @@ func TestUsageDimensionsNormalizeRoundTripAndMerge(t *testing.T) {
 	input := UsageDimensions{
 		" OUTPUT_IMAGES ": {
 			Quantity: 2, Unit: " COUNT ", Source: " Provider_Adapter ", Confidence: " OBSERVED ",
-			PriceSnapshotID: " price-image ", Attributes: map[string]string{" Quality ": "hd"},
+			ProcurementPriceSnapshotID: " price-image ", Attributes: map[string]string{" Quality ": "hd"},
 		},
 	}
 	normalized, err := NormalizeUsageDimensions(input)
@@ -21,7 +21,7 @@ func TestUsageDimensionsNormalizeRoundTripAndMerge(t *testing.T) {
 	}
 	want := UsageDimensions{UsageDimensionOutputImages: {
 		Quantity: 2, Unit: UsageUnitCount, Source: "provider_adapter", Confidence: UsageConfidenceObserved,
-		PriceSnapshotID: "price-image", Attributes: map[string]string{"quality": "hd"},
+		ProcurementPriceSnapshotID: "price-image", Attributes: map[string]string{"quality": "hd"},
 	}}
 	if !reflect.DeepEqual(normalized, want) {
 		t.Fatalf("normalized=%+v want=%+v", normalized, want)

@@ -14,7 +14,7 @@ function reset(){for(const field of props.fields)form[field.key]=field.default??
 function openCreate(){editing.value=null;reset();modalOpen.value=true}
 function openEdit(item:Entity){editing.value=item;for(const field of props.fields)form[field.key]=item[field.key]??field.default??'';modalOpen.value=true}
 function close(){modalOpen.value=false;editing.value=null}
-function display(value:any,format?:string){if(format==='money')return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD'}).format(Number(value||0)/100);if(format==='number')return new Intl.NumberFormat().format(Number(value||0));return value||'-'}
+function display(value:any,format?:string){if(format==='money')return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD',maximumFractionDigits:6}).format(Number(value||0)/1_000_000);if(format==='number')return new Intl.NumberFormat().format(Number(value||0));return value||'-'}
 async function load(){loading.value=true;error.value='';try{items.value=await listOperatorResource(props.resource) as Entity[]}catch(err){error.value=err instanceof Error?err.message:t('common.failed')}finally{loading.value=false}}
 async function save(){saving.value=true;error.value='';try{if(editing.value)await updateOperatorResource(props.resource,editing.value.id,{...form});else await createOperatorResource(props.resource,{...form});message.value=t('common.saved');close();await load()}catch(err){error.value=err instanceof Error?err.message:t('common.failed')}finally{saving.value=false}}
 async function remove(item:Entity){if(!window.confirm(t('operatorCrud.deleteConfirm')))return;try{await deleteOperatorResource(props.resource,item.id);await load()}catch(err){error.value=err instanceof Error?err.message:t('common.failed')}}

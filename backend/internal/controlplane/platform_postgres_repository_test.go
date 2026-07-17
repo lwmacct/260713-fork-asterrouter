@@ -36,7 +36,7 @@ func TestPostgresRepositoryPersistsPlatformDomainAndEvidenceSnapshots(t *testing
 	if err := repo.SavePlatformUsageSink(ctx, sink); err != nil {
 		t.Fatal(err)
 	}
-	deliveryUsage := UsageRecord{ID: "usage-delivery-postgres", APIKeyID: key.ID, APIFingerprint: key.Fingerprint, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-delivery-subject", Model: "model", Status: "forwarded", InputTokens: 3, OutputTokens: 2, CostCents: 1, CreatedAt: now}
+	deliveryUsage := UsageRecord{ID: "usage-delivery-postgres", APIKeyID: key.ID, APIFingerprint: key.Fingerprint, ProfileScope: ProfileScopePlatform, PlatformTenantID: tenant.ID, PlatformTenantName: tenant.Name, GatewayPrincipalID: principal.ID, GatewayPrincipalName: principal.Name, ExternalAuthIntegrationID: integration.ID, ExternalSubjectReference: "opaque-delivery-subject", Model: "model", Status: "forwarded", InputTokens: 3, OutputTokens: 2, UsageCostMicros: testMicros(1), UsageCostCurrency: "USD", PricingStatus: "priced", CreatedAt: now}
 	deliveryEvent := PlatformUsageDeliveryEvent{ID: "pud-postgres", SinkID: sink.ID, UsageRecordID: deliveryUsage.ID, EventID: "usage_evt_postgres", PayloadJSON: `{"event_id":"usage_evt_postgres"}`, Status: PlatformUsageDeliveryStatusPending, MaxAttempts: sink.MaxAttempts, NextAttemptAt: now, TargetHint: sink.EndpointURLHint, CreatedAt: now, UpdatedAt: now}
 	if err := repo.SaveUsageRecordAndEnqueuePlatformUsage(ctx, deliveryUsage, []PlatformUsageDeliveryEvent{deliveryEvent}); err != nil {
 		t.Fatal(err)

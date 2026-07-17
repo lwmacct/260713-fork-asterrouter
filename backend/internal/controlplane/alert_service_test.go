@@ -104,22 +104,18 @@ func TestAPIKeyBudgetAlertEscalatesAndDeduplicatesForEffectivePolicy(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth.Policy = &GovernancePolicy{ID: "policy", MonthlyBudgetCents: 100, OverageAction: GovernancePolicyOverageBlock, Status: GovernancePolicyStatusActive}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", CostCents: 80}); err != nil {
-		t.Fatal(err)
-	}
+	auth.Policy = &GovernancePolicy{ID: "policy", MonthlyBudgetMicros: 100, OverageAction: GovernancePolicyOverageBlock, Status: GovernancePolicyStatusActive}
+	recordTestPricedGatewayUsage(t, svc, auth, GatewayUsageInput{Model: "model", Status: "forwarded"}, 80)
 	alerts, err := svc.ListAlertEventsQuery(ctx, AlertQuery{Type: AlertTypeAPIKeyBudget, Status: AlertStatusActive})
 	if err != nil || len(alerts) != 1 || alerts[0].Severity != AlertSeverityWarning {
 		t.Fatalf("budget warning=%+v err=%v", alerts, err)
 	}
-	if err := svc.RecordGatewayUsage(ctx, auth, GatewayUsageInput{Model: "model", Status: "forwarded", CostCents: 20}); err != nil {
-		t.Fatal(err)
-	}
+	recordTestPricedGatewayUsage(t, svc, auth, GatewayUsageInput{Model: "model", Status: "forwarded"}, 20)
 	alerts, err = svc.ListAlertEventsQuery(ctx, AlertQuery{Type: AlertTypeAPIKeyBudget, Status: AlertStatusActive})
 	if err != nil || len(alerts) != 1 || alerts[0].Severity != AlertSeverityCritical {
 		t.Fatalf("budget critical=%+v err=%v", alerts, err)
 	}
-	if err := svc.EnforceGatewayPolicy(ctx, auth); !errors.Is(err, ErrGatewayBudgetExceeded) {
+	if err := svc.EnforceGatewayOngoingPolicy(ctx, auth); !errors.Is(err, ErrGatewayBudgetExceeded) {
 		t.Fatalf("budget enforcement err=%v", err)
 	}
 }

@@ -22,7 +22,7 @@ describe('OperatorCustomersView', () => {
       { id: 'disabled', model_id: 'gateway-retired', name: 'Retired', status: 'disabled' }
     ] as never)
     vi.mocked(operator.listOperatorResource).mockImplementation(async (resource) => {
-      if (resource === 'customers') return [{ id: 'customer-1', name: 'Consumer One', email: '', group_id: '', plan_id: '', balance_cents: 0, credit_cents: 0, status: 'active' }] as never
+      if (resource === 'customers') return [{ id: 'customer-1', name: 'Consumer One', email: '', group_id: '', plan_id: '', balance_micros: 0, credit_micros: 0, status: 'active' }] as never
       return [] as never
     })
     vi.mocked(operator.createOperatorCustomerKey).mockResolvedValue({ key: 'ar_operator', record: { id: 'key-1' } } as never)

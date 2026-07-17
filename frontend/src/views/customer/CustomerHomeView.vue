@@ -31,8 +31,8 @@ async function load() {
   }
 }
 
-function formatMoney(cents = 0): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'CNY' }).format(cents / 100)
+function formatMoney(micros = 0): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(micros / 1_000_000)
 }
 
 function formatNumber(value = 0): string {
@@ -61,16 +61,16 @@ onMounted(load)
     <div v-if="error" class="notice">{{ error }}</div>
 
     <section v-if="activePanel === 'overview'" class="metric-grid customer-balance-grid">
-      <article class="metric-card"><span class="metric-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.balance') }}</span><strong>{{ formatMoney(billing?.balance_cents) }}</strong><small>{{ t('customer.billing') }}</small></div></article>
-      <article class="metric-card"><span class="metric-icon gift-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.giftBalance') }}</span><strong>{{ formatMoney(billing?.gift_balance_cents) }}</strong><small>{{ t('customer.availableVouchers') }}</small></div></article>
-      <article class="metric-card"><span class="metric-icon profit-icon"><Activity :size="18" /></span><div><span>{{ t('customer.profitBalance') }}</span><strong>{{ formatMoney(billing?.profit_balance_cents) }}</strong><small>{{ t('customer.profit') }}</small></div></article>
-      <article class="metric-card"><span class="metric-icon total-icon"><ReceiptText :size="18" /></span><div><span>{{ t('customer.totalBalance') }}</span><strong>{{ formatMoney(billing?.total_cents) }}</strong><small>{{ t('customer.balance') }}</small></div></article>
+      <article class="metric-card"><span class="metric-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.balance') }}</span><strong>{{ formatMoney(billing?.balance_micros) }}</strong><small>{{ t('customer.billing') }}</small></div></article>
+      <article class="metric-card"><span class="metric-icon gift-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.giftBalance') }}</span><strong>{{ formatMoney(billing?.gift_balance_micros) }}</strong><small>{{ t('customer.availableVouchers') }}</small></div></article>
+      <article class="metric-card"><span class="metric-icon profit-icon"><Activity :size="18" /></span><div><span>{{ t('customer.profitBalance') }}</span><strong>{{ formatMoney(billing?.profit_balance_micros) }}</strong><small>{{ t('customer.profit') }}</small></div></article>
+      <article class="metric-card"><span class="metric-icon total-icon"><ReceiptText :size="18" /></span><div><span>{{ t('customer.totalBalance') }}</span><strong>{{ formatMoney(billing?.total_micros) }}</strong><small>{{ t('customer.balance') }}</small></div></article>
     </section>
 
     <section v-else class="metric-grid customer-balance-grid">
       <article class="metric-card"><span class="metric-icon"><Activity :size="18" /></span><div><span>{{ t('customer.requestCount') }}</span><strong>{{ formatNumber(workspace?.usage.total_requests) }}</strong><small>{{ formatNumber(workspace?.usage.error_requests) }} {{ t('usage.errors') }}</small></div></article>
       <article class="metric-card"><span class="metric-icon gift-icon"><Activity :size="18" /></span><div><span>{{ t('customer.tokenCount') }}</span><strong>{{ formatNumber(workspace?.usage.total_tokens) }}</strong><small>Token</small></div></article>
-      <article class="metric-card"><span class="metric-icon profit-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.totalCost') }}</span><strong>{{ formatMoney(workspace?.usage.total_cost_cents) }}</strong><small>{{ t('customer.usage') }}</small></div></article>
+      <article class="metric-card"><span class="metric-icon profit-icon"><WalletCards :size="18" /></span><div><span>{{ t('customer.totalCost') }}</span><strong>{{ formatMoney(workspace?.usage.total_usage_cost_micros) }}</strong><small>{{ t('customer.usage') }}</small></div></article>
       <article class="metric-card"><span class="metric-icon total-icon"><KeyRound :size="18" /></span><div><span>{{ t('customer.activeKeys') }}</span><strong>{{ activeKeys }}</strong><small>API Keys</small></div></article>
     </section>
 
@@ -89,7 +89,7 @@ onMounted(load)
         <table class="data-table customer-usage-table">
           <thead><tr><th>{{ t('customer.time') }}</th><th>{{ t('customer.model') }}</th><th>{{ t('customer.status') }}</th><th>{{ t('customer.tokens') }}</th><th>{{ t('customer.cost') }}</th></tr></thead>
           <tbody>
-            <tr v-for="item in workspace?.usage.recent || []" :key="item.id"><td>{{ formatDate(item.created_at) }}</td><td><strong>{{ item.model }}</strong></td><td><span class="pill" :class="item.status === 'forwarded' ? 'status-success' : 'status-warning'">{{ item.status }}</span></td><td>{{ formatNumber(item.input_tokens + item.output_tokens) }}</td><td>{{ formatMoney(item.cost_cents) }}</td></tr>
+            <tr v-for="item in workspace?.usage.recent || []" :key="item.id"><td>{{ formatDate(item.created_at) }}</td><td><strong>{{ item.model }}</strong></td><td><span class="pill" :class="item.status === 'forwarded' ? 'status-success' : 'status-warning'">{{ item.status }}</span></td><td>{{ formatNumber(item.input_tokens + item.output_tokens) }}</td><td>{{ formatMoney(item.usage_cost_micros) }}</td></tr>
             <tr v-if="!(workspace?.usage.recent || []).length"><td colspan="5" class="empty-cell">{{ t('customer.noUsage') }}</td></tr>
           </tbody>
         </table>

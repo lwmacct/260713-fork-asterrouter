@@ -41,7 +41,7 @@ const (
 	KeyTurnstileEnabled         = "turnstile_enabled"
 	KeyTurnstileSiteKey         = "turnstile_site_key"
 	KeyTurnstileSecretKey       = "turnstile_secret_key"
-	KeyDefaultBalanceCents      = "default_balance_cents"
+	KeyDefaultBalanceMicros     = "default_balance_micros"
 	KeyDefaultConcurrency       = "default_concurrency"
 	KeyDefaultRPM               = "default_rpm"
 	KeyAuthSourceDefaults       = "auth_source_defaults"
@@ -167,7 +167,7 @@ type AdminSettings struct {
 	TrustedProxyHeaders           bool                         `json:"trusted_proxy_headers"`
 	TurnstileSecretKey            string                       `json:"turnstile_secret_key,omitempty"`
 	TurnstileConfigured           bool                         `json:"turnstile_configured"`
-	DefaultBalanceCents           int                          `json:"default_balance_cents"`
+	DefaultBalanceMicros          int64                        `json:"default_balance_micros"`
 	DefaultConcurrency            int                          `json:"default_concurrency"`
 	DefaultRPM                    int                          `json:"default_rpm"`
 	AuthSourceDefaults            map[string]AuthSourceDefault `json:"auth_source_defaults"`
@@ -231,10 +231,10 @@ type CustomMenuItem struct {
 }
 
 type AuthSourceDefault struct {
-	Enabled      bool `json:"enabled"`
-	BalanceCents int  `json:"balance_cents"`
-	Concurrency  int  `json:"concurrency"`
-	RPM          int  `json:"rpm"`
+	Enabled       bool  `json:"enabled"`
+	BalanceMicros int64 `json:"balance_micros"`
+	Concurrency   int   `json:"concurrency"`
+	RPM           int   `json:"rpm"`
 }
 
 type LocaleInfo struct {

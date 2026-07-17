@@ -4,11 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${ASTER_SINGLE_ORIGIN_TEST_PORT:-28085}"
 PID=""
+RUNTIME_DIR=""
+RUNTIME_BIN=""
 
 cleanup() {
   if [ -n "${PID}" ]; then
     kill -TERM "${PID}" >/dev/null 2>&1 || true
     wait "${PID}" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${RUNTIME_DIR}" ]; then
+    rm -rf "${RUNTIME_DIR}"
   fi
 }
 
@@ -19,9 +24,17 @@ if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/de
   exit 1
 fi
 
+RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/asterrouter-single-origin.XXXXXX")"
+RUNTIME_BIN="${RUNTIME_DIR}/asterrouter"
+
 (
   cd "${ROOT_DIR}/frontend"
   npm run build
+)
+
+(
+  cd "${ROOT_DIR}/backend"
+  go build -o "${RUNTIME_BIN}" ./cmd/asterrouter
 )
 
 (
@@ -30,7 +43,7 @@ fi
   ASTERROUTER_SERVER_HTTP_FRONTEND_DIR="../frontend/dist" \
   ASTERROUTER_SERVER_BOOTSTRAP_DEMO_MODE=true \
   ASTERROUTER_SERVER_SECURITY_SECRET_KEY=asterrouter-single-origin-test-secret \
-  go run ./cmd/asterrouter server
+  "${RUNTIME_BIN}" server
 ) &
 PID="$!"
 

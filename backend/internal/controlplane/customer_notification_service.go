@@ -265,10 +265,10 @@ func (s *Service) syncCustomerUsageNotifications(ctx context.Context, auth Gatew
 		byType[preference.EventType] = preference
 	}
 	now := record.CreatedAt
-	if preference := byType[CustomerNotificationBalanceLow]; preference.Enabled && preference.Threshold != nil && float64(user.BalanceCents) < *preference.Threshold*100 {
+	if preference := byType[CustomerNotificationBalanceLow]; preference.Enabled && preference.Threshold != nil && float64(user.BalanceMicros) < *preference.Threshold*1_000_000 {
 		_ = s.publishCustomerNotification(ctx, customerNotificationInput{
 			UserID: user.ID, EventType: CustomerNotificationBalanceLow, Title: "账户余额不足",
-			Content: fmt.Sprintf("当前余额 ¥%.2f，已低于您设置的 ¥%.2f 阈值，请及时充值以免调用中断。", float64(user.BalanceCents)/100, *preference.Threshold),
+			Content: fmt.Sprintf("当前余额 US$%.6f，已低于您设置的 US$%.6f 阈值，请及时充值以免调用中断。", float64(user.BalanceMicros)/1_000_000, *preference.Threshold),
 			Link:    "/customer/billing", DedupeKey: "balance_low:" + user.ID + ":" + now.Format("2006-01-02"),
 		})
 	}
@@ -362,7 +362,7 @@ func (s *Service) PublishDueCustomerMonthlyBills(ctx context.Context, now time.T
 		}
 		if err := s.publishCustomerNotification(ctx, customerNotificationInput{
 			UserID: user.ID, EventType: CustomerNotificationMonthlyBill, Title: periodStart.Format("2006 年 01 月") + "账单摘要",
-			Content: fmt.Sprintf("上月共调用 %d 次，使用 %d Token，费用 ¥%.2f。", aggregate.TotalRequests, aggregate.TotalTokens, float64(aggregate.TotalCostCents)/100),
+			Content: fmt.Sprintf("上月共调用 %d 次，使用 %d Token，费用 US$%.6f。", aggregate.TotalRequests, aggregate.TotalTokens, float64(aggregate.TotalUsageCostMicros)/1_000_000),
 			Link:    "/customer/billing", DedupeKey: "monthly_bill:" + user.ID + ":" + periodStart.Format("2006-01"),
 		}); err != nil && firstErr == nil {
 			firstErr = err

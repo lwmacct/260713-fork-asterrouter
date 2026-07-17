@@ -32,7 +32,7 @@ describe('ConsoleHomeView', () => {
       { id: 'model-disabled', model_id: 'gateway-disabled', name: 'Disabled', status: 'disabled' }
     ] as never)
     vi.mocked(control.getAPIKeys).mockResolvedValue([])
-    vi.mocked(control.getUsageReport).mockResolvedValue({ total_requests: 0, total_tokens: 0, total_cost_cents: 0, error_requests: 0, by_model: [], recent: [] } as never)
+    vi.mocked(control.getUsageReport).mockResolvedValue({ total_requests: 0, total_tokens: 0, total_usage_cost_micros: 0, error_requests: 0, by_model: [], recent: [] } as never)
   })
 
   it('builds the gateway example from active gateway models instead of provider snapshots', async () => {

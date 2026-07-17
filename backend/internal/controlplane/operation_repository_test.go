@@ -336,6 +336,7 @@ func TestOperationUsageLedgerContract(t *testing.T) {
 			ctx := context.Background()
 			auth := operationTestAuth()
 			request := operationTestRequest("idem-ledger", "fingerprint-ledger")
+			publishTestUsagePricingRule(t, svc, `v1: fixed_line("usage", "request", 3)`)
 
 			operation, created, err := svc.BeginCanonicalOperation(ctx, auth, request)
 			if err != nil || !created {
@@ -350,7 +351,7 @@ func TestOperationUsageLedgerContract(t *testing.T) {
 			}
 			input := GatewayUsageInput{
 				OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: 1, UsageSource: "upstream_final",
-				RequestFingerprint: request.Fingerprint, Model: request.Model, Status: "forwarded", InputTokens: 7, OutputTokens: 11, CostCents: 3,
+				RequestFingerprint: request.Fingerprint, Model: request.Model, Status: "forwarded", InputTokens: 7, OutputTokens: 11,
 				UsageDimensions: UsageDimensions{UsageDimensionOutputImages: {Quantity: 2, Unit: UsageUnitCount, Source: "provider", Confidence: UsageConfidenceReported}},
 			}
 			if err := svc.RecordGatewayUsage(ctx, operationTestLegacyAuth(), input); err != nil {
@@ -364,11 +365,11 @@ func TestOperationUsageLedgerContract(t *testing.T) {
 				t.Fatalf("usage=%+v err=%v", usage, err)
 			}
 			billing, err := repo.ListBillingLedgerEntries(ctx, operation.ID)
-			if err != nil || len(billing) != 1 || billing[0].AmountCents != 3 || billing[0].UsageRecordID != usage[0].ID {
+			if err != nil || len(billing) != 1 || billing[0].AmountMicros != 3 || billing[0].UsageRecordID != usage[0].ID {
 				t.Fatalf("billing=%+v err=%v", billing, err)
 			}
 			outbox, err := repo.ListTransactionalOutboxEvents(ctx, "")
-			if err != nil || len(outbox) != 1 || outbox[0].EventType != OutboxEventUsage || outbox[0].Status != OutboxStatusPending {
+			if err != nil || len(outbox) != 1 || outbox[0].EventType != OutboxEventUsageRecorded || outbox[0].Status != OutboxStatusPending {
 				t.Fatalf("outbox=%+v err=%v", outbox, err)
 			}
 
@@ -506,6 +507,7 @@ func TestUsageLedgerTransactionRollsBackOnOutboxConflict(t *testing.T) {
 			t.Cleanup(func() { _ = repo.Close() })
 			svc := NewService(repo, "/v1")
 			ctx := context.Background()
+			publishTestUsagePricingRule(t, svc, `v1: fixed_line("free", "request", 0)`)
 			operation, _, err := svc.BeginCanonicalOperation(ctx, operationTestAuth(), operationTestRequest("", "rollback-fingerprint"))
 			if err != nil {
 				t.Fatal(err)
@@ -514,21 +516,25 @@ func TestUsageLedgerTransactionRollsBackOnOutboxConflict(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			base := UsageRecord{ID: "usage-base", OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: 1, RequestFingerprint: "rollback-fingerprint", APIKeyID: "key-1", APIFingerprint: "fingerprint", Model: "model-a", Status: "forwarded", CreatedAt: svc.nowUTC()}
-			billing := BillingLedgerEntry{ID: "billing-base", OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: 1, UsageRecordID: base.ID, RequestFingerprint: base.RequestFingerprint, EntryType: BillingLedgerEntryTypeUsage, Currency: "USD", Status: BillingLedgerStatusApplied, CreatedAt: base.CreatedAt}
-			outbox := TransactionalOutboxEvent{ID: "outbox-shared", AggregateType: "usage_ledger", AggregateID: "aggregate-1", EventType: OutboxEventUsage, EventVersion: 1, PayloadJSON: "{}", Status: OutboxStatusPending, AvailableAt: base.CreatedAt, CreatedAt: base.CreatedAt, UpdatedAt: base.CreatedAt}
-			if applied, err := repo.ApplyUsageLedger(ctx, base, billing, outbox, nil); err != nil || !applied {
-				t.Fatalf("ApplyUsageLedger(base) applied=%t err=%v", applied, err)
+			base := UsageRecord{ID: "usage-base", OperationID: operation.ID, AttemptID: attempt.ID, UsageVersion: 1, UsageSource: "synthetic", RequestFingerprint: "rollback-fingerprint", APIKeyID: "key-1", APIFingerprint: "fingerprint", Model: "model-a", Status: "forwarded", UsageCostCurrency: "USD", PricingStatus: "unpriced", CreatedAt: svc.nowUTC()}
+			settlement, err := svc.buildUsageSettlement(ctx, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settlement.OutboxEvents[0].ID = "outbox-shared"
+			if applied, err := repo.ApplyUsageSettlement(ctx, settlement); err != nil || !applied {
+				t.Fatalf("ApplyUsageSettlement(base) applied=%t err=%v", applied, err)
 			}
 			second := base
 			second.ID = "usage-second"
 			second.UsageVersion = 2
-			secondBilling := billing
-			secondBilling.ID = "billing-second"
-			secondBilling.UsageVersion = 2
-			secondBilling.UsageRecordID = second.ID
-			if applied, err := repo.ApplyUsageLedger(ctx, second, secondBilling, outbox, nil); err == nil || applied {
-				t.Fatalf("ApplyUsageLedger(conflict) applied=%t err=%v", applied, err)
+			secondSettlement, err := svc.buildUsageSettlement(ctx, second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondSettlement.OutboxEvents[0].ID = "outbox-shared"
+			if applied, err := repo.ApplyUsageSettlement(ctx, secondSettlement); err == nil || applied {
+				t.Fatalf("ApplyUsageSettlement(conflict) applied=%t err=%v", applied, err)
 			}
 			usage, _ := repo.QueryUsageRecords(ctx, UsageQuery{Limit: 10})
 			billingEntries, _ := repo.ListBillingLedgerEntries(ctx, operation.ID)

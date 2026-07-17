@@ -253,6 +253,7 @@ func TestDurableAIJobProviderBillingResolutionAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	setupDurableWorkerRoutes(t, svc)
+	publishTestUsagePricingRule(t, svc, `v1: unit_line("output_images", output_images, "image", 42)`)
 	job := beginDurableWorkerJob(t, svc, "provider-failure-billing-resolution")
 	cost := int64(42)
 	adapter := &durableAIJobAdapterStub{

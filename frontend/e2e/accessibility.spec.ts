@@ -36,8 +36,8 @@ test('@smoke @j09 customer and account sessions are isolated, surface-safe, and 
   const runID = `${testInfo.project.name}-${Date.now()}`
   const password = 'synthetic-password-123'
   const [customerA, customerB] = await registerUsers(page, adminToken, [
-    { email: `surface-a-${runID}@example.test`, password, displayName: 'Surface Customer A', balanceCents: 500 },
-    { email: `surface-b-${runID}@example.test`, password, displayName: 'Surface Customer B', balanceCents: 5000 }
+    { email: `surface-a-${runID}@example.test`, password, displayName: 'Surface Customer A', balanceMicros: 5_000_000 },
+    { email: `surface-b-${runID}@example.test`, password, displayName: 'Surface Customer B', balanceMicros: 50_000_000 }
   ])
 
   await page.context().clearCookies()
@@ -45,10 +45,10 @@ test('@smoke @j09 customer and account sessions are isolated, surface-safe, and 
   await loginThroughPage(page, customerA.email, password, '/customer/overview')
   await expect(page.getByRole('heading', { level: 1, name: 'Account overview' })).toBeVisible()
   const customerAToken = await page.evaluate(() => localStorage.getItem('asterrouter_admin_token') || '')
-  const customerABilling = await envelope<{ balance_cents: number }>(await page.request.get('/api/v1/customer/billing', {
+  const customerABilling = await envelope<{ balance_micros: number }>(await page.request.get('/api/v1/customer/billing', {
     headers: { Authorization: `Bearer ${customerAToken}` }
   }))
-  expect(customerABilling.balance_cents).toBe(500)
+  expect(customerABilling.balance_micros).toBe(5_000_000)
 
   const origin = new URL(page.url()).origin
   const otherContext = await browser.newContext()
@@ -57,11 +57,11 @@ test('@smoke @j09 customer and account sessions are isolated, surface-safe, and 
     await loginThroughPage(otherPage, customerB.email, password, `${origin}/customer/overview`)
     await expect(otherPage.getByRole('heading', { level: 1, name: 'Account overview' })).toBeVisible()
     const customerBToken = await otherPage.evaluate(() => localStorage.getItem('asterrouter_admin_token') || '')
-    const customerBBilling = await envelope<{ balance_cents: number }>(await otherPage.request.get(`${origin}/api/v1/customer/billing`, {
+    const customerBBilling = await envelope<{ balance_micros: number }>(await otherPage.request.get(`${origin}/api/v1/customer/billing`, {
       headers: { Authorization: `Bearer ${customerBToken}` }
     }))
-    expect(customerBBilling.balance_cents).toBe(5000)
-    expect(customerBBilling.balance_cents).not.toBe(customerABilling.balance_cents)
+    expect(customerBBilling.balance_micros).toBe(50_000_000)
+    expect(customerBBilling.balance_micros).not.toBe(customerABilling.balance_micros)
 
     await otherPage.goto(`${origin}/customer/account`)
     await expect(otherPage.getByLabel('Email')).toHaveValue(customerB.email)

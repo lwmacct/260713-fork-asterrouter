@@ -32,11 +32,11 @@ func (s *Service) CustomerBillingOverview(ctx context.Context, actor string) (Cu
 		return CustomerBillingOverview{}, err
 	}
 	return CustomerBillingOverview{
-		BalanceCents:       user.BalanceCents,
-		GiftBalanceCents:   wallet.GiftBalanceCents,
-		ProfitBalanceCents: wallet.ProfitBalanceCents,
-		TotalCents:         user.BalanceCents + wallet.GiftBalanceCents + wallet.ProfitBalanceCents,
-		RechargeOptions:    []int{1000, 2000, 5000, 10000, 20000, 50000},
+		BalanceMicros:       user.BalanceMicros,
+		GiftBalanceMicros:   wallet.GiftBalanceMicros,
+		ProfitBalanceMicros: wallet.ProfitBalanceMicros,
+		TotalMicros:         user.BalanceMicros + wallet.GiftBalanceMicros + wallet.ProfitBalanceMicros,
+		RechargeOptions:     []int64{10_000_000, 20_000_000, 50_000_000, 100_000_000, 200_000_000, 500_000_000},
 		PaymentChannels: []CustomerPaymentChannel{
 			{ID: "wechat", Name: "微信支付", Enabled: false},
 			{ID: "alipay", Name: "支付宝", Enabled: false},
@@ -89,7 +89,7 @@ func (s *Service) RedeemCustomerCode(ctx context.Context, actor string, request 
 	}
 	_ = s.publishCustomerNotification(ctx, customerNotificationInput{
 		UserID: user.ID, EventType: CustomerNotificationPayment, Title: "兑换到账",
-		Content: fmt.Sprintf("兑换成功，¥%.2f 已到账，当前账户余额 ¥%.2f。", float64(entry.AmountCents)/100, float64(overview.BalanceCents)/100),
+		Content: fmt.Sprintf("兑换成功，US$%.6f 已到账，当前账户余额 US$%.6f。", float64(entry.AmountMicros)/1_000_000, float64(overview.BalanceMicros)/1_000_000),
 		Link:    "/customer/billing", DedupeKey: "payment:redeem:" + entry.ID,
 	})
 	return CustomerRedeemResult{Entry: entry, Overview: overview}, nil
@@ -99,8 +99,8 @@ func (s *Service) CreateCustomerRechargeOrder(ctx context.Context, actor string,
 	if _, err := s.customerWorkspaceUser(ctx, actor); err != nil {
 		return CustomerRechargeOrder{}, err
 	}
-	if request.AmountCents < 100 || request.AmountCents > 10000000 {
-		return CustomerRechargeOrder{}, errors.New("充值金额必须在 1 元到 100000 元之间")
+	if request.AmountMicros < 1_000_000 || request.AmountMicros > 100_000_000_000 {
+		return CustomerRechargeOrder{}, errors.New("recharge amount must be between USD 1 and USD 100000")
 	}
 	if request.PaymentMethod != "wechat" && request.PaymentMethod != "alipay" {
 		return CustomerRechargeOrder{}, errors.New("请选择支付方式")

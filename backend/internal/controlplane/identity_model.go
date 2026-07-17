@@ -50,7 +50,7 @@ type WorkspaceUser struct {
 	AvatarDataURL          string     `json:"avatar_data_url,omitempty"`
 	Status                 string     `json:"status"`
 	Role                   string     `json:"role"`
-	BalanceCents           int        `json:"balance_cents"`
+	BalanceMicros          int64      `json:"balance_micros"`
 	ConcurrencyLimit       int        `json:"concurrency_limit"`
 	RPMLimit               int        `json:"rpm_limit"`
 	ExternalIssuer         string     `json:"external_issuer,omitempty"`
@@ -87,7 +87,7 @@ type AccountProfile struct {
 	AvatarDataURL    string         `json:"avatar_data_url,omitempty"`
 	Status           string         `json:"status"`
 	Role             string         `json:"role"`
-	BalanceCents     int            `json:"balance_cents"`
+	BalanceMicros    int64          `json:"balance_micros"`
 	ConcurrencyLimit int            `json:"concurrency_limit"`
 	RPMLimit         int            `json:"rpm_limit"`
 	ExternalIssuer   string         `json:"external_issuer,omitempty"`
@@ -111,7 +111,7 @@ type AccountPasswordUpdateRequest struct {
 }
 
 type WorkspaceUserDefaults struct {
-	BalanceCents     int
+	BalanceMicros    int64
 	ConcurrencyLimit int
 	RPMLimit         int
 }

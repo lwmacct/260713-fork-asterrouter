@@ -76,7 +76,7 @@ export interface AccountProfile {
 	avatar_data_url?: string
 	status: string
 	role: string
-	balance_cents: number
+	balance_micros: number
 	concurrency_limit: number
 	rpm_limit: number
 	external_issuer?: string
@@ -133,7 +133,7 @@ export interface AdminSettings extends PublicSettings {
 	trusted_proxy_headers: boolean
 	turnstile_secret_key?: string
 	turnstile_configured: boolean
-	default_balance_cents: number
+	default_balance_micros: number
 	default_concurrency: number
 	default_rpm: number
 	auth_source_defaults: Record<string, AuthSourceDefault>
@@ -193,7 +193,7 @@ export interface EmailTemplate {
 
 export interface CustomEndpoint { name: string; endpoint: string; description: string }
 export interface CustomMenuItem { id: string; label: string; url: string; open_in_new_tab: boolean }
-export interface AuthSourceDefault { enabled: boolean; balance_cents: number; concurrency: number; rpm: number }
+export interface AuthSourceDefault { enabled: boolean; balance_micros: number; concurrency: number; rpm: number }
 
 export interface LocaleInfo {
   code: string
@@ -240,7 +240,7 @@ export interface Department {
   code: string
   parent_id: string
   cost_center: string
-  monthly_budget_cents: number
+  monthly_budget_micros: number
   status: string
   created_at: string
   updated_at: string
@@ -251,7 +251,7 @@ export interface DepartmentRequest {
   code: string
   parent_id: string
   cost_center: string
-  monthly_budget_cents: number
+  monthly_budget_micros: number
   status: string
 }
 
@@ -284,7 +284,7 @@ export interface GovernancePolicy {
   model_denylist: string[]
   qps_limit: number
   monthly_token_limit: number
-  monthly_budget_cents: number
+  monthly_budget_micros: number
   overage_action: string
   prompt_logging_mode: string
   retention_days: number
@@ -327,7 +327,7 @@ export interface GovernancePolicyRequest {
   model_denylist: string[]
   qps_limit: number
   monthly_token_limit: number
-  monthly_budget_cents: number
+  monthly_budget_micros: number
   overage_action: string
   prompt_logging_mode: string
   retention_days: number
@@ -380,9 +380,9 @@ export interface RoutingGroup {
   rate_multiplier: number
   rpm_limit: number
   is_exclusive: boolean
-  daily_budget_cents: number
-  weekly_budget_cents: number
-  monthly_budget_cents: number
+  daily_budget_micros: number
+  weekly_budget_micros: number
+  monthly_budget_micros: number
   image_enabled: boolean
   batch_image_enabled: boolean
   image_rate_multiplier: number
@@ -415,9 +415,9 @@ export interface RoutingGroupRequest {
   rate_multiplier: number
   rpm_limit: number
   is_exclusive: boolean
-  daily_budget_cents: number
-  weekly_budget_cents: number
-  monthly_budget_cents: number
+  daily_budget_micros: number
+  weekly_budget_micros: number
+  monthly_budget_micros: number
   image_enabled: boolean
   batch_image_enabled: boolean
   image_rate_multiplier: number
@@ -642,23 +642,211 @@ export interface GatewaySimulation {
   candidates: GatewaySimulationCandidate[]
 }
 
-export interface ModelPricing {
+export type PricingSurface = 'admin' | 'platform' | 'operator'
+export type PricingPurpose = 'usage_cost' | 'customer_charge'
+export type PricingScopeType = 'global' | 'operator_plan'
+
+export interface PricingFacts {
+  total_input_tokens?: number
+  uncached_input_tokens?: number
+  cache_read_tokens?: number
+  cache_write_5m_tokens?: number
+  cache_write_1h_tokens?: number
+  output_tokens?: number
+  cache_fields_present?: boolean
+  input_images?: number
+  output_images?: number
+  partial_images?: number
+  input_video_milliseconds?: number
+  output_video_milliseconds?: number
+  input_audio_milliseconds?: number
+  output_audio_milliseconds?: number
+  realtime_audio_milliseconds?: number
+  input_characters?: number
+  actions?: number
+  batch_items?: number
+  input_bytes?: number
+  output_bytes?: number
+  transfer_bytes?: number
+  session_milliseconds?: number
+  protocol?: string
+  operation?: string
+  modality?: string
+  lane?: string
+  stream?: boolean
+  output_count?: number
+  service_tier?: string
+  available_facts?: Record<string, boolean>
+  normalization_status?: string
+  phase?: string
+  observed_at?: string
+}
+
+export interface PricingLine {
+  code: string
+  quantity: number
+  unit: string
+  units_per_block: number
+  rate_micros: number
+  multiplier_bps: number
+  amount_micros: number
+}
+
+export interface PricingTierAnalysis {
+  name: string
+  conditions?: string[]
+}
+
+export interface PricingRuleAnalysis {
+  engine_version: number
+  required_facts: string[]
+  tiers: PricingTierAnalysis[]
+  line_codes: string[]
+  visual_editable: boolean
+}
+
+export interface PricingRuleTestCase {
+  name: string
+  facts: PricingFacts
+  expected_tier: string
+  expected_amount_micros?: number
+}
+
+export interface PricingRule {
   id: string
+  name: string
+  purpose: PricingPurpose
+  scope_type: PricingScopeType
+  scope_id: string
   model: string
-  currency: string
-  input_price_cents_per_1m_tokens: number
-  output_price_cents_per_1m_tokens: number
-  status: string
+  status: 'active' | 'disabled'
+  active_version_id?: string
+  lock_version: number
+  created_by: string
+  updated_by: string
   created_at: string
   updated_at: string
 }
 
-export interface ModelPricingRequest {
+export interface PricingRuleVersion {
+  id: string
+  rule_id: string
+  revision: number
+  engine_version: number
+  currency: 'USD'
+  expression: string
+  expression_hash: string
+  analysis: PricingRuleAnalysis
+  authoring_mode: 'visual' | 'raw'
+  test_cases: PricingRuleTestCase[]
+  state: 'draft' | 'published'
+  created_by: string
+  published_by?: string
+  created_at: string
+  updated_at: string
+  published_at?: string
+}
+
+export interface PricingRuleDetail {
+  rule: PricingRule
+  active_version?: PricingRuleVersion
+  draft?: PricingRuleVersion
+  versions: PricingRuleVersion[]
+}
+
+export interface PricingRuleCreateRequest {
+  name: string
+  purpose: PricingPurpose
+  scope_type: PricingScopeType
+  scope_id: string
   model: string
-  currency: string
-  input_price_cents_per_1m_tokens: number
-  output_price_cents_per_1m_tokens: number
-  status: string
+  currency: 'USD'
+  authoring_mode: 'visual' | 'raw'
+  expression: string
+  test_cases: PricingRuleTestCase[]
+}
+
+export interface PricingDraftUpdateRequest {
+  expected_lock_version: number
+  name: string
+  currency: 'USD'
+  authoring_mode: 'visual' | 'raw'
+  expression: string
+  test_cases: PricingRuleTestCase[]
+}
+
+export interface PricingPublishRequest {
+  draft_version_id: string
+  expected_lock_version: number
+  expected_active_version_id: string
+  expression_hash: string
+  acknowledge_customer_impact: boolean
+}
+
+export interface PricingValidationError {
+  code: string
+  message: string
+  line?: number
+  column?: number
+}
+
+export interface PricingTestCaseResult {
+  name: string
+  passed: boolean
+  amount_micros: number
+  tier: string
+  lines?: PricingLine[]
+  error?: PricingValidationError
+}
+
+export interface PricingValidationResult {
+  valid: boolean
+  expression_hash?: string
+  analysis?: PricingRuleAnalysis
+  test_results: PricingTestCaseResult[]
+  errors: PricingValidationError[]
+}
+
+export interface PricingSimulationRequest {
+  rule_version_id: string
+  expression: string
+  currency: 'USD'
+  facts: PricingFacts
+}
+
+export interface PricingSimulationResult {
+  amount_micros: number
+  currency: 'USD'
+  matched_tier: string
+  lines: PricingLine[]
+  engine_version: number
+  expression_hash: string
+  facts_hash: string
+}
+
+export interface PricingEvaluation {
+  id: string
+  purpose: PricingPurpose
+  phase: 'estimate' | 'settlement' | 'replay'
+  operation_id: string
+  attempt_id: string
+  usage_record_id?: string
+  usage_version: number
+  pricing_rule_id: string
+  pricing_rule_version_id: string
+  engine_version: number
+  expression_hash: string
+  facts_hash: string
+  facts: PricingFacts
+  amount_micros?: number
+  currency: 'USD'
+  matched_tier: string
+  lines: PricingLine[]
+  normalization_status: string
+  status: 'succeeded' | 'failed' | 'disputed'
+  failure_code?: string
+  replay_of_id?: string
+  created_at: string
 }
 
 export interface ProcurementPrice {
@@ -1136,7 +1324,7 @@ export interface APIKeyRecord {
   tpm_limit: number
   concurrency_limit: number
   monthly_token_limit: number
-  monthly_budget_cents: number
+  monthly_budget_micros: number
   monthly_image_limit: number
   monthly_video_seconds_limit: number
   monthly_audio_seconds_limit: number
@@ -1167,7 +1355,7 @@ export interface APIKeyCreateRequest {
   rpm_limit?: number
   tpm_limit?: number
   concurrency_limit?: number
-  monthly_budget_cents?: number
+  monthly_budget_micros?: number
   monthly_image_limit?: number
   monthly_video_seconds_limit?: number
   monthly_audio_seconds_limit?: number
@@ -1195,7 +1383,7 @@ export interface APIKeyUpdateRequest {
   rpm_limit?: number
   tpm_limit?: number
   concurrency_limit?: number
-  monthly_budget_cents?: number
+  monthly_budget_micros?: number
   monthly_image_limit?: number
   monthly_video_seconds_limit?: number
   monthly_audio_seconds_limit?: number
@@ -1823,7 +2011,10 @@ export interface UsageRecord {
   procurement_cost_confidence: string
   procurement_price_id: string
   provider_billing_line_id: string
-  cost_cents: number
+  usage_cost_micros?: number
+  usage_cost_currency: string
+  usage_pricing_evaluation_id: string
+  pricing_status: 'priced' | 'free' | 'unpriced' | 'disputed'
   created_at: string
 }
 
@@ -1832,19 +2023,18 @@ export interface UsageDimension {
   unit: 'count' | 'millisecond' | 'character' | 'byte'
   source: string
   confidence: 'estimated' | 'observed' | 'reported' | 'reconciled'
-  price_snapshot_id?: string
+  procurement_price_snapshot_id?: string
   attributes?: Record<string, string>
 }
 
 export interface OperatorCustomerGroup { id:string; name:string; description:string; status:string; created_at:string; updated_at:string }
-export interface OperatorPlan { id:string; name:string; description:string; monthly_fee_cents:number; included_tokens:number; monthly_limit_cents:number; rate_multiplier:number; status:string; created_at:string; updated_at:string }
-export interface OperatorCustomer { id:string; name:string; email:string; group_id:string; plan_id:string; status:string; balance_cents:number; credit_cents:number; notes:string; created_at:string; updated_at:string }
-export interface OperatorPricingRule { id:string; name:string; plan_id:string; model:string; input_price_cents_per_1m_tokens:number; output_price_cents_per_1m_tokens:number; rate_multiplier:number; status:string; created_at:string; updated_at:string }
-export interface OperatorBalanceEntry { id:string; customer_id:string; kind:string; amount_cents:number; balance_after_cents:number; reference:string; note:string; actor:string; created_at:string }
+export interface OperatorPlan { id:string; name:string; description:string; monthly_fee_micros:number; included_tokens:number; monthly_limit_micros:number; status:string; created_at:string; updated_at:string }
+export interface OperatorCustomer { id:string; name:string; email:string; group_id:string; plan_id:string; status:string; balance_micros:number; credit_micros:number; notes:string; created_at:string; updated_at:string }
+export interface OperatorBalanceEntry { id:string; customer_id:string; kind:string; amount_micros:number; balance_after_micros:number; currency:string; billing_ledger_id:string; reference:string; note:string; actor:string; created_at:string }
 export interface OperatorRiskRule { id:string; name:string; rule_type:string; threshold:number; window_minutes:number; action:string; description:string; status:string; created_at:string; updated_at:string }
 export interface GatewayRiskBlock { api_key_id:string; rule_id:string; reason:string; expires_at:string; created_at:string }
 export interface OperatorNotice { id:string; title:string; content:string; audience:string; status:string; publish_at?:string; created_at:string; updated_at:string }
-export interface OperatorDashboard { customers:number; active_customers:number; plans:number; balance_cents:number; risk_rules:number; published_notices:number }
+export interface OperatorDashboard { customers:number; active_customers:number; plans:number; balance_micros:number; risk_rules:number; published_notices:number }
 
 export interface UsageModelSummary {
   model: string
@@ -1854,7 +2044,7 @@ export interface UsageModelSummary {
   output_images: number
   video_milliseconds: number
   audio_milliseconds: number
-  cost_cents: number
+  usage_cost_micros: number
   avg_latency_ms: number
 }
 
@@ -1865,7 +2055,11 @@ export interface UsageReport {
   total_output_images: number
   total_video_milliseconds: number
   total_audio_milliseconds: number
-  total_cost_cents: number
+  total_usage_cost_micros: number
+  priced_requests: number
+  unpriced_requests: number
+  disputed_requests: number
+  cost_available: boolean
   avg_latency_ms: number
   by_model: UsageModelSummary[]
   recent: UsageRecord[]
@@ -1884,9 +2078,9 @@ export interface CostAllocationRow {
   requests: number
   error_requests: number
   total_tokens: number
-  total_cost_cents: number
+  total_usage_cost_micros: number
   avg_latency_ms: number
-  budget_cents: number
+  budget_micros: number
   budget_used_percent: number
   cost_share_percent: number
 }
@@ -1896,7 +2090,7 @@ export interface CostAllocationReport {
   total_requests: number
   error_requests: number
   total_tokens: number
-  total_cost_cents: number
+  total_usage_cost_micros: number
   avg_latency_ms: number
   rows: CostAllocationRow[]
 }

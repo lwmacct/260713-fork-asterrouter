@@ -17,11 +17,11 @@ func TestPostgresRepositoryAppliesBalanceEntryAtomicallyAndIdempotently(t *testi
 		t.Fatalf("NewRepository(): %v", err)
 	}
 
-	customer := Customer{ID: "customer-postgres", Name: "Customer", Status: StatusActive, BalanceCents: 100, CreatedAt: now, UpdatedAt: now}
+	customer := Customer{ID: "customer-postgres", Name: "Customer", Status: StatusActive, BalanceMicros: 100, CreatedAt: now, UpdatedAt: now}
 	if err := repo.SaveCustomer(ctx, customer); err != nil {
 		t.Fatalf("SaveCustomer(): %v", err)
 	}
-	entry := BalanceEntry{ID: "entry-postgres", CustomerID: customer.ID, Kind: "allocation", AmountCents: 50, Reference: "idempotency-1", Actor: "tester", CreatedAt: now}
+	entry := BalanceEntry{ID: "entry-postgres", CustomerID: customer.ID, Kind: "allocation", AmountMicros: 50, Reference: "idempotency-1", Actor: "tester", CreatedAt: now}
 	first, err := repo.ApplyBalanceEntry(ctx, entry)
 	if err != nil {
 		t.Fatalf("ApplyBalanceEntry(first): %v", err)
@@ -52,7 +52,7 @@ func TestPostgresRepositoryAppliesBalanceEntryAtomicallyAndIdempotently(t *testi
 	if err != nil {
 		t.Fatalf("ListBalanceEntries(): %v", err)
 	}
-	if len(customers) != 1 || customers[0].BalanceCents != 150 || len(entries) != 1 {
+	if len(customers) != 1 || customers[0].BalanceMicros != 150 || len(entries) != 1 {
 		t.Fatalf("persisted customers=%#v entries=%#v", customers, entries)
 	}
 }

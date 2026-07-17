@@ -1,9 +1,9 @@
 import { apiClient } from './client'
 import { listOrEmpty, normalizeAPIKeyCreateResponse, normalizeAPIKeyRecord, normalizeUsageReport, type APIKeyCreateResponsePayload, type APIKeyRecordPayload, type UsageReportPayload } from './normalizers'
-import type { APIKeyCreateRequest, APIKeyCreateResponse, APIKeyRecord, GatewayRiskBlock, OperatorBalanceEntry, OperatorCustomer, OperatorCustomerGroup, OperatorDashboard, OperatorNotice, OperatorPlan, OperatorPricingRule, OperatorRiskRule, UsageReport } from '@/types'
+import type { APIKeyCreateRequest, APIKeyCreateResponse, APIKeyRecord, GatewayRiskBlock, OperatorBalanceEntry, OperatorCustomer, OperatorCustomerGroup, OperatorDashboard, OperatorNotice, OperatorPlan, OperatorRiskRule, UsageReport } from '@/types'
 
-export type OperatorResource = 'customer-groups'|'customers'|'plans'|'pricing-rules'|'risk-rules'|'notices'
-export type OperatorEntity = OperatorCustomerGroup|OperatorCustomer|OperatorPlan|OperatorPricingRule|OperatorRiskRule|OperatorNotice
+export type OperatorResource = 'customer-groups'|'customers'|'plans'|'risk-rules'|'notices'
+export type OperatorEntity = OperatorCustomerGroup|OperatorCustomer|OperatorPlan|OperatorRiskRule|OperatorNotice
 
 export async function getOperatorDashboard():Promise<OperatorDashboard>{return (await apiClient.get<OperatorDashboard>('/operator/dashboard')).data}
 export async function listOperatorResource<T extends OperatorEntity>(resource:OperatorResource):Promise<T[]>{return listOrEmpty((await apiClient.get<T[] | null>(`/operator/${resource}`)).data)}

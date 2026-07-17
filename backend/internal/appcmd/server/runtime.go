@@ -120,7 +120,7 @@ func newRuntime(ctx context.Context, cfg *config.Server) (_ *runtime, err error)
 	})
 	localAdminUsername, localAdminPassword := authService.BootstrapIdentity()
 	localAdminDefaults := controlplane.WorkspaceUserDefaults{
-		BalanceCents: adminSettings.DefaultBalanceCents, ConcurrencyLimit: adminSettings.DefaultConcurrency, RPMLimit: adminSettings.DefaultRPM,
+		BalanceMicros: adminSettings.DefaultBalanceMicros, ConcurrencyLimit: adminSettings.DefaultConcurrency, RPMLimit: adminSettings.DefaultRPM,
 	}
 	localAdmin, err := rt.controlService.EnsureLocalAdmin(ctx, localAdminUsername, localAdminPassword, localAdminDefaults)
 	if err != nil {
@@ -129,6 +129,8 @@ func newRuntime(ctx context.Context, cfg *config.Server) (_ *runtime, err error)
 	authService.SetPasswordHash(localAdmin.PasswordHash)
 
 	operatorService := operatorcore.NewService(rt.operatorRepo, rt.controlService)
+	rt.controlService.SetCustomerPricingContextResolver(operatorService)
+	rt.controlService.SetTransactionalOutboxPublisher(operatorService)
 	operatorService.SetRiskConfigProvider(func(ctx context.Context) (operatorcore.RiskRuntimeConfig, error) {
 		current, err := rt.settingsService.Admin(ctx)
 		if err != nil {
@@ -139,8 +141,6 @@ func newRuntime(ctx context.Context, cfg *config.Server) (_ *runtime, err error)
 			BlockTimeout: time.Duration(current.CyberSessionBlockTTLSeconds) * time.Second,
 		}, nil
 	})
-	rt.controlService.SetUsageObserver(operatorService)
-
 	rt.pluginService = plugins.NewServiceWithOptions(rt.pluginRepo, plugins.ServiceOptions{
 		SecretKey: cfg.Security.SecretKey,
 		OfficialCatalog: plugins.OfficialCatalogConfig{
@@ -257,6 +257,9 @@ func (rt *runtime) startBackground(ctx context.Context) {
 	})
 	rt.launch(func() {
 		rt.controlService.RunPlatformUsageDeliveryScheduler(ctx, logBackgroundError("platform usage delivery scheduler"))
+	})
+	rt.launch(func() {
+		rt.controlService.RunTransactionalOutboxScheduler(ctx, 2*time.Second, 100, logBackgroundError("transactional outbox scheduler"))
 	})
 	rt.launch(func() {
 		rt.controlService.RunArtifactLifecycleScheduler(ctx, 30*time.Second, 100, logBackgroundError("artifact lifecycle scheduler"))

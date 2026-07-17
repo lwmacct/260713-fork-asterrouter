@@ -58,11 +58,11 @@ func registerCustomerRoutes(customer *gin.RouterGroup, control *controlplane.Ser
 		c.Status(http.StatusOK)
 		_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 		writer := csv.NewWriter(c.Writer)
-		_ = writer.Write([]string{"时间", "类型", "金额（分）", "余额（分）", "说明", "参考号"})
+		_ = writer.Write([]string{"时间", "类型", "金额（微美元）", "余额（微美元）", "说明", "参考号"})
 		for _, entry := range data.Items {
 			_ = writer.Write([]string{
-				entry.CreatedAt.Format(time.RFC3339), entry.Kind, strconv.Itoa(entry.AmountCents),
-				strconv.Itoa(entry.BalanceAfterCents), entry.Description, entry.Reference,
+				entry.CreatedAt.Format(time.RFC3339), entry.Kind, strconv.FormatInt(entry.AmountMicros, 10),
+				strconv.FormatInt(entry.BalanceAfterMicros, 10), entry.Description, entry.Reference,
 			})
 		}
 		writer.Flush()

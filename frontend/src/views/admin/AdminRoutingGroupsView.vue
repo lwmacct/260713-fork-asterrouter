@@ -57,9 +57,9 @@ function defaultForm(): RoutingGroupRequest {
     rate_multiplier: 1,
     rpm_limit: 0,
     is_exclusive: false,
-    daily_budget_cents: 0,
-    weekly_budget_cents: 0,
-    monthly_budget_cents: 0,
+    daily_budget_micros: 0,
+    weekly_budget_micros: 0,
+    monthly_budget_micros: 0,
     image_enabled: false,
     batch_image_enabled: false,
     image_rate_multiplier: 1,
@@ -101,9 +101,9 @@ function openEdit(group: RoutingGroup) {
     rate_multiplier: group.rate_multiplier,
     rpm_limit: group.rpm_limit,
     is_exclusive: group.is_exclusive,
-    daily_budget_cents: group.daily_budget_cents,
-    weekly_budget_cents: group.weekly_budget_cents,
-    monthly_budget_cents: group.monthly_budget_cents,
+    daily_budget_micros: group.daily_budget_micros,
+    weekly_budget_micros: group.weekly_budget_micros,
+    monthly_budget_micros: group.monthly_budget_micros,
     image_enabled: group.image_enabled,
     batch_image_enabled: group.batch_image_enabled,
     image_rate_multiplier: group.image_rate_multiplier || 1,
@@ -175,9 +175,9 @@ function normalizedPayload(): RoutingGroupRequest {
   payload.batch_image_discount_multiplier = numberOrDefault(payload.batch_image_discount_multiplier, 1)
   payload.peak_rate_multiplier = numberOrDefault(payload.peak_rate_multiplier, 1)
   if (payload.group_type !== 'subscription') {
-    payload.daily_budget_cents = 0
-    payload.weekly_budget_cents = 0
-    payload.monthly_budget_cents = 0
+    payload.daily_budget_micros = 0
+    payload.weekly_budget_micros = 0
+    payload.monthly_budget_micros = 0
     payload.peak_rate_enabled = false
     payload.peak_start = ''
     payload.peak_end = ''
@@ -255,9 +255,9 @@ function typeClass(type: string) {
   return `routing-group-type-${type || 'standard'}`
 }
 
-function formatCost(cents: number): string {
-  if (!cents) return t('apiKeys.unlimited')
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(cents / 100)
+function formatCost(micros: number): string {
+  if (!micros) return t('apiKeys.unlimited')
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(micros / 1_000_000)
 }
 
 function formatLimit(value: number): string {
@@ -267,9 +267,9 @@ function formatLimit(value: number): string {
 function budgetSummary(group: RoutingGroup): string {
   if (normalizedGroupType(group) !== 'subscription') return '-'
   const parts = [
-    group.daily_budget_cents ? `${t('routingGroups.dailyBudgetShort')} ${formatCost(group.daily_budget_cents)}` : '',
-    group.weekly_budget_cents ? `${t('routingGroups.weeklyBudgetShort')} ${formatCost(group.weekly_budget_cents)}` : '',
-    group.monthly_budget_cents ? `${t('routingGroups.monthlyBudgetShort')} ${formatCost(group.monthly_budget_cents)}` : ''
+    group.daily_budget_micros ? `${t('routingGroups.dailyBudgetShort')} ${formatCost(group.daily_budget_micros)}` : '',
+    group.weekly_budget_micros ? `${t('routingGroups.weeklyBudgetShort')} ${formatCost(group.weekly_budget_micros)}` : '',
+    group.monthly_budget_micros ? `${t('routingGroups.monthlyBudgetShort')} ${formatCost(group.monthly_budget_micros)}` : ''
   ].filter(Boolean)
   return parts.length ? parts.join(' / ') : t('apiKeys.unlimited')
 }
@@ -487,15 +487,15 @@ onMounted(load)
             <div class="form-grid">
               <div class="field">
                 <label>{{ t('routingGroups.dailyBudget') }}</label>
-                <input v-model.number="form.daily_budget_cents" type="number" min="0" step="100" />
+                <input v-model.number="form.daily_budget_micros" type="number" min="0" step="100" />
               </div>
               <div class="field">
                 <label>{{ t('routingGroups.weeklyBudget') }}</label>
-                <input v-model.number="form.weekly_budget_cents" type="number" min="0" step="100" />
+                <input v-model.number="form.weekly_budget_micros" type="number" min="0" step="100" />
               </div>
               <div class="field">
                 <label>{{ t('routingGroups.monthlyBudget') }}</label>
-                <input v-model.number="form.monthly_budget_cents" type="number" min="0" step="100" />
+                <input v-model.number="form.monthly_budget_micros" type="number" min="0" step="100" />
               </div>
               <label class="field checkbox-line routing-toggle-line">
                 <input v-model="form.peak_rate_enabled" type="checkbox" />

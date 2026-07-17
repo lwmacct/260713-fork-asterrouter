@@ -34,7 +34,7 @@ func registerPlatformRoutes(platform *gin.RouterGroup, control *controlplane.Ser
 	registerRoutingAdminRoutes(platform, control)
 	registerGatewayModelAdminRoutes(platform, control)
 	registerGovernancePolicyAdminRoutes(platform, control)
-	registerModelPricingAdminRoutes(platform, control)
+	registerPricingRuleRoutes(platform, control, PricingSurfacePlatform)
 	registerAIJobAdminRoutes(platform, control, runtime, controlplane.ProfileScopePlatform)
 	registerArtifactAdminRoutes(platform, control, controlplane.ProfileScopePlatform)
 	registerPlatformAPIKeyRoutes(platform, control)

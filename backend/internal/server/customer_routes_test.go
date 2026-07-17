@@ -113,7 +113,7 @@ func TestCustomerBillingRoutesAreSeparateFromOperator(t *testing.T) {
 		t.Fatalf("customer crossed into operator status=%d body=%s", operatorRec.Code, operatorRec.Body.String())
 	}
 
-	rechargeReq := httptest.NewRequest(http.MethodPost, "/api/v1/customer/billing/recharge-orders", bytes.NewBufferString(`{"amount_cents":1000,"payment_method":"wechat"}`))
+	rechargeReq := httptest.NewRequest(http.MethodPost, "/api/v1/customer/billing/recharge-orders", bytes.NewBufferString(`{"amount_micros":10000000,"payment_method":"wechat"}`))
 	rechargeReq.Header.Set("Authorization", "Bearer secret")
 	rechargeReq.Header.Set("X-Actor", user.Email)
 	rechargeReq.Header.Set("Content-Type", "application/json")

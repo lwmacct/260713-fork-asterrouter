@@ -38,6 +38,7 @@ func newTestRuntimeWithDurableAdmission(t *testing.T, cfg RuntimeConfig, durable
 	}
 	pluginService := plugins.NewService(plugins.NewMemoryRepository())
 	operatorService := operatorcore.NewService(operatorcore.NewMemoryRepository(), controlService)
+	controlService.SetCustomerPricingContextResolver(operatorService)
 	if err := pluginService.EnsureSeedData(context.Background()); err != nil {
 		t.Fatalf("Plugin EnsureSeedData(): %v", err)
 	}

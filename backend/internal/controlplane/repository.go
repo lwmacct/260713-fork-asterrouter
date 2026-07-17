@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/astercloud/asterrouter/backend/internal/pricing"
 	_ "github.com/lib/pq"
 )
 
@@ -89,9 +90,10 @@ type Repository interface {
 	CreateOrGetProviderCallbackReceipt(ctx context.Context, receipt ProviderCallbackReceipt) (ProviderCallbackReceipt, bool, error)
 	CompleteProviderCallbackReceipt(ctx context.Context, eventID, status, errorType string, processedAt time.Time) error
 	FindBillingHoldByOperationID(ctx context.Context, operationID string) (BillingHold, bool, error)
-	TransitionBillingHold(ctx context.Context, operationID string, expectedVersion int, toStatus string, settledAmount int, reason string, transitionedAt time.Time) (BillingHold, bool, error)
+	ListBillingHoldPricingVersions(ctx context.Context, holdID string) ([]BillingHoldPricingVersion, error)
+	TransitionBillingHold(ctx context.Context, operationID string, expectedVersion int, toStatus string, settledAmount int64, reason string, transitionedAt time.Time) (BillingHold, bool, error)
 	ListBillingHolds(ctx context.Context) ([]BillingHold, error)
-	ApplyUsageLedger(ctx context.Context, record UsageRecord, billing BillingLedgerEntry, outbox TransactionalOutboxEvent, events []PlatformUsageDeliveryEvent) (bool, error)
+	ApplyUsageSettlement(ctx context.Context, settlement UsageSettlement) (bool, error)
 	ListBillingLedgerEntries(ctx context.Context, operationID string) ([]BillingLedgerEntry, error)
 	ListTransactionalOutboxEvents(ctx context.Context, aggregateID string) ([]TransactionalOutboxEvent, error)
 	ClaimDueTransactionalOutboxEvents(ctx context.Context, now, leaseUntil time.Time, leaseToken string, limit int) ([]TransactionalOutboxEvent, error)
@@ -132,8 +134,17 @@ type Repository interface {
 	DeleteModelRoute(ctx context.Context, id string) error
 	ListLatestProviderAccountHealthChecks(ctx context.Context) ([]ProviderAccountHealthCheck, error)
 	SaveProviderAccountHealthCheck(ctx context.Context, check ProviderAccountHealthCheck) error
-	ListModelPricings(ctx context.Context) ([]ModelPricing, error)
-	SaveModelPricing(ctx context.Context, pricing ModelPricing) error
+	CreatePricingRule(ctx context.Context, rule PricingRule, draft PricingRuleVersion) error
+	ListPricingRules(ctx context.Context) ([]PricingRule, error)
+	FindPricingRule(ctx context.Context, id string) (PricingRule, bool, error)
+	ListPricingRuleVersions(ctx context.Context, ruleID string) ([]PricingRuleVersion, error)
+	FindPricingRuleVersion(ctx context.Context, id string) (PricingRuleVersion, bool, error)
+	SavePricingRuleDraft(ctx context.Context, rule PricingRule, draft PricingRuleVersion, expectedLockVersion int64) (PricingRule, bool, error)
+	PublishPricingRuleVersion(ctx context.Context, version PricingRuleVersion, expectedLockVersion int64, expectedActiveVersionID string) (PricingRule, PricingRuleVersion, bool, error)
+	ActivatePricingRuleVersion(ctx context.Context, ruleID, versionID string, expectedLockVersion int64, actor string, updatedAt time.Time) (PricingRule, bool, error)
+	SetPricingRuleStatus(ctx context.Context, ruleID, status string, expectedLockVersion int64, actor string, updatedAt time.Time) (PricingRule, bool, error)
+	SavePricingEvaluation(ctx context.Context, evaluation PricingEvaluation) error
+	FindPricingEvaluation(ctx context.Context, id string) (PricingEvaluation, bool, error)
 	ListProcurementPrices(ctx context.Context) ([]ProcurementPrice, error)
 	SaveProcurementPrice(ctx context.Context, price ProcurementPrice) error
 	ListProviderBillingLines(ctx context.Context) ([]ProviderBillingLine, error)
@@ -184,7 +195,7 @@ type Repository interface {
 	SummarizeUsageRecords(ctx context.Context, query UsageQuery) (UsageAggregate, error)
 	SummarizeCostAllocation(ctx context.Context, dimension string, query UsageQuery) ([]CostAllocationRollup, error)
 	SumUsageTokensByAPIKeySince(ctx context.Context, apiKeyID string, since time.Time) (int, error)
-	SumUsageCostCentsByAPIKeySince(ctx context.Context, apiKeyID string, since time.Time) (int, error)
+	SumUsageCostMicrosByAPIKeySince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
 	SaveGatewayTrace(ctx context.Context, trace GatewayTrace) error
 	ListGatewayTraces(ctx context.Context, limit int) ([]GatewayTrace, error)
 	QueryGatewayTraces(ctx context.Context, query GatewayTraceQuery) ([]GatewayTrace, error)
@@ -243,7 +254,9 @@ type MemoryRepository struct {
 	gatewayModels                   map[string]GatewayModel
 	modelRoutes                     map[string]ModelRoute
 	accountHealthChecks             map[string]ProviderAccountHealthCheck
-	modelPricings                   map[string]ModelPricing
+	pricingRules                    map[string]PricingRule
+	pricingRuleVersions             map[string]PricingRuleVersion
+	pricingEvaluations              map[string]PricingEvaluation
 	procurementPrices               map[string]ProcurementPrice
 	providerBillingLines            map[string]ProviderBillingLine
 	providerBillingSources          map[string]ProviderBillingSource
@@ -268,6 +281,7 @@ type MemoryRepository struct {
 	aiAttempts                      map[string]AIAttempt
 	providerCallbackReceipts        map[string]ProviderCallbackReceipt
 	billingHolds                    map[string]BillingHold
+	billingHoldPricingVersions      map[string]BillingHoldPricingVersion
 	billingLedgerEntries            map[string]BillingLedgerEntry
 	transactionalOutboxEvents       map[string]TransactionalOutboxEvent
 	credentialRateSamples           map[string][]credentialRateSample
@@ -308,7 +322,9 @@ func NewMemoryRepository() *MemoryRepository {
 		gatewayModels:                   map[string]GatewayModel{},
 		modelRoutes:                     map[string]ModelRoute{},
 		accountHealthChecks:             map[string]ProviderAccountHealthCheck{},
-		modelPricings:                   map[string]ModelPricing{},
+		pricingRules:                    map[string]PricingRule{},
+		pricingRuleVersions:             map[string]PricingRuleVersion{},
+		pricingEvaluations:              map[string]PricingEvaluation{},
 		procurementPrices:               map[string]ProcurementPrice{},
 		providerBillingLines:            map[string]ProviderBillingLine{},
 		providerBillingSources:          map[string]ProviderBillingSource{},
@@ -333,6 +349,7 @@ func NewMemoryRepository() *MemoryRepository {
 		aiAttempts:                      map[string]AIAttempt{},
 		providerCallbackReceipts:        map[string]ProviderCallbackReceipt{},
 		billingHolds:                    map[string]BillingHold{},
+		billingHoldPricingVersions:      map[string]BillingHoldPricingVersion{},
 		billingLedgerEntries:            map[string]BillingLedgerEntry{},
 		transactionalOutboxEvents:       map[string]TransactionalOutboxEvent{},
 		credentialRateSamples:           map[string][]credentialRateSample{},
@@ -472,24 +489,6 @@ func (r *MemoryRepository) SaveProviderAccountHealthCheck(_ context.Context, che
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.accountHealthChecks[check.AccountID] = check
-	return nil
-}
-
-func (r *MemoryRepository) ListModelPricings(context.Context) ([]ModelPricing, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]ModelPricing, 0, len(r.modelPricings))
-	for _, pricing := range r.modelPricings {
-		out = append(out, pricing)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
-	return out, nil
-}
-
-func (r *MemoryRepository) SaveModelPricing(_ context.Context, pricing ModelPricing) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.modelPricings[pricing.ID] = pricing
 	return nil
 }
 
@@ -683,13 +682,13 @@ func (r *MemoryRepository) SumUsageTokensByAPIKeySince(_ context.Context, apiKey
 	return total, nil
 }
 
-func (r *MemoryRepository) SumUsageCostCentsByAPIKeySince(_ context.Context, apiKeyID string, since time.Time) (int, error) {
+func (r *MemoryRepository) SumUsageCostMicrosByAPIKeySince(_ context.Context, apiKeyID string, since time.Time) (int64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var total int
+	var total int64
 	for _, record := range r.usageRecords {
-		if record.APIKeyID == apiKeyID && !record.CreatedAt.Before(since) {
-			total += record.CostCents
+		if record.APIKeyID == apiKeyID && !record.CreatedAt.Before(since) && record.UsageCostMicros != nil {
+			total += *record.UsageCostMicros
 		}
 	}
 	return total, nil
@@ -1113,7 +1112,7 @@ CREATE TABLE IF NOT EXISTS departments (
   code TEXT NOT NULL UNIQUE,
   parent_id TEXT NOT NULL DEFAULT '',
   cost_center TEXT NOT NULL DEFAULT '',
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
@@ -1147,7 +1146,7 @@ ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS email_verify_hash TEXT NOT 
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS email_verify_expires_at TIMESTAMPTZ;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS password_reset_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
-ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS balance_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS balance_micros BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER NOT NULL DEFAULT 5;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS rpm_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE workspace_users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT NOT NULL DEFAULT '';
@@ -1220,8 +1219,8 @@ CREATE INDEX IF NOT EXISTS role_bindings_scope_idx
 
 CREATE TABLE IF NOT EXISTS customer_wallets (
   user_id TEXT PRIMARY KEY REFERENCES workspace_users(id) ON DELETE CASCADE,
-  gift_balance_cents INTEGER NOT NULL DEFAULT 0,
-  profit_balance_cents INTEGER NOT NULL DEFAULT 0,
+  gift_balance_micros BIGINT NOT NULL DEFAULT 0,
+  profit_balance_micros BIGINT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL
 );
 
@@ -1229,8 +1228,8 @@ CREATE TABLE IF NOT EXISTS customer_billing_entries (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
   kind TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  balance_after_cents INTEGER NOT NULL,
+  amount_micros BIGINT NOT NULL,
+  balance_after_micros BIGINT NOT NULL,
   reference TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL
@@ -1243,7 +1242,7 @@ CREATE TABLE IF NOT EXISTS customer_redemption_codes (
   id TEXT PRIMARY KEY,
   code_hash TEXT NOT NULL UNIQUE,
   title TEXT NOT NULL DEFAULT '',
-  amount_cents INTEGER NOT NULL,
+  amount_micros BIGINT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   max_redemptions INTEGER NOT NULL DEFAULT 1,
   redeemed_count INTEGER NOT NULL DEFAULT 0,
@@ -1263,8 +1262,8 @@ CREATE TABLE IF NOT EXISTS customer_vouchers (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES workspace_users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  minimum_recharge_cents INTEGER NOT NULL DEFAULT 0,
+  amount_micros BIGINT NOT NULL,
+  minimum_recharge_micros BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL
@@ -1333,9 +1332,9 @@ CREATE TABLE IF NOT EXISTS routing_groups (
   rate_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1,
   rpm_limit INTEGER NOT NULL DEFAULT 0,
   is_exclusive BOOLEAN NOT NULL DEFAULT false,
-  daily_budget_cents INTEGER NOT NULL DEFAULT 0,
-  weekly_budget_cents INTEGER NOT NULL DEFAULT 0,
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  daily_budget_micros BIGINT NOT NULL DEFAULT 0,
+  weekly_budget_micros BIGINT NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   image_enabled BOOLEAN NOT NULL DEFAULT false,
   batch_image_enabled BOOLEAN NOT NULL DEFAULT false,
   image_rate_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1,
@@ -1361,9 +1360,9 @@ CREATE TABLE IF NOT EXISTS routing_groups (
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS group_type TEXT NOT NULL DEFAULT 'standard';
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS rpm_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS daily_budget_cents INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS weekly_budget_cents INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS monthly_budget_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS daily_budget_micros BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS weekly_budget_micros BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS monthly_budget_micros BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS image_enabled BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS batch_image_enabled BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS image_rate_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1;
@@ -1506,17 +1505,6 @@ CREATE INDEX IF NOT EXISTS model_routes_resolution_idx
 CREATE INDEX IF NOT EXISTS model_routes_account_idx
   ON model_routes(provider_account_id);
 
-CREATE TABLE IF NOT EXISTS model_pricings (
-  id TEXT PRIMARY KEY,
-  model TEXT NOT NULL UNIQUE,
-  currency TEXT NOT NULL DEFAULT 'USD',
-  input_price_cents_per_1m_tokens INTEGER NOT NULL DEFAULT 0,
-  output_price_cents_per_1m_tokens INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'active',
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS governance_policies (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -1527,7 +1515,7 @@ CREATE TABLE IF NOT EXISTS governance_policies (
   model_denylist TEXT NOT NULL DEFAULT '[]',
   qps_limit INTEGER NOT NULL DEFAULT 0,
   monthly_token_limit INTEGER NOT NULL DEFAULT 0,
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   overage_action TEXT NOT NULL DEFAULT 'block',
   prompt_logging_mode TEXT NOT NULL DEFAULT 'metadata_only',
   retention_days INTEGER NOT NULL DEFAULT 30,
@@ -1644,7 +1632,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   tpm_limit INTEGER NOT NULL DEFAULT 0,
   concurrency_limit INTEGER NOT NULL DEFAULT 0,
   monthly_token_limit INTEGER NOT NULL DEFAULT 0,
-  monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
+  monthly_budget_micros BIGINT NOT NULL DEFAULT 0,
   monthly_image_limit INTEGER NOT NULL DEFAULT 0,
   monthly_video_seconds_limit INTEGER NOT NULL DEFAULT 0,
   monthly_audio_seconds_limit INTEGER NOT NULL DEFAULT 0,
@@ -1678,7 +1666,7 @@ ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_operations TEXT NOT NULL D
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rpm_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tpm_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_budget_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_budget_micros BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_image_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_video_seconds_limit INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS monthly_audio_seconds_limit INTEGER NOT NULL DEFAULT 0;
@@ -1810,11 +1798,10 @@ CREATE TABLE IF NOT EXISTS billing_holds (
   request_fingerprint TEXT NOT NULL,
   status TEXT NOT NULL,
   version INTEGER NOT NULL,
-  reserved_amount_cents INTEGER NOT NULL DEFAULT 0,
+  reserved_amount_micros BIGINT NOT NULL DEFAULT 0,
   reserved_usage_dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
-  settled_amount_cents INTEGER NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'USD',
-  price_snapshot_id TEXT NOT NULL DEFAULT '',
+  settled_amount_micros BIGINT NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
   estimate_source TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL DEFAULT '',
   budget_period_start TIMESTAMPTZ NOT NULL,
@@ -1825,8 +1812,8 @@ CREATE TABLE IF NOT EXISTS billing_holds (
   released_at TIMESTAMPTZ,
   CHECK (status IN ('reserved', 'committed', 'settled', 'released', 'disputed')),
   CHECK (version > 0),
-  CHECK (reserved_amount_cents >= 0),
-  CHECK (settled_amount_cents >= 0),
+  CHECK (reserved_amount_micros >= 0),
+  CHECK (settled_amount_micros >= 0),
   CHECK (char_length(currency) = 3)
 );
 
@@ -2115,24 +2102,6 @@ CREATE TABLE IF NOT EXISTS gateway_credential_capacity_leases (
 CREATE INDEX IF NOT EXISTS gateway_credential_capacity_leases_expiry_idx
   ON gateway_credential_capacity_leases(profile_scope, tenant_id, credential_id, expires_at);
 
-CREATE TABLE IF NOT EXISTS billing_ledger_entries (
-  id TEXT PRIMARY KEY,
-  operation_id TEXT NOT NULL REFERENCES ai_operations(id) ON DELETE RESTRICT,
-  attempt_id TEXT NOT NULL DEFAULT '',
-  usage_version INTEGER NOT NULL,
-  usage_record_id TEXT NOT NULL,
-  request_fingerprint TEXT NOT NULL,
-  entry_type TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'USD',
-  status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE(operation_id, attempt_id, usage_version)
-);
-
-CREATE INDEX IF NOT EXISTS billing_ledger_operation_created_idx
-  ON billing_ledger_entries(operation_id, created_at);
-
 CREATE TABLE IF NOT EXISTS transactional_outbox (
   id TEXT PRIMARY KEY,
   aggregate_type TEXT NOT NULL,
@@ -2187,7 +2156,10 @@ CREATE TABLE IF NOT EXISTS usage_records (
   latency_ms BIGINT NOT NULL DEFAULT 0,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_cents INTEGER NOT NULL DEFAULT 0,
+  usage_cost_micros BIGINT,
+  usage_cost_currency TEXT NOT NULL DEFAULT 'USD' CHECK (usage_cost_currency = 'USD'),
+  usage_pricing_evaluation_id TEXT NOT NULL DEFAULT '',
+  pricing_status TEXT NOT NULL DEFAULT 'unpriced' CHECK (pricing_status IN ('priced','free','unpriced','disputed')),
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -2826,6 +2798,10 @@ CREATE INDEX IF NOT EXISTS routing_affinity_bindings_expiry_idx
   ON routing_affinity_bindings(expires_at);
 
 `)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, pricingSchema)
 	return err
 }
 
@@ -2908,7 +2884,7 @@ VALUES($1,$2,$3,$4,$5,$6,$7)
 func (r *PostgresRepository) ListRoutingGroups(ctx context.Context) ([]RoutingGroup, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, description, platform, group_type, rate_multiplier, rpm_limit, is_exclusive,
-  daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+  daily_budget_micros, weekly_budget_micros, monthly_budget_micros,
   image_enabled, batch_image_enabled, image_rate_multiplier, batch_image_discount_multiplier,
   image_price_1k_cents, image_price_2k_cents, image_price_4k_cents,
   video_enabled, video_rate_multiplier, video_price_480p_cents, video_price_720p_cents, video_price_1080p_cents,
@@ -2934,9 +2910,9 @@ ORDER BY sort_order ASC, name ASC
 			&group.RateMultiplier,
 			&group.RPMLimit,
 			&group.IsExclusive,
-			&group.DailyBudgetCents,
-			&group.WeeklyBudgetCents,
-			&group.MonthlyBudgetCents,
+			&group.DailyBudgetMicros,
+			&group.WeeklyBudgetMicros,
+			&group.MonthlyBudgetMicros,
 			&group.ImageEnabled,
 			&group.BatchImageEnabled,
 			&group.ImageRateMultiplier,
@@ -2981,7 +2957,7 @@ func (r *PostgresRepository) SaveRoutingGroup(ctx context.Context, group Routing
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO routing_groups(
   id, name, description, platform, group_type, rate_multiplier, rpm_limit, is_exclusive,
-  daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+  daily_budget_micros, weekly_budget_micros, monthly_budget_micros,
   image_enabled, batch_image_enabled, image_rate_multiplier, batch_image_discount_multiplier,
   image_price_1k_cents, image_price_2k_cents, image_price_4k_cents,
   video_enabled, video_rate_multiplier, video_price_480p_cents, video_price_720p_cents, video_price_1080p_cents,
@@ -2997,9 +2973,9 @@ ON CONFLICT(id) DO UPDATE SET
   rate_multiplier = EXCLUDED.rate_multiplier,
   rpm_limit = EXCLUDED.rpm_limit,
   is_exclusive = EXCLUDED.is_exclusive,
-  daily_budget_cents = EXCLUDED.daily_budget_cents,
-  weekly_budget_cents = EXCLUDED.weekly_budget_cents,
-  monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+  daily_budget_micros = EXCLUDED.daily_budget_micros,
+  weekly_budget_micros = EXCLUDED.weekly_budget_micros,
+  monthly_budget_micros = EXCLUDED.monthly_budget_micros,
   image_enabled = EXCLUDED.image_enabled,
   batch_image_enabled = EXCLUDED.batch_image_enabled,
   image_rate_multiplier = EXCLUDED.image_rate_multiplier,
@@ -3028,9 +3004,9 @@ ON CONFLICT(id) DO UPDATE SET
 		group.RateMultiplier,
 		group.RPMLimit,
 		group.IsExclusive,
-		group.DailyBudgetCents,
-		group.WeeklyBudgetCents,
-		group.MonthlyBudgetCents,
+		group.DailyBudgetMicros,
+		group.WeeklyBudgetMicros,
+		group.MonthlyBudgetMicros,
 		group.ImageEnabled,
 		group.BatchImageEnabled,
 		group.ImageRateMultiplier,
@@ -3240,42 +3216,6 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 	return err
 }
 
-func (r *PostgresRepository) ListModelPricings(ctx context.Context) ([]ModelPricing, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT id, model, currency, input_price_cents_per_1m_tokens, output_price_cents_per_1m_tokens, status, created_at, updated_at
-FROM model_pricings
-ORDER BY model ASC
-`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]ModelPricing, 0)
-	for rows.Next() {
-		var pricing ModelPricing
-		if err := rows.Scan(&pricing.ID, &pricing.Model, &pricing.Currency, &pricing.InputPriceCentsPer1MTokens, &pricing.OutputPriceCentsPer1MTokens, &pricing.Status, &pricing.CreatedAt, &pricing.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, pricing)
-	}
-	return out, rows.Err()
-}
-
-func (r *PostgresRepository) SaveModelPricing(ctx context.Context, pricing ModelPricing) error {
-	_, err := r.db.ExecContext(ctx, `
-INSERT INTO model_pricings(id, model, currency, input_price_cents_per_1m_tokens, output_price_cents_per_1m_tokens, status, created_at, updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT(id) DO UPDATE SET
-  model = EXCLUDED.model,
-  currency = EXCLUDED.currency,
-  input_price_cents_per_1m_tokens = EXCLUDED.input_price_cents_per_1m_tokens,
-  output_price_cents_per_1m_tokens = EXCLUDED.output_price_cents_per_1m_tokens,
-  status = EXCLUDED.status,
-  updated_at = EXCLUDED.updated_at
-`, pricing.ID, pricing.Model, pricing.Currency, pricing.InputPriceCentsPer1MTokens, pricing.OutputPriceCentsPer1MTokens, pricing.Status, pricing.CreatedAt, pricing.UpdatedAt)
-	return err
-}
-
 func (r *PostgresRepository) routingGroupAccountCounts(ctx context.Context) (map[string]int, map[string]int, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT status, schedulable, group_ids
@@ -3307,7 +3247,7 @@ FROM provider_accounts
 const apiKeySelectColumns = `id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, owner_user_id,
 profile_scope, platform_tenant_id, gateway_principal_id, tenant_id, principal_type, principal_reference,
 policy_id, scopes, model_allowlist, allowed_modalities, allowed_operations,
-qps_limit, rpm_limit, tpm_limit, concurrency_limit, monthly_token_limit, monthly_budget_cents,
+qps_limit, rpm_limit, tpm_limit, concurrency_limit, monthly_token_limit, monthly_budget_micros,
 monthly_image_limit, monthly_video_seconds_limit, monthly_audio_seconds_limit,
 allowed_cidrs, lane_policy, artifact_policy, artifact_sink_id, rotation_family_id,
 replaces_key_id, replaced_by_key_id, rotation_grace_expires_at,
@@ -3325,7 +3265,7 @@ func scanAPIKey(scanner apiKeyScanner) (APIKeyRecord, error) {
 		&key.ID, &key.Name, &key.KeyHash, &key.Fingerprint, &key.Prefix, &key.Status, &key.KeyType, &key.CustomerID, &key.OwnerUserID,
 		&key.ProfileScope, &key.PlatformTenantID, &key.GatewayPrincipalID, &key.TenantID, &key.PrincipalType, &key.PrincipalReference,
 		&key.PolicyID, &scopes, &allowlist, &modalities, &operations,
-		&key.QPSLimit, &key.RPMLimit, &key.TPMLimit, &key.ConcurrencyLimit, &key.MonthlyTokenLimit, &key.MonthlyBudgetCents,
+		&key.QPSLimit, &key.RPMLimit, &key.TPMLimit, &key.ConcurrencyLimit, &key.MonthlyTokenLimit, &key.MonthlyBudgetMicros,
 		&key.MonthlyImageLimit, &key.MonthlyVideoSecondsLimit, &key.MonthlyAudioSecondsLimit,
 		&allowedCIDRs, &key.LanePolicy, &key.ArtifactPolicy, &key.ArtifactSinkID, &key.RotationFamilyID,
 		&key.ReplacesKeyID, &key.ReplacedByKeyID, &rotationGraceExpiresAt,
@@ -3393,7 +3333,7 @@ INSERT INTO api_keys(
   id, name, key_hash, fingerprint, prefix, status, key_type, customer_id, owner_user_id,
   profile_scope, platform_tenant_id, gateway_principal_id, tenant_id, principal_type, principal_reference,
   policy_id, scopes, model_allowlist, allowed_modalities, allowed_operations,
-  qps_limit, rpm_limit, tpm_limit, concurrency_limit, monthly_token_limit, monthly_budget_cents,
+  qps_limit, rpm_limit, tpm_limit, concurrency_limit, monthly_token_limit, monthly_budget_micros,
   monthly_image_limit, monthly_video_seconds_limit, monthly_audio_seconds_limit,
   allowed_cidrs, lane_policy, artifact_policy, artifact_sink_id, rotation_family_id,
   replaces_key_id, replaced_by_key_id, rotation_grace_expires_at,
@@ -3431,7 +3371,7 @@ ON CONFLICT(id) DO UPDATE SET
   tpm_limit = EXCLUDED.tpm_limit,
   concurrency_limit = EXCLUDED.concurrency_limit,
   monthly_token_limit = EXCLUDED.monthly_token_limit,
-  monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+  monthly_budget_micros = EXCLUDED.monthly_budget_micros,
   monthly_image_limit = EXCLUDED.monthly_image_limit,
   monthly_video_seconds_limit = EXCLUDED.monthly_video_seconds_limit,
   monthly_audio_seconds_limit = EXCLUDED.monthly_audio_seconds_limit,
@@ -3458,7 +3398,7 @@ func apiKeyWriteArgs(key APIKeyRecord) []any {
 		key.ID, key.Name, key.KeyHash, key.Fingerprint, key.Prefix, key.Status, key.KeyType, key.CustomerID, key.OwnerUserID,
 		key.ProfileScope, key.PlatformTenantID, key.GatewayPrincipalID, key.TenantID, key.PrincipalType, key.PrincipalReference,
 		key.PolicyID, scopes, allowlist, modalities, operations,
-		key.QPSLimit, key.RPMLimit, key.TPMLimit, key.ConcurrencyLimit, key.MonthlyTokenLimit, key.MonthlyBudgetCents,
+		key.QPSLimit, key.RPMLimit, key.TPMLimit, key.ConcurrencyLimit, key.MonthlyTokenLimit, key.MonthlyBudgetMicros,
 		key.MonthlyImageLimit, key.MonthlyVideoSecondsLimit, key.MonthlyAudioSecondsLimit,
 		allowedCIDRs, key.LanePolicy, key.ArtifactPolicy, key.ArtifactSinkID, key.RotationFamilyID,
 		key.ReplacesKeyID, key.ReplacedByKeyID, key.RotationGraceExpiresAt,
@@ -3533,14 +3473,20 @@ type usageRecordExecutor interface {
 }
 
 func saveUsageRecord(ctx context.Context, executor usageRecordExecutor, record UsageRecord) error {
+	if strings.TrimSpace(record.UsageCostCurrency) == "" {
+		record.UsageCostCurrency = pricing.CurrencyUSD
+	}
+	if strings.TrimSpace(record.PricingStatus) == "" {
+		record.PricingStatus = "unpriced"
+	}
 	usageDimensionsJSON, err := UsageDimensionsJSON(record.UsageDimensions)
 	if err != nil {
 		return err
 	}
 	_, err = executor.ExecContext(ctx, `
-INSERT INTO usage_records(id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_dimensions, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, cost_cents, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::jsonb,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44)
-`, record.ID, record.OperationID, record.AttemptID, record.UsageVersion, record.UsageSource, record.RequestFingerprint, record.APIKeyID, record.CustomerID, record.ProfileScope, record.PlatformTenantID, record.PlatformTenantName, record.GatewayPrincipalID, record.GatewayPrincipalName, record.ExternalAuthIntegrationID, record.ExternalSubjectReference, record.APIFingerprint, record.Model, record.UpstreamModel, record.Protocol, record.ProviderID, record.ProviderAccountID, record.Status, record.ErrorType, record.LatencyMS, record.TTFTMS, record.InputTokens, record.OutputTokens, record.TotalInputTokens, record.UncachedInputTokens, record.CacheReadTokens, record.CacheWrite5mTokens, record.CacheWrite1hTokens, record.CacheFieldsPresent, usageDimensionsJSON, record.UsageNormalizationStatus, record.UpstreamRequestID, record.ProcurementCostMicros, record.ProcurementCostCurrency, record.ProcurementCostSource, record.ProcurementCostConfidence, record.ProcurementPriceID, record.ProviderBillingLineID, record.CostCents, record.CreatedAt)
+	INSERT INTO usage_records(id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_dimensions, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, usage_cost_micros, usage_cost_currency, usage_pricing_evaluation_id, pricing_status, created_at)
+	VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::jsonb,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47)
+	`, record.ID, record.OperationID, record.AttemptID, record.UsageVersion, record.UsageSource, record.RequestFingerprint, record.APIKeyID, record.CustomerID, record.ProfileScope, record.PlatformTenantID, record.PlatformTenantName, record.GatewayPrincipalID, record.GatewayPrincipalName, record.ExternalAuthIntegrationID, record.ExternalSubjectReference, record.APIFingerprint, record.Model, record.UpstreamModel, record.Protocol, record.ProviderID, record.ProviderAccountID, record.Status, record.ErrorType, record.LatencyMS, record.TTFTMS, record.InputTokens, record.OutputTokens, record.TotalInputTokens, record.UncachedInputTokens, record.CacheReadTokens, record.CacheWrite5mTokens, record.CacheWrite1hTokens, record.CacheFieldsPresent, usageDimensionsJSON, record.UsageNormalizationStatus, record.UpstreamRequestID, record.ProcurementCostMicros, record.ProcurementCostCurrency, record.ProcurementCostSource, record.ProcurementCostConfidence, record.ProcurementPriceID, record.ProviderBillingLineID, record.UsageCostMicros, record.UsageCostCurrency, record.UsagePricingEvaluationID, record.PricingStatus, record.CreatedAt)
 	return err
 }
 
@@ -3554,7 +3500,7 @@ func (r *PostgresRepository) QueryUsageRecords(ctx context.Context, query UsageQ
 	args := []any{}
 	appendUsageRecordFilters(&clauses, &args, query)
 	sqlText := `
-SELECT id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_dimensions, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, cost_cents, created_at
+	SELECT id, operation_id, attempt_id, usage_version, usage_source, request_fingerprint, api_key_id, customer_id, profile_scope, platform_tenant_id, platform_tenant_name, gateway_principal_id, gateway_principal_name, external_auth_integration_id, external_subject_reference, api_fingerprint, model, upstream_model, protocol, provider_id, provider_account_id, status, error_type, latency_ms, ttft_ms, input_tokens, output_tokens, total_input_tokens, uncached_input_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_fields_present, usage_dimensions, usage_normalization_status, upstream_request_id, procurement_cost_micros, procurement_cost_currency, procurement_cost_source, procurement_cost_confidence, procurement_price_id, provider_billing_line_id, usage_cost_micros, usage_cost_currency, usage_pricing_evaluation_id, pricing_status, created_at
 FROM usage_records`
 	if len(clauses) > 0 {
 		sqlText += " WHERE " + strings.Join(clauses, " AND ")
@@ -3570,7 +3516,7 @@ FROM usage_records`
 	for rows.Next() {
 		var record UsageRecord
 		var usageDimensionsJSON []byte
-		if err := rows.Scan(&record.ID, &record.OperationID, &record.AttemptID, &record.UsageVersion, &record.UsageSource, &record.RequestFingerprint, &record.APIKeyID, &record.CustomerID, &record.ProfileScope, &record.PlatformTenantID, &record.PlatformTenantName, &record.GatewayPrincipalID, &record.GatewayPrincipalName, &record.ExternalAuthIntegrationID, &record.ExternalSubjectReference, &record.APIFingerprint, &record.Model, &record.UpstreamModel, &record.Protocol, &record.ProviderID, &record.ProviderAccountID, &record.Status, &record.ErrorType, &record.LatencyMS, &record.TTFTMS, &record.InputTokens, &record.OutputTokens, &record.TotalInputTokens, &record.UncachedInputTokens, &record.CacheReadTokens, &record.CacheWrite5mTokens, &record.CacheWrite1hTokens, &record.CacheFieldsPresent, &usageDimensionsJSON, &record.UsageNormalizationStatus, &record.UpstreamRequestID, &record.ProcurementCostMicros, &record.ProcurementCostCurrency, &record.ProcurementCostSource, &record.ProcurementCostConfidence, &record.ProcurementPriceID, &record.ProviderBillingLineID, &record.CostCents, &record.CreatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.OperationID, &record.AttemptID, &record.UsageVersion, &record.UsageSource, &record.RequestFingerprint, &record.APIKeyID, &record.CustomerID, &record.ProfileScope, &record.PlatformTenantID, &record.PlatformTenantName, &record.GatewayPrincipalID, &record.GatewayPrincipalName, &record.ExternalAuthIntegrationID, &record.ExternalSubjectReference, &record.APIFingerprint, &record.Model, &record.UpstreamModel, &record.Protocol, &record.ProviderID, &record.ProviderAccountID, &record.Status, &record.ErrorType, &record.LatencyMS, &record.TTFTMS, &record.InputTokens, &record.OutputTokens, &record.TotalInputTokens, &record.UncachedInputTokens, &record.CacheReadTokens, &record.CacheWrite5mTokens, &record.CacheWrite1hTokens, &record.CacheFieldsPresent, &usageDimensionsJSON, &record.UsageNormalizationStatus, &record.UpstreamRequestID, &record.ProcurementCostMicros, &record.ProcurementCostCurrency, &record.ProcurementCostSource, &record.ProcurementCostConfidence, &record.ProcurementPriceID, &record.ProviderBillingLineID, &record.UsageCostMicros, &record.UsageCostCurrency, &record.UsagePricingEvaluationID, &record.PricingStatus, &record.CreatedAt); err != nil {
 			return nil, err
 		}
 		record.UsageDimensions, err = ParseUsageDimensionsJSON(string(usageDimensionsJSON))
@@ -3594,8 +3540,11 @@ SELECT model,
 	       COALESCE(SUM(COALESCE((usage_dimensions->'output_images'->>'quantity')::BIGINT, 0)), 0),
 	       COALESCE(SUM(COALESCE((usage_dimensions->'input_video_milliseconds'->>'quantity')::BIGINT, 0) + COALESCE((usage_dimensions->'output_video_milliseconds'->>'quantity')::BIGINT, 0)), 0),
 	       COALESCE(SUM(COALESCE((usage_dimensions->'input_audio_milliseconds'->>'quantity')::BIGINT, 0) + COALESCE((usage_dimensions->'output_audio_milliseconds'->>'quantity')::BIGINT, 0)), 0),
-	       COALESCE(SUM(cost_cents), 0),
-       COALESCE(SUM(latency_ms), 0)
+	       COALESCE(SUM(usage_cost_micros), 0),
+	       COALESCE(SUM(CASE WHEN pricing_status IN ('priced','free') THEN 1 ELSE 0 END), 0),
+	       COALESCE(SUM(CASE WHEN pricing_status = 'unpriced' THEN 1 ELSE 0 END), 0),
+	       COALESCE(SUM(CASE WHEN pricing_status = 'disputed' THEN 1 ELSE 0 END), 0),
+	       COALESCE(SUM(latency_ms), 0)
 FROM usage_records`
 	if len(clauses) > 0 {
 		sqlText += " WHERE " + strings.Join(clauses, " AND ")
@@ -3616,9 +3565,10 @@ FROM usage_records`
 		var outputImages int64
 		var videoMilliseconds int64
 		var audioMilliseconds int64
-		var costCents int64
+		var usageCostMicros int64
+		var pricedRequests, unpricedRequests, disputedRequests int64
 		var modelLatencyTotal int64
-		if err := rows.Scan(&model, &requests, &errors, &tokens, &outputImages, &videoMilliseconds, &audioMilliseconds, &costCents, &modelLatencyTotal); err != nil {
+		if err := rows.Scan(&model, &requests, &errors, &tokens, &outputImages, &videoMilliseconds, &audioMilliseconds, &usageCostMicros, &pricedRequests, &unpricedRequests, &disputedRequests, &modelLatencyTotal); err != nil {
 			return UsageAggregate{}, err
 		}
 		avgLatency := int64(0)
@@ -3633,7 +3583,7 @@ FROM usage_records`
 			OutputImages:      outputImages,
 			VideoMilliseconds: videoMilliseconds,
 			AudioMilliseconds: audioMilliseconds,
-			CostCents:         int(costCents),
+			UsageCostMicros:   usageCostMicros,
 			AvgLatency:        avgLatency,
 		})
 		aggregate.TotalRequests += int(requests)
@@ -3642,7 +3592,10 @@ FROM usage_records`
 		aggregate.TotalOutputImages = saturatingUsageAdd(aggregate.TotalOutputImages, outputImages)
 		aggregate.TotalVideoDuration = saturatingUsageAdd(aggregate.TotalVideoDuration, videoMilliseconds)
 		aggregate.TotalAudioDuration = saturatingUsageAdd(aggregate.TotalAudioDuration, audioMilliseconds)
-		aggregate.TotalCostCents += int(costCents)
+		aggregate.TotalUsageCostMicros += usageCostMicros
+		aggregate.PricedRequests += int(pricedRequests)
+		aggregate.UnpricedRequests += int(unpricedRequests)
+		aggregate.DisputedRequests += int(disputedRequests)
 		latencyTotal += modelLatencyTotal
 	}
 	if err := rows.Err(); err != nil {
@@ -3651,6 +3604,7 @@ FROM usage_records`
 	if aggregate.TotalRequests > 0 {
 		aggregate.AvgLatencyMS = latencyTotal / int64(aggregate.TotalRequests)
 	}
+	aggregate.CostAvailable = aggregate.TotalRequests > 0 && aggregate.UnpricedRequests == 0 && aggregate.DisputedRequests == 0
 	return aggregate, nil
 }
 
@@ -3667,13 +3621,13 @@ WHERE api_key_id = $1 AND created_at >= $2
 	return total, nil
 }
 
-func (r *PostgresRepository) SumUsageCostCentsByAPIKeySince(ctx context.Context, apiKeyID string, since time.Time) (int, error) {
+func (r *PostgresRepository) SumUsageCostMicrosByAPIKeySince(ctx context.Context, apiKeyID string, since time.Time) (int64, error) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(cost_cents), 0)
+SELECT COALESCE(SUM(usage_cost_micros), 0)
 FROM usage_records
 WHERE api_key_id = $1 AND created_at >= $2
 `, apiKeyID, since)
-	var total int
+	var total int64
 	if err := row.Scan(&total); err != nil {
 		return 0, err
 	}

@@ -29,7 +29,7 @@ interface DistributionRow {
   requests: number
   errors: number
   tokens: number
-  cost_cents: number
+  usage_cost_micros: number
   avg_latency_ms: number
 }
 
@@ -47,7 +47,7 @@ interface TrendPoint {
   input_tokens: number
   output_tokens: number
   tokens: number
-  cost_cents: number
+  usage_cost_micros: number
 }
 
 interface SelectOption {
@@ -91,7 +91,11 @@ const emptyReport: UsageReport = {
   total_output_images: 0,
   total_video_milliseconds: 0,
   total_audio_milliseconds: 0,
-  total_cost_cents: 0,
+  total_usage_cost_micros: 0,
+  priced_requests: 0,
+  unpriced_requests: 0,
+  disputed_requests: 0,
+  cost_available: false,
   avg_latency_ms: 0,
   by_model: [],
   recent: []
@@ -125,7 +129,7 @@ const metrics = computed(() => [
   },
   {
     label: t('usage.cost'),
-    value: formatCost(summaryReport.value.total_cost_cents),
+    value: formatCost(summaryReport.value.total_usage_cost_micros),
     sub: t('usage.estimatedCost')
   },
   {
@@ -173,7 +177,7 @@ const trendOutputPath = computed(() => linePath(trendPoints.value, 'output_token
 const trendAxisLabels = computed(() => trendAxis(trendPoints.value))
 const recentWorkbenchRecords = computed(() => [...analysisRecords.value].sort(sortRecordsDesc).slice(0, 6))
 const costPerRequest = computed(() => summaryReport.value.total_requests
-  ? summaryReport.value.total_cost_cents / summaryReport.value.total_requests
+  ? summaryReport.value.total_usage_cost_micros / summaryReport.value.total_requests
   : 0)
 const topModel = computed(() => modelSeries.value[0]?.label || '-')
 const topKey = computed(() => keySeries.value[0]?.label || '-')
@@ -304,7 +308,7 @@ function modelSummaryToDistributionRow(item: UsageModelSummary): DistributionRow
     requests: item.requests,
     errors: item.errors,
     tokens: item.tokens,
-    cost_cents: item.cost_cents,
+    usage_cost_micros: item.usage_cost_micros,
     avg_latency_ms: item.avg_latency_ms
   }
 }
@@ -316,7 +320,7 @@ function keyAllocationToDistributionRow(item: CostAllocationRow): DistributionRo
     requests: item.requests,
     errors: item.error_requests,
     tokens: item.total_tokens,
-    cost_cents: item.total_cost_cents,
+    usage_cost_micros: item.total_usage_cost_micros,
     avg_latency_ms: item.avg_latency_ms
   }
 }
@@ -331,14 +335,14 @@ function aggregateRecordsByStatus(records: UsageRecord[]): DistributionRow[] {
       requests: 0,
       errors: 0,
       tokens: 0,
-      cost_cents: 0,
+      usage_cost_micros: 0,
       avg_latency_ms: 0,
       latency_total: 0
     }
     existing.requests += 1
     existing.errors += isErrorRecord(record) ? 1 : 0
     existing.tokens += record.input_tokens + record.output_tokens
-    existing.cost_cents += record.cost_cents
+    existing.usage_cost_micros += record.usage_cost_micros || 0
     existing.latency_total += record.latency_ms
     existing.avg_latency_ms = Math.round(existing.latency_total / existing.requests)
     map.set(key, existing)
@@ -355,8 +359,8 @@ function buildSeries(rows: DistributionRow[], metric: DistributionMetric | 'requ
     const requests = rest.reduce((sum, item) => sum + item.requests, 0)
     const errors = rest.reduce((sum, item) => sum + item.errors, 0)
     const tokens = rest.reduce((sum, item) => sum + item.tokens, 0)
-    const cost = rest.reduce((sum, item) => sum + item.cost_cents, 0)
-    merged.push({ label: t('usage.other'), scope: '-', requests, errors, tokens, cost_cents: cost, avg_latency_ms: 0 })
+    const cost = rest.reduce((sum, item) => sum + item.usage_cost_micros, 0)
+    merged.push({ label: t('usage.other'), scope: '-', requests, errors, tokens, usage_cost_micros: cost, avg_latency_ms: 0 })
   }
   const total = Math.max(merged.reduce((sum, item) => sum + metricValue(item, metric), 0), 1)
   return merged.map((item, index) => ({
@@ -368,7 +372,7 @@ function buildSeries(rows: DistributionRow[], metric: DistributionMetric | 'requ
 }
 
 function metricValue(row: DistributionRow, metric: DistributionMetric | 'requests'): number {
-  if (metric === 'actual_cost') return row.cost_cents
+  if (metric === 'actual_cost') return row.usage_cost_micros
   if (metric === 'requests') return row.requests
   return row.tokens
 }
@@ -408,14 +412,14 @@ function buildTrendPoints(records: UsageRecord[], unit: 'hour' | 'day'): TrendPo
       input_tokens: 0,
       output_tokens: 0,
       tokens: 0,
-      cost_cents: 0
+      usage_cost_micros: 0
     }
     existing.requests += 1
     existing.errors += isErrorRecord(record) ? 1 : 0
     existing.input_tokens += record.input_tokens
     existing.output_tokens += record.output_tokens
     existing.tokens += record.input_tokens + record.output_tokens
-    existing.cost_cents += record.cost_cents
+    existing.usage_cost_micros += record.usage_cost_micros || 0
     map.set(key, existing)
   }
   return Array.from(map.values()).sort((a, b) => a.bucket.localeCompare(b.bucket))
@@ -483,8 +487,8 @@ function compactNumber(value: number): string {
   return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 2 }).format(value || 0)
 }
 
-function formatCost(cents: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format((cents || 0) / 100)
+function formatCost(micros?: number): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 6 }).format((micros || 0) / 1_000_000)
 }
 
 function formatPercent(value: number): string {
@@ -683,7 +687,7 @@ onMounted(loadAll)
                 <td><strong>{{ item.model || '-' }}</strong><span>{{ item.provider_id || '-' }}</span></td>
                 <td><span class="pill" :class="statusClass(item.status)">{{ item.status }}</span></td>
                 <td>{{ formatNumber(recordTokens(item)) }}</td>
-                <td>{{ formatCost(item.cost_cents) }}</td>
+                <td>{{ formatCost(item.usage_cost_micros) }}</td>
                 <td><button class="icon-button" type="button" :aria-label="t('usage.openRecords')" @click="showView('records')"><ArrowRight :size="17" /></button></td>
               </tr>
               <tr v-if="!recentWorkbenchRecords.length"><td colspan="6" class="empty-cell">{{ t('usage.emptyWindow') }}</td></tr>
@@ -912,7 +916,7 @@ onMounted(loadAll)
                 <strong>{{ formatNumber(recordTokens(item)) }}</strong>
                 <span>{{ formatNumber(item.input_tokens) }} / {{ formatNumber(item.output_tokens) }}</span>
               </td>
-              <td>{{ formatCost(item.cost_cents) }}</td>
+              <td>{{ formatCost(item.usage_cost_micros) }}</td>
               <td>{{ formatLatency(item.latency_ms) }}</td>
             </tr>
             <tr v-if="!pageRecords.length">
@@ -976,7 +980,7 @@ onMounted(loadAll)
               <td>{{ formatNumber(item.requests) }}</td>
               <td>{{ formatNumber(item.errors) }}</td>
               <td>{{ formatNumber(item.tokens) }}</td>
-              <td>{{ formatCost(item.cost_cents) }}</td>
+              <td>{{ formatCost(item.usage_cost_micros) }}</td>
               <td>{{ formatLatency(item.avg_latency_ms) }}</td>
             </tr>
             <tr v-if="!modelRows.length">
@@ -1007,8 +1011,8 @@ onMounted(loadAll)
               <td>{{ formatNumber(item.requests) }}</td>
               <td>{{ formatNumber(item.errors) }}</td>
               <td>{{ formatNumber(item.tokens) }}</td>
-              <td>{{ formatCost(item.cost_cents) }}</td>
-              <td>{{ formatPercent(summaryReport.total_cost_cents ? (item.cost_cents / summaryReport.total_cost_cents) * 100 : 0) }}</td>
+              <td>{{ formatCost(item.usage_cost_micros) }}</td>
+              <td>{{ formatPercent(summaryReport.total_usage_cost_micros ? (item.usage_cost_micros / summaryReport.total_usage_cost_micros) * 100 : 0) }}</td>
               <td>{{ formatLatency(item.avg_latency_ms) }}</td>
             </tr>
             <tr v-if="!keyRows.length">

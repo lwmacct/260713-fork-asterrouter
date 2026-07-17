@@ -74,7 +74,7 @@ func TestPostgresBackupRestoreRehearsal(t *testing.T) {
 		t.Fatalf("AuthenticateGatewayKey(): %v", err)
 	}
 	if err := controlService.RecordGatewayUsage(ctx, auth, controlplane.GatewayUsageInput{
-		Model: "recovery-model", Status: "forwarded", ProviderID: provider.ID, InputTokens: 7, OutputTokens: 11, CostCents: 9,
+		Model: "recovery-model", Status: "forwarded", ProviderID: provider.ID, InputTokens: 7, OutputTokens: 11,
 	}); err != nil {
 		t.Fatalf("RecordGatewayUsage(): %v", err)
 	}
@@ -199,7 +199,7 @@ ON CONFLICT(id) DO UPDATE SET body = EXCLUDED.body, updated_at = EXCLUDED.update
 		t.Fatalf("restored workspace key auth=%#v err=%v", restoredAuth, err)
 	}
 	usage, err := restoredControl.UsageReportQuery(ctx, controlplane.UsageQuery{APIKeyID: key.Record.ID, Limit: 10})
-	if err != nil || usage.TotalRequests != 1 || usage.TotalTokens != 18 || usage.TotalCostCents != 9 {
+	if err != nil || usage.TotalRequests != 1 || usage.TotalTokens != 18 || usage.UnpricedRequests != 1 || usage.Recent[0].PricingStatus != "unpriced" {
 		t.Fatalf("restored usage=%#v err=%v", usage, err)
 	}
 	traces, err := restoredControl.ListGatewayTraces(ctx, 10)

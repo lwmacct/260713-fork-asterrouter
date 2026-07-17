@@ -52,7 +52,7 @@ const metrics = computed(() => [
   },
   {
     label: t('usage.cost'),
-    value: formatCost(report.value?.total_cost_cents || 0),
+    value: formatCost(report.value?.total_usage_cost_micros || 0),
     sub: t('costAllocation.allocatedCost'),
     icon: Coins
   },
@@ -72,12 +72,12 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat().format(value)
 }
 
-function formatCost(cents: number): string {
+function formatCost(micros: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2
-  }).format(cents / 100)
+  }).format(micros / 1_000_000)
 }
 
 function formatPercent(value: number): string {
@@ -258,7 +258,7 @@ onMounted(load)
                 <span>{{ formatNumber(row.error_requests) }} {{ t('usage.errors') }}</span>
               </td>
               <td>{{ formatNumber(row.total_tokens) }}</td>
-              <td>{{ formatCost(row.total_cost_cents) }}</td>
+              <td>{{ formatCost(row.total_usage_cost_micros) }}</td>
               <td>{{ formatPercent(row.cost_share_percent) }}</td>
               <td>{{ formatNumber(row.avg_latency_ms) }} ms</td>
             </tr>

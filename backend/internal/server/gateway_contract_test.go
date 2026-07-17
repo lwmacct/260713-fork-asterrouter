@@ -72,11 +72,11 @@ func TestGatewayOpenAIContractForJSONAndStreaming(t *testing.T) {
 				t.Fatalf("operation=%+v found=%t err=%v", operation, found, err)
 			}
 			billing, err := control.BillingLedgerEntries(context.Background(), operationID)
-			if err != nil || len(billing) != 1 || billing[0].UsageRecordID != usage.Recent[0].ID {
+			if err != nil || len(billing) != 0 || usage.Recent[0].PricingStatus != "unpriced" {
 				t.Fatalf("billing=%+v err=%v", billing, err)
 			}
 			outbox, err := control.TransactionalOutboxEvents(context.Background(), "")
-			if err != nil || len(outbox) != 1 || outbox[0].EventType != controlplane.OutboxEventUsage {
+			if err != nil || len(outbox) != 1 || outbox[0].EventType != controlplane.OutboxEventUsageRecorded {
 				t.Fatalf("outbox=%+v err=%v", outbox, err)
 			}
 			traces, err := control.ListGatewayTraces(context.Background(), 10)

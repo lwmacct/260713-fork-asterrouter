@@ -46,7 +46,7 @@ func TestPostgresRepositoryEmptyListContracts(t *testing.T) {
 	assertEmptyList(t, "ListLatestProviderAccountHealthChecks", func() ([]ProviderAccountHealthCheck, error) { return repo.ListLatestProviderAccountHealthChecks(ctx) })
 	assertEmptyList(t, "ListGatewayModels", func() ([]GatewayModel, error) { return repo.ListGatewayModels(ctx) })
 	assertEmptyList(t, "ListModelRoutes", func() ([]ModelRoute, error) { return repo.ListModelRoutes(ctx) })
-	assertEmptyList(t, "ListModelPricings", func() ([]ModelPricing, error) { return repo.ListModelPricings(ctx) })
+	assertEmptyList(t, "ListPricingRules", func() ([]PricingRule, error) { return repo.ListPricingRules(ctx) })
 	assertEmptyList(t, "ListAPIKeys", func() ([]APIKeyRecord, error) { return repo.ListAPIKeys(ctx) })
 	assertEmptyList(t, "ListUsageRecords", func() ([]UsageRecord, error) { return repo.ListUsageRecords(ctx, 100) })
 	assertEmptyList(t, "ListGatewayTraces", func() ([]GatewayTrace, error) { return repo.ListGatewayTraces(ctx, 100) })
@@ -85,7 +85,7 @@ func TestPostgresRepositoryPersistsCoreRecordsAcrossRestart(t *testing.T) {
 		TenantID: gatewayDefaultTenantID, PrincipalType: APIKeyTypeService, PrincipalReference: "service-postgres",
 		Scopes: []string{GatewayScopeInvoke}, ModelAllowlist: []string{"model-a"}, AllowedModalities: []string{GatewayModalityText},
 		AllowedOperations: []string{GatewayOperationChatCompletion}, QPSLimit: 2, RPMLimit: 30, TPMLimit: 4000,
-		ConcurrencyLimit: 3, MonthlyTokenLimit: 5000, MonthlyBudgetCents: 600,
+		ConcurrencyLimit: 3, MonthlyTokenLimit: 5000, MonthlyBudgetMicros: 600,
 		MonthlyImageLimit: 7, MonthlyVideoSecondsLimit: 8, MonthlyAudioSecondsLimit: 9,
 		AllowedCIDRs: []string{"192.0.2.0/24"}, LanePolicy: GatewayLanePolicyDirectAndDurable,
 		ArtifactPolicy: GatewayArtifactPolicyManaged, RotationFamilyID: "key-family-postgres", CreatedAt: now, UpdatedAt: now,
@@ -123,7 +123,7 @@ func TestPostgresRepositoryPersistsCoreRecordsAcrossRestart(t *testing.T) {
 	}
 	if !ok || found.ID != key.ID || len(found.ModelAllowlist) != 1 || found.ModelAllowlist[0] != "model-a" ||
 		found.TenantID != gatewayDefaultTenantID || found.PrincipalReference != "service-postgres" || found.RPMLimit != 30 ||
-		found.TPMLimit != 4000 || found.ConcurrencyLimit != 3 || found.MonthlyBudgetCents != 600 ||
+		found.TPMLimit != 4000 || found.ConcurrencyLimit != 3 || found.MonthlyBudgetMicros != 600 ||
 		found.MonthlyImageLimit != 7 || found.MonthlyVideoSecondsLimit != 8 || found.MonthlyAudioSecondsLimit != 9 ||
 		len(found.AllowedCIDRs) != 1 || found.LanePolicy != GatewayLanePolicyDirectAndDurable ||
 		found.ArtifactPolicy != GatewayArtifactPolicyManaged || found.RotationFamilyID != "key-family-postgres" {
@@ -160,9 +160,9 @@ func TestUsageMonthlyBoundaryContract(t *testing.T) {
 			t.Cleanup(func() { _ = repo.Close() })
 			boundary := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
 			records := []UsageRecord{
-				{ID: "before", APIKeyID: "key-boundary", InputTokens: 40, CostCents: 4, CreatedAt: boundary.Add(-time.Microsecond)},
-				{ID: "at", APIKeyID: "key-boundary", InputTokens: 50, CostCents: 5, CreatedAt: boundary},
-				{ID: "after", APIKeyID: "key-boundary", OutputTokens: 60, CostCents: 6, CreatedAt: boundary.Add(time.Microsecond)},
+				{ID: "before", APIKeyID: "key-boundary", InputTokens: 40, UsageCostMicros: testMicros(4), UsageCostCurrency: "USD", PricingStatus: "priced", CreatedAt: boundary.Add(-time.Microsecond)},
+				{ID: "at", APIKeyID: "key-boundary", InputTokens: 50, UsageCostMicros: testMicros(5), UsageCostCurrency: "USD", PricingStatus: "priced", CreatedAt: boundary},
+				{ID: "after", APIKeyID: "key-boundary", OutputTokens: 60, UsageCostMicros: testMicros(6), UsageCostCurrency: "USD", PricingStatus: "priced", CreatedAt: boundary.Add(time.Microsecond)},
 			}
 			for _, record := range records {
 				if err := repo.SaveUsageRecord(ctx, record); err != nil {
@@ -173,7 +173,7 @@ func TestUsageMonthlyBoundaryContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cost, err := repo.SumUsageCostCentsByAPIKeySince(ctx, "key-boundary", boundary)
+			cost, err := repo.SumUsageCostMicrosByAPIKeySince(ctx, "key-boundary", boundary)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -207,7 +207,7 @@ func TestPostgresCustomerRedeemIsAtomicUnderConcurrentRequests(t *testing.T) {
 	const code = "POSTGRES-CONCURRENT-REDEEM"
 	if err := repo.SaveCustomerRedemptionCode(ctx, CustomerRedemptionCode{
 		ID: "redeem-code", CodeHash: hashCustomerRedemptionCode(code), Title: "Concurrent redemption",
-		AmountCents: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 1, CreatedAt: now,
+		AmountMicros: 500, Status: CustomerRedemptionCodeActive, MaxRedemptions: 1, CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("SaveCustomerRedemptionCode(): %v", err)
 	}
@@ -239,7 +239,7 @@ func TestPostgresCustomerRedeemIsAtomicUnderConcurrentRequests(t *testing.T) {
 	for result := range results {
 		if result.err == nil {
 			successes++
-			if result.entry.AmountCents != 500 || result.entry.UserID != result.userID {
+			if result.entry.AmountMicros != 500 || result.entry.UserID != result.userID {
 				t.Fatalf("successful redemption = %+v", result.entry)
 			}
 			continue

@@ -386,15 +386,15 @@ func (s *Service) parse(values map[string]string) AdminSettings {
 		FeishuConfigured:    strings.TrimSpace(values[KeyFeishuAppSecret]) != "",
 		GitHubOAuthClientID: values[KeyGitHubOAuthClientID], GitHubOAuthConfigured: strings.TrimSpace(values[KeyGitHubOAuthSecret]) != "", GoogleOAuthClientID: values[KeyGoogleOAuthClientID], GoogleOAuthConfigured: strings.TrimSpace(values[KeyGoogleOAuthSecret]) != "",
 		DingTalkClientID: values[KeyDingTalkClientID], DingTalkConfigured: strings.TrimSpace(values[KeyDingTalkClientSecret]) != "",
-		AllowedEmailDomains: parseStringList(values[KeyAllowedEmailDomains], []string{}),
-		InvitationCodes:     parseStringList(values[KeyInvitationCodes], []string{}),
-		TrustedProxyHeaders: parseBool(values[KeyTrustedProxyHeaders]),
-		TurnstileConfigured: strings.TrimSpace(values[KeyTurnstileSecretKey]) != "",
-		DefaultBalanceCents: parseInt(values[KeyDefaultBalanceCents], 0),
-		DefaultConcurrency:  parseInt(values[KeyDefaultConcurrency], 5),
-		DefaultRPM:          parseInt(values[KeyDefaultRPM], 0),
-		AuthSourceDefaults:  parseAuthSourceDefaults(values[KeyAuthSourceDefaults]),
-		SMTPHost:            values[KeySMTPHost], SMTPPort: parseInt(values[KeySMTPPort], 587), SMTPUsername: values[KeySMTPUsername], SMTPFrom: values[KeySMTPFrom], SMTPConfigured: strings.TrimSpace(values[KeySMTPPassword]) != "",
+		AllowedEmailDomains:  parseStringList(values[KeyAllowedEmailDomains], []string{}),
+		InvitationCodes:      parseStringList(values[KeyInvitationCodes], []string{}),
+		TrustedProxyHeaders:  parseBool(values[KeyTrustedProxyHeaders]),
+		TurnstileConfigured:  strings.TrimSpace(values[KeyTurnstileSecretKey]) != "",
+		DefaultBalanceMicros: parseInt64(values[KeyDefaultBalanceMicros], 0),
+		DefaultConcurrency:   parseInt(values[KeyDefaultConcurrency], 5),
+		DefaultRPM:           parseInt(values[KeyDefaultRPM], 0),
+		AuthSourceDefaults:   parseAuthSourceDefaults(values[KeyAuthSourceDefaults]),
+		SMTPHost:             values[KeySMTPHost], SMTPPort: parseInt(values[KeySMTPPort], 587), SMTPUsername: values[KeySMTPUsername], SMTPFrom: values[KeySMTPFrom], SMTPConfigured: strings.TrimSpace(values[KeySMTPPassword]) != "",
 		EmailTemplates:      parseEmailTemplates(values[KeyEmailTemplates]),
 		LoginAgreementTitle: values[KeyLoginAgreementTitle], LoginAgreementContent: values[KeyLoginAgreementContent],
 		DefaultPageSize: parseInt(values[KeyDefaultPageSize], 20), PageSizeOptions: parseIntList(values[KeyPageSizeOptions], []int{10, 20, 50}), HomeContent: values[KeyHomeContent], HideImportButton: parseBool(values[KeyHideImportButton]),
@@ -444,7 +444,7 @@ func defaults() map[string]string {
 		KeyFeishuAppSecret:          "",
 		KeyGitHubOAuthEnabled:       "false", KeyGitHubOAuthClientID: "", KeyGitHubOAuthSecret: "", KeyGoogleOAuthEnabled: "false", KeyGoogleOAuthClientID: "", KeyGoogleOAuthSecret: "",
 		KeyDingTalkEnabled: "false", KeyDingTalkClientID: "", KeyDingTalkClientSecret: "",
-		KeyRegistrationEnabled: "false", KeyEmailVerifyEnabled: "false", KeyAllowedEmailDomains: "[]", KeyInvitationRequired: "false", KeyInvitationCodes: "[]", KeyTOTPEnabled: "false", KeyTrustedProxyHeaders: "false", KeyTurnstileEnabled: "false", KeyTurnstileSiteKey: "", KeyTurnstileSecretKey: "", KeyDefaultBalanceCents: "0", KeyDefaultConcurrency: "5", KeyDefaultRPM: "0", KeySMTPHost: "", KeySMTPPort: "587", KeySMTPUsername: "", KeySMTPPassword: "", KeySMTPFrom: "", KeyLoginAgreementEnabled: "false", KeyLoginAgreementTitle: "Terms of Service", KeyLoginAgreementContent: "",
+		KeyRegistrationEnabled: "false", KeyEmailVerifyEnabled: "false", KeyAllowedEmailDomains: "[]", KeyInvitationRequired: "false", KeyInvitationCodes: "[]", KeyTOTPEnabled: "false", KeyTrustedProxyHeaders: "false", KeyTurnstileEnabled: "false", KeyTurnstileSiteKey: "", KeyTurnstileSecretKey: "", KeyDefaultBalanceMicros: "0", KeyDefaultConcurrency: "5", KeyDefaultRPM: "0", KeySMTPHost: "", KeySMTPPort: "587", KeySMTPUsername: "", KeySMTPPassword: "", KeySMTPFrom: "", KeyLoginAgreementEnabled: "false", KeyLoginAgreementTitle: "Terms of Service", KeyLoginAgreementContent: "",
 		KeyAuthSourceDefaults: "{}",
 		KeyEmailTemplates:     "[]",
 		KeyBackendMode:        "false", KeyDefaultPageSize: "20", KeyPageSizeOptions: "[10,20,50]", KeySupportContact: "", KeyDocumentationURL: "", KeyHomeContent: "", KeyHideImportButton: "false", KeyLoginAgreementMode: "modal", KeyLoginAgreementUpdatedAt: "", KeyLegalDocuments: "[]",
@@ -517,7 +517,7 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 	if in.DingTalkEnabled && strings.TrimSpace(in.DingTalkClientID) == "" {
 		return nil, errors.New("dingtalk_client_id is required")
 	}
-	if in.DefaultBalanceCents < 0 || in.DefaultConcurrency < 0 || in.DefaultRPM < 0 {
+	if in.DefaultBalanceMicros < 0 || in.DefaultConcurrency < 0 || in.DefaultRPM < 0 {
 		return nil, errors.New("default user limits cannot be negative")
 	}
 	if err := validateAuthSourceDefaults(in.AuthSourceDefaults); err != nil {
@@ -621,7 +621,7 @@ func valuesFromAdminSettings(in AdminSettings) (map[string]string, error) {
 		KeyFeishuAppSecret:          strings.TrimSpace(in.FeishuAppSecret),
 		KeyGitHubOAuthEnabled:       strconv.FormatBool(in.GitHubOAuthEnabled), KeyGitHubOAuthClientID: strings.TrimSpace(in.GitHubOAuthClientID), KeyGitHubOAuthSecret: strings.TrimSpace(in.GitHubOAuthClientSecret), KeyGoogleOAuthEnabled: strconv.FormatBool(in.GoogleOAuthEnabled), KeyGoogleOAuthClientID: strings.TrimSpace(in.GoogleOAuthClientID), KeyGoogleOAuthSecret: strings.TrimSpace(in.GoogleOAuthClientSecret),
 		KeyDingTalkEnabled: strconv.FormatBool(in.DingTalkEnabled), KeyDingTalkClientID: strings.TrimSpace(in.DingTalkClientID), KeyDingTalkClientSecret: strings.TrimSpace(in.DingTalkClientSecret),
-		KeyRegistrationEnabled: strconv.FormatBool(in.RegistrationEnabled), KeyEmailVerifyEnabled: strconv.FormatBool(in.EmailVerifyEnabled), KeyAllowedEmailDomains: string(domains), KeyInvitationRequired: strconv.FormatBool(in.InvitationRequired), KeyInvitationCodes: string(invitationCodes), KeyTOTPEnabled: strconv.FormatBool(in.TOTPEnabled), KeyTrustedProxyHeaders: strconv.FormatBool(in.TrustedProxyHeaders), KeyTurnstileEnabled: strconv.FormatBool(in.TurnstileEnabled), KeyTurnstileSiteKey: strings.TrimSpace(in.TurnstileSiteKey), KeyTurnstileSecretKey: strings.TrimSpace(in.TurnstileSecretKey), KeyDefaultBalanceCents: strconv.Itoa(in.DefaultBalanceCents), KeyDefaultConcurrency: strconv.Itoa(in.DefaultConcurrency), KeyDefaultRPM: strconv.Itoa(in.DefaultRPM), KeySMTPHost: strings.TrimSpace(in.SMTPHost), KeySMTPPort: strconv.Itoa(in.SMTPPort), KeySMTPUsername: strings.TrimSpace(in.SMTPUsername), KeySMTPPassword: strings.TrimSpace(in.SMTPPassword), KeySMTPFrom: strings.TrimSpace(in.SMTPFrom), KeyLoginAgreementEnabled: strconv.FormatBool(in.LoginAgreementEnabled), KeyLoginAgreementTitle: strings.TrimSpace(in.LoginAgreementTitle), KeyLoginAgreementContent: strings.TrimSpace(in.LoginAgreementContent),
+		KeyRegistrationEnabled: strconv.FormatBool(in.RegistrationEnabled), KeyEmailVerifyEnabled: strconv.FormatBool(in.EmailVerifyEnabled), KeyAllowedEmailDomains: string(domains), KeyInvitationRequired: strconv.FormatBool(in.InvitationRequired), KeyInvitationCodes: string(invitationCodes), KeyTOTPEnabled: strconv.FormatBool(in.TOTPEnabled), KeyTrustedProxyHeaders: strconv.FormatBool(in.TrustedProxyHeaders), KeyTurnstileEnabled: strconv.FormatBool(in.TurnstileEnabled), KeyTurnstileSiteKey: strings.TrimSpace(in.TurnstileSiteKey), KeyTurnstileSecretKey: strings.TrimSpace(in.TurnstileSecretKey), KeyDefaultBalanceMicros: strconv.FormatInt(in.DefaultBalanceMicros, 10), KeyDefaultConcurrency: strconv.Itoa(in.DefaultConcurrency), KeyDefaultRPM: strconv.Itoa(in.DefaultRPM), KeySMTPHost: strings.TrimSpace(in.SMTPHost), KeySMTPPort: strconv.Itoa(in.SMTPPort), KeySMTPUsername: strings.TrimSpace(in.SMTPUsername), KeySMTPPassword: strings.TrimSpace(in.SMTPPassword), KeySMTPFrom: strings.TrimSpace(in.SMTPFrom), KeyLoginAgreementEnabled: strconv.FormatBool(in.LoginAgreementEnabled), KeyLoginAgreementTitle: strings.TrimSpace(in.LoginAgreementTitle), KeyLoginAgreementContent: strings.TrimSpace(in.LoginAgreementContent),
 		KeyEmailTemplates:     string(emailTemplates),
 		KeyAuthSourceDefaults: string(authSourceDefaults),
 		KeyBackendMode:        strconv.FormatBool(in.BackendMode), KeyDefaultPageSize: strconv.Itoa(in.DefaultPageSize), KeyPageSizeOptions: string(pageSizes), KeySupportContact: strings.TrimSpace(in.SupportContact), KeyDocumentationURL: strings.TrimSpace(in.DocumentationURL), KeyHomeContent: in.HomeContent, KeyHideImportButton: strconv.FormatBool(in.HideImportButton), KeyLoginAgreementMode: strings.TrimSpace(in.LoginAgreementMode), KeyLoginAgreementUpdatedAt: strings.TrimSpace(in.LoginAgreementUpdatedAt), KeyLegalDocuments: string(legalDocuments),
@@ -645,6 +645,14 @@ func parseInt(value string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func parseInt64(value string, fallback int64) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func parseStringList(value string, fallback []string) []string {
@@ -708,7 +716,7 @@ func validateAuthSourceDefaults(values map[string]AuthSourceDefault) error {
 		if !allowed[source] {
 			return fmt.Errorf("unsupported auth source default %q", source)
 		}
-		if value.BalanceCents < 0 || value.Concurrency < 0 || value.RPM < 0 {
+		if value.BalanceMicros < 0 || value.Concurrency < 0 || value.RPM < 0 {
 			return fmt.Errorf("auth source default %q cannot be negative", source)
 		}
 	}

@@ -119,8 +119,8 @@ func governancePolicyFromRequest(req GovernancePolicyRequest, createdAt time.Tim
 	if req.MonthlyTokenLimit < 0 {
 		return GovernancePolicy{}, errors.New("monthly_token_limit must be greater than or equal to 0")
 	}
-	if req.MonthlyBudgetCents < 0 {
-		return GovernancePolicy{}, errors.New("monthly_budget_cents must be greater than or equal to 0")
+	if req.MonthlyBudgetMicros < 0 {
+		return GovernancePolicy{}, errors.New("monthly_budget_micros must be greater than or equal to 0")
 	}
 	if req.RetentionDays < 0 {
 		return GovernancePolicy{}, errors.New("retention_days must be greater than or equal to 0")
@@ -129,24 +129,24 @@ func governancePolicyFromRequest(req GovernancePolicyRequest, createdAt time.Tim
 		createdAt = now
 	}
 	return GovernancePolicy{
-		Name:               name,
-		Description:        strings.TrimSpace(req.Description),
-		ScopeType:          scopeType,
-		ScopeID:            scopeID,
-		ModelAllowlist:     normalizeStringSet(req.ModelAllowlist),
-		ModelDenylist:      normalizeStringSet(req.ModelDenylist),
-		QPSLimit:           req.QPSLimit,
-		MonthlyTokenLimit:  req.MonthlyTokenLimit,
-		MonthlyBudgetCents: req.MonthlyBudgetCents,
-		OverageAction:      overageAction,
-		PromptLoggingMode:  promptLoggingMode,
-		RetentionDays:      req.RetentionDays,
-		ToolCallAllowed:    req.ToolCallAllowed,
-		ImageInputAllowed:  req.ImageInputAllowed,
-		WebAccessAllowed:   req.WebAccessAllowed,
-		Status:             status,
-		CreatedAt:          createdAt,
-		UpdatedAt:          now,
+		Name:                name,
+		Description:         strings.TrimSpace(req.Description),
+		ScopeType:           scopeType,
+		ScopeID:             scopeID,
+		ModelAllowlist:      normalizeStringSet(req.ModelAllowlist),
+		ModelDenylist:       normalizeStringSet(req.ModelDenylist),
+		QPSLimit:            req.QPSLimit,
+		MonthlyTokenLimit:   req.MonthlyTokenLimit,
+		MonthlyBudgetMicros: req.MonthlyBudgetMicros,
+		OverageAction:       overageAction,
+		PromptLoggingMode:   promptLoggingMode,
+		RetentionDays:       req.RetentionDays,
+		ToolCallAllowed:     req.ToolCallAllowed,
+		ImageInputAllowed:   req.ImageInputAllowed,
+		WebAccessAllowed:    req.WebAccessAllowed,
+		Status:              status,
+		CreatedAt:           createdAt,
+		UpdatedAt:           now,
 	}, nil
 }
 
